@@ -51,7 +51,9 @@ import { CommandPalette, type PaletteAction } from "../components/CommandPalette
 import { HostDialog, draftFromHost, type HostDraft } from "../components/HostDialog";
 import { loadRdpDefaults } from "../lib/rdpDefaults";
 import { QuickConnect } from "../components/QuickConnect";
+import { mustInvoke } from "../lib/tauri";
 import { DeviceIdentityCard } from "../components/DeviceIdentityCard";
+import { rememberedRegistryUrl } from "../lib/support";
 import { ContextMenu, Dialog, EmptyState, Select, TileSkeleton, type MenuItem } from "../components/primitives";
 import {
   IconActivity,
@@ -242,6 +244,31 @@ export function Library({
     [openSession, tabbed, openTab],
   );
 
+  // A nine-digit number is a device number, not a hostname: resolve it through
+  // the registry when one is configured, then connect to that endpoint.
+  const connectAdHocResolved = useCallback(
+    (protocol: ProtocolKind, address: string, port: number): void => {
+      const digits = address.trim().replaceAll(" ", "");
+      const registryUrl = rememberedRegistryUrl();
+      if (/^\d{9}$/.test(digits) && registryUrl !== "" && inTauri()) {
+        void (async () => {
+          try {
+            const record = await mustInvoke<{ id: string }>("registry_lookup_number", {
+              url: registryUrl,
+              number: digits,
+            });
+            connectAdHoc("boundary", record.id, 0);
+          } catch {
+            connectAdHoc(protocol, address, port);
+          }
+        })();
+        return;
+      }
+      connectAdHoc(protocol, address, port);
+    },
+    // connectAdHoc is defined just below; the body only runs after render.
+    [],
+  );
   const connectAdHoc = useCallback(
     (protocol: ProtocolKind, address: string, port: number): void => {
       if (inTauri()) {
@@ -1257,7 +1284,7 @@ export function Library({
         recents={settings.quickConnectHistory}
         inputRef={quickConnectRef}
         onConnectHost={connectHost}
-        onConnectAddress={connectAdHoc}
+        onConnectAddress={connectAdHocResolved}
         onRemember={rememberQuickConnect}
       />
 
