@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { BoundaryProviderSetup } from "./BoundaryProviderSetup";
+import { DeviceNumber } from "./DeviceNumber";
 import { RegistryCodePanel } from "./RegistryCodePanel";
 import { writeClipboard } from "../lib/tauri";
 import {
@@ -252,11 +253,14 @@ function UnattendedSummary({ view }: { view: SupportView }): ReactNode {
         )}
       </p>
       {u.enabled ? (
-        <div className="mt-1 flex items-center gap-2">
-          <span className="text-xs text-secondary">This computer's ID</span>
-          <span className="mono text-xs">{shortId(u.machineId)}</span>
-          <Copy text={u.machineId} label="Copy ID" />
-        </div>
+        <>
+          <div className="mt-1 flex items-center gap-2">
+            <span className="text-xs text-secondary">This computer's ID</span>
+            <span className="mono text-xs">{shortId(u.machineId)}</span>
+            <Copy text={u.machineId} label="Copy ID" />
+          </div>
+          <DeviceNumber machineId={u.machineId} />
+        </>
       ) : null}
     </div>
   );

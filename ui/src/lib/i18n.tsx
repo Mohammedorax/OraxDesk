@@ -35,6 +35,9 @@ const ar = {
   "registry.withdrawn": "تم سحب الرمز. لا يمكن لأحد استخدامه الآن.",
   "registry.failed": "تعذّر إنشاء الرمز: {reason}",
   "registry.withdrawFailed": "تعذّر سحب الرمز: {reason}",
+  "device.number": "رقم هذا الجهاز",
+  "device.copyNumber": "نسخ الرقم",
+  "device.numberHint": "رقم ثابت لهذا الجهاز لا يتغيّر. اقرأه لمن يساعدك، أو انسخه.",
 } as const;
 
 const en: Record<keyof typeof ar, string> = {
@@ -53,6 +56,9 @@ const en: Record<keyof typeof ar, string> = {
   "registry.withdrawn": "Code withdrawn. Nobody can use it now.",
   "registry.failed": "The code could not be created: {reason}",
   "registry.withdrawFailed": "The code could not be withdrawn: {reason}",
+  "device.number": "This computer's number",
+  "device.copyNumber": "Copy number",
+  "device.numberHint": "A stable number for this computer. Read it to whoever helps you, or copy it.",
 };
 
 export type MessageKey = keyof typeof ar;
