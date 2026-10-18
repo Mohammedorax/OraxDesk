@@ -226,6 +226,7 @@ function Share({ view, run }: { view: SupportView; run: Run }): ReactNode {
           approve them.
         </p>
       </div>
+      {view.unattended.machineId ? <DeviceNumber machineId={view.unattended.machineId} /> : null}
       {body}
       {view.sharing && view.invitation ? <RegistryCodePanel invitation={view.invitation} /> : null}
       {view.sharing ? (
@@ -259,7 +260,6 @@ function UnattendedSummary({ view }: { view: SupportView }): ReactNode {
             <span className="mono text-xs">{shortId(u.machineId)}</span>
             <Copy text={u.machineId} label="Copy ID" />
           </div>
-          <DeviceNumber machineId={u.machineId} />
         </>
       ) : null}
     </div>
