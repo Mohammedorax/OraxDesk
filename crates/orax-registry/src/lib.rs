@@ -111,6 +111,17 @@ pub fn canonical_string(
     .join("\n")
 }
 
+/// The nine-digit number the registry shows for a device, derived the same way
+/// the Worker derives it (SHA-256 of the raw 32-byte public key).
+pub fn device_number(key: &SecretKey) -> String {
+    let digest = Sha256::digest(key.public().as_bytes());
+    let value = ((digest[0] as u32) << 24)
+        | ((digest[1] as u32) << 16)
+        | ((digest[2] as u32) << 8)
+        | (digest[3] as u32);
+    format!("{:09}", value % 1_000_000_000)
+}
+
 /// The id the registry stores: iroh's `EndpointId` display form, which is the
 /// lower-case hex of the 32-byte ed25519 public key.
 pub fn device_id(key: &SecretKey) -> String {

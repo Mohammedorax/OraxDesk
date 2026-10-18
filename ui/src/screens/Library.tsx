@@ -51,6 +51,7 @@ import { CommandPalette, type PaletteAction } from "../components/CommandPalette
 import { HostDialog, draftFromHost, type HostDraft } from "../components/HostDialog";
 import { loadRdpDefaults } from "../lib/rdpDefaults";
 import { QuickConnect } from "../components/QuickConnect";
+import { DeviceIdentityCard } from "../components/DeviceIdentityCard";
 import { ContextMenu, Dialog, EmptyState, Select, TileSkeleton, type MenuItem } from "../components/primitives";
 import {
   IconActivity,
@@ -1249,6 +1250,7 @@ export function Library({
         </button>
       </header>
 
+      <DeviceIdentityCard />
       <QuickConnect
         hosts={hosts}
         discovered={discovered}

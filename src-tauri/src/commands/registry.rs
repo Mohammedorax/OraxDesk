@@ -25,6 +25,23 @@ fn client(url: &str) -> Result<Client, String> {
     Client::new(url).map_err(|error| error.to_string())
 }
 
+/// This computer's endpoint id and the nine-digit number derived from it, for
+/// the always-visible card on the library screen. It needs no network.
+#[derive(serde::Serialize)]
+pub struct MachineIdentity {
+    pub id: String,
+    pub number: String,
+}
+
+#[tauri::command]
+pub fn machine_identity() -> Result<MachineIdentity, String> {
+    let key = machine_key()?;
+    Ok(MachineIdentity {
+        id: boundary_session::unattended::machine_id(&key),
+        number: orax_registry::device_number(&key),
+    })
+}
+
 /// Registry origin from the environment, for a deployment that wants the Worker
 /// before the UI grows a setting for it. Empty or missing means "not configured",
 /// and every existing path keeps working untouched.
