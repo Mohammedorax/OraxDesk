@@ -1,5 +1,6 @@
 /** Preferences: sidebar-tabbed, every setting with a one-line description (PRD/11 §3.4). */
 import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { LanguageSwitch } from "../components/LanguageSwitch";
 import { useSettings, type LocalCursor, type ThemeChoice } from "../state/SettingsContext";
 import { useSessions } from "../state/SessionsContext";
 import { ALLOW_MULTIPLE_SESSIONS_KEY, safeInvoke } from "../lib/tauri";
@@ -243,6 +244,7 @@ export function Preferences({ onClose }: { onClose: () => void }): ReactNode {
         <div className="flex min-w-0 flex-1 flex-col">
           <div className="flex items-center justify-between border-b border-subtle px-5 py-3">
             <h2 className="text-base font-semibold text-primary">{tab}</h2>
+            <LanguageSwitch />
             <button type="button" aria-label="Close preferences" className="rounded-sm p-1 text-tertiary hover:text-primary" onClick={onClose}>
               <IconX size={16} />
             </button>
