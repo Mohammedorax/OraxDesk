@@ -50,6 +50,9 @@ pub enum Error {
 pub struct DeviceRecord {
     pub id: String,
     pub fingerprint: String,
+    /// The nine-digit number shown on the device, once it has registered.
+    #[serde(default)]
+    pub number: Option<String>,
     pub protocol_version: u8,
     pub client_version: Option<String>,
     pub created_at: i64,
@@ -260,6 +263,21 @@ impl Client {
     pub async fn lookup(&self, id: &str) -> Result<DeviceRecord, Error> {
         let value = self
             .call(Method::GET, &format!("/v1/devices/{id}"), None, None)
+            .await?;
+        serde_json::from_value(value).map_err(|_| Error::Decode)
+    }
+
+    /// The public record for the nine-digit number shown on a device. Spaces are
+    /// ignored, so a number read aloud as groups works as typed.
+    pub async fn lookup_by_number(&self, number: &str) -> Result<DeviceRecord, Error> {
+        let digits: String = number.chars().filter(char::is_ascii_digit).collect();
+        let value = self
+            .call(
+                Method::GET,
+                &format!("/v1/devices/by-number/{digits}"),
+                None,
+                None,
+            )
             .await?;
         serde_json::from_value(value).map_err(|_| Error::Decode)
     }

@@ -238,6 +238,7 @@ pub fn run() {
             commands::registry::registry_register_helper,
             commands::registry::registry_create_code,
             commands::registry::registry_resolve_code,
+            commands::registry::registry_lookup_number,
             commands::registry::registry_revoke_code,
             // get help (this computer shared over Boundary)
             commands::support::support_state,

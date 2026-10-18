@@ -79,6 +79,19 @@ pub async fn registry_resolve_code(url: String, code: String) -> Result<String, 
         .map_err(|error| error.to_string())
 }
 
+/// Helper side: turn the nine-digit number a person reads out into that
+/// device's endpoint id, which is what an unattended connection needs.
+#[tauri::command]
+pub async fn registry_lookup_number(
+    url: String,
+    number: String,
+) -> Result<orax_registry::DeviceRecord, String> {
+    client(&url)?
+        .lookup_by_number(&number)
+        .await
+        .map_err(|error| error.to_string())
+}
+
 /// Host side: withdraw a code before it is used.
 #[tauri::command]
 pub async fn registry_revoke_code(url: String, revoke_token: String) -> Result<(), String> {

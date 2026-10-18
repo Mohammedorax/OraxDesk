@@ -1,6 +1,6 @@
 import { sweep } from "./cleanup";
 import { invitationKeyStatus } from "./crypto";
-import { getDevice, registerDevice, revokeDevice } from "./devices";
+import { getDevice, getDeviceByNumber, registerDevice, revokeDevice } from "./devices";
 import { sha256Hex } from "./encoding";
 import type { Env } from "./env";
 import {
@@ -35,6 +35,13 @@ async function handle(request: Request, env: Env): Promise<Response> {
       requireJsonContentType(request);
       const raw = await readBody(request);
       return await registerDevice(env, request, parseObject(raw), raw);
+    }
+
+    if (path.startsWith("/v1/devices/by-number/")) {
+      const number = path.slice("/v1/devices/by-number/".length);
+      if (method === "GET" && !number.includes("/")) {
+        return await getDeviceByNumber(env, number);
+      }
     }
 
     if (path.startsWith("/v1/devices/")) {

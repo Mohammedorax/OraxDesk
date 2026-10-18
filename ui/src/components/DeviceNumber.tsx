@@ -12,7 +12,12 @@ import { writeClipboard } from "../lib/tauri";
  * still needs the short-lived code and the person's approval.
  */
 export async function deviceNumber(machineId: string): Promise<string> {
-  const bytes = new TextEncoder().encode(machineId.trim().toLowerCase());
+  // The registry hashes the raw 32-byte public key, and the endpoint id is its
+  // lower-case hex. Decode it so both sides produce the same nine digits.
+  const clean = machineId.trim().toLowerCase();
+  const bytes = /^[0-9a-f]{64}$/.test(clean)
+    ? Uint8Array.from({ length: 32 }, (_, i) => Number.parseInt(clean.slice(i * 2, i * 2 + 2), 16))
+    : new TextEncoder().encode(clean);
   const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
   const value =
     ((digest[0]! << 24) | (digest[1]! << 16) | (digest[2]! << 8) | digest[3]!) >>> 0;

@@ -105,9 +105,22 @@ export function BoundaryConnect() {
   };
   const connectMachine = async () => {
     remember(NAME_KEY, name.trim());
+    // A nine-digit number is resolved to the device id through the registry, so
+    // a person can read the number off their screen instead of copying an id.
+    let target = machineId.trim().toLowerCase();
+    if (/^[0-9 ]+$/.test(target) && target.replaceAll(" ", "").length === 9) {
+      const url = registryUrl.trim();
+      if (url === "") throw new Error("Enter the registry URL to look up a number");
+      rememberRegistryUrl(url);
+      const record = await mustInvoke<{ id: string }>("registry_lookup_number", {
+        url,
+        number: target,
+      });
+      target = record.id;
+    }
     const saved = await saveHost({
       friendlyName: machineName.trim() || "Boundary computer",
-      address: machineId.trim().toLowerCase(),
+      address: target,
       port: 0,
       protocol: "boundary",
     });
@@ -132,7 +145,10 @@ export function BoundaryConnect() {
   const numeric = mode === "invite" && invitation.trim() !== "" && /^[0-9\s-]+$/.test(invitation.trim());
   const ready =
     name.trim() !== "" &&
-    (mode === "invite" ? invitation.trim() !== "" : looksLikeMachineId(machineId));
+    (mode === "invite"
+      ? invitation.trim() !== ""
+      : looksLikeMachineId(machineId) ||
+        (/^[0-9 ]+$/.test(machineId.trim()) && machineId.replaceAll(" ", "").length === 9 && registryUrl.trim() !== ""));
   const tab = (value: "invite" | "machine", label: string) => (
     <button
       type="button"
@@ -168,6 +184,7 @@ export function BoundaryConnect() {
         </> : <>
           <p className="text-sm text-secondary">For a computer with unattended access switched on in DeskVNC or DeskVNC Support. A computer that paired you is already in your Library. Otherwise the person there approves you on their screen, and can pair you so you connect without asking next time.</p>
           <label className="text-sm">Computer ID<input required spellCheck={false} autoComplete="off" value={machineId} onChange={(event) => { setMachineId(event.target.value); setPasted(false); }} placeholder="64 letters and digits, from Copy ID" className="mt-1 w-full rounded border border-subtle bg-inset p-2 font-mono text-xs" /></label>
+          <label className="text-sm">Orax registry URL, to look up a number<input type="url" value={registryUrl} onChange={(event) => { setRegistryUrl(event.target.value); rememberRegistryUrl(event.target.value); }} placeholder="https://your-registry.workers.dev" className="mt-1 w-full rounded border border-subtle bg-inset p-2" /><span className="mt-1 block text-xs text-secondary">Enter a computer's nine-digit number here and it is resolved through this registry. Leave empty to use a full ID.</span></label>
           {pasted && <p className="-mt-2 text-xs text-secondary">Pasted from your clipboard.</p>}
           {machineId.trim() !== "" && !looksLikeMachineId(machineId) && <p className="-mt-2 text-xs text-red-500">That is not a computer ID. Use Copy ID on that computer.</p>}
           <label className="text-sm">Name in your Library<input maxLength={80} value={machineName} onChange={(event) => setMachineName(event.target.value)} placeholder="Mum's laptop" className="mt-1 w-full rounded border border-subtle bg-inset p-2" /></label>

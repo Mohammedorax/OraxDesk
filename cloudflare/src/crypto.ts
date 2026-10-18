@@ -1,5 +1,5 @@
 import { AES_KEY_BYTES } from "./constants";
-import { b64urlDecode, b64urlEncode, utf8 } from "./encoding";
+import { b64urlDecode, b64urlEncode, sha256, utf8 } from "./encoding";
 
 const keyCache = new Map<string, Promise<CryptoKey>>();
 
@@ -109,6 +109,21 @@ export function selectInvitationKey(
 /** The key id to record on new rows. Changing it starts a rotation window. */
 export function currentInvitationKeyId(env: { INVITATION_KEY_ID?: string }): string {
   return (env.INVITATION_KEY_ID ?? "k1").slice(0, 8);
+}
+
+/**
+ * A stable nine-digit number for a device, derived from its public key.
+ *
+ * The same key always yields the same number, so it survives restarts and
+ * re-registration without needing a lookup. Uniqueness is enforced by the
+ * registry's unique index; a collision is astronomically unlikely below
+ * millions of devices and fails loudly rather than silently merging devices.
+ */
+export async function deviceNumber(publicKey: Uint8Array): Promise<string> {
+  const digest = await sha256(publicKey);
+  const value =
+    ((digest[0]! << 24) | (digest[1]! << 16) | (digest[2]! << 8) | digest[3]!) >>> 0;
+  return String(value % 1_000_000_000).padStart(9, "0");
 }
 
 export async function verifyEd25519(

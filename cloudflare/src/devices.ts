@@ -3,7 +3,7 @@ import {
   MAX_CLIENT_VERSION_CHARS,
   MAX_LABEL_CHARS,
 } from "./constants";
-import { b64urlDecode } from "./crypto";
+import { b64urlDecode, deviceNumber } from "./crypto";
 import { nowSeconds, sha256Hex } from "./encoding";
 import type { Env } from "./env";
 import {
@@ -21,6 +21,7 @@ import { endpointId, isEndpointId } from "./id";
 export interface DeviceRow {
   id: string;
   fingerprint: string;
+  number: string | null;
   protocol_version: number;
   client_version: string | null;
   created_at: number;
@@ -31,6 +32,7 @@ function deviceView(row: DeviceRow): Record<string, unknown> {
   return {
     id: row.id,
     fingerprint: row.fingerprint,
+    number: row.number,
     protocol_version: row.protocol_version,
     client_version: row.client_version,
     created_at: row.created_at,
@@ -38,7 +40,8 @@ function deviceView(row: DeviceRow): Record<string, unknown> {
   };
 }
 
-const VIEW_COLUMNS = "id, fingerprint, protocol_version, client_version, created_at, revoked_at";
+const VIEW_COLUMNS =
+  "id, fingerprint, number, protocol_version, client_version, created_at, revoked_at";
 
 /**
  * Registers a device, or refreshes an existing registration. The request is
@@ -76,6 +79,7 @@ export async function registerDevice(
   await consumeNonce(env, auth.nonce, id);
 
   const now = nowSeconds();
+  const number = await deviceNumber(publicKey);
   const existing = await env.DB.prepare(
     `SELECT ${VIEW_COLUMNS} FROM devices WHERE id = ?`,
   )
@@ -85,14 +89,16 @@ export async function registerDevice(
     if (existing.revoked_at !== null) {
       throw new ApiError(403, "forbidden", "This device was revoked");
     }
+    // Older rows registered before 0003 get their number backfilled here.
     await env.DB.prepare(
-      "UPDATE devices SET label = ?, client_version = ?, protocol_version = ?, updated_at = ? WHERE id = ?",
+      "UPDATE devices SET label = ?, client_version = ?, protocol_version = ?, number = COALESCE(number, ?), updated_at = ? WHERE id = ?",
     )
-      .bind(label, clientVersion, protocolVersion, now, id)
+      .bind(label, clientVersion, protocolVersion, number, now, id)
       .run();
     return jsonResponse(
       deviceView({
         ...existing,
+        number: existing.number ?? number,
         protocol_version: protocolVersion,
         client_version: clientVersion,
       }),
@@ -103,15 +109,16 @@ export async function registerDevice(
   const fingerprint = await sha256Hex(publicKey);
   await env.DB.prepare(
     `INSERT INTO devices
-       (id, public_key, fingerprint, label, client_version, protocol_version, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+       (id, public_key, fingerprint, number, label, client_version, protocol_version, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   )
-    .bind(id, publicKey, fingerprint, label, clientVersion, protocolVersion, now, now)
+    .bind(id, publicKey, fingerprint, number, label, clientVersion, protocolVersion, now, now)
     .run();
   return jsonResponse(
     deviceView({
       id,
       fingerprint,
+      number,
       protocol_version: protocolVersion,
       client_version: clientVersion,
       created_at: now,
@@ -128,6 +135,23 @@ export async function getDevice(env: Env, id: string): Promise<Response> {
     `SELECT ${VIEW_COLUMNS} FROM devices WHERE id = ?`,
   )
     .bind(id)
+    .first<DeviceRow>();
+  if (row === null) throw new ApiError(404, "not_found", "No such device");
+  return jsonResponse(deviceView(row));
+}
+
+/**
+ * Lookup by the nine-digit number printed on the device. This is what lets a
+ * helper type a number a person reads to them instead of a 64-character id.
+ */
+export async function getDeviceByNumber(env: Env, number: string): Promise<Response> {
+  if (!/^\d{9}$/.test(number)) {
+    throw new ApiError(400, "bad_request", "A device number is 9 digits");
+  }
+  const row = await env.DB.prepare(
+    `SELECT ${VIEW_COLUMNS} FROM devices WHERE number = ?`,
+  )
+    .bind(number)
     .first<DeviceRow>();
   if (row === null) throw new ApiError(404, "not_found", "No such device");
   return jsonResponse(deviceView(row));
