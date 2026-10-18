@@ -1,0 +1,495 @@
+import { installTerminalClipboard } from "../lib/terminalClipboard";
+/**
+ * The primary surface for a session whose protocol IS ssh: a full-window
+ * terminal instead of the framebuffer canvas `SessionView` draws for VNC and
+ * RDP (PRD/09-ish, ssh-core end to end).
+ *
+ * SSH goes through the exact same `connect_session` path as the other two
+ * protocols, so this reuses `useSession` wholesale, state machine, reconnect,
+ * disconnect, credentials, the SSH tunnel gateway's own host-key prompt, and
+ * differs only in its render surface: `onPty` (msg_type 3) drives an xterm.js
+ * terminal instead of `onFrame`/`onCursorShape` driving a WebGL canvas. The
+ * terminal setup itself (fonts, WebGL-over-canvas upgrade, resize watch, live
+ * theme) is shared with the sidecar `SshTerminal` dialog a VNC/RDP session can
+ * still open on top of its own desktop; see `components/SshTerminal.tsx` for
+ * the extracted pieces.
+ */
+import { useCallback, useEffect, useMemo, useRef, type ReactNode } from "react";
+import type { Terminal } from "@xterm/xterm";
+import type { FitAddon } from "@xterm/addon-fit";
+import {
+  authMethodLabel,
+  readSessionParams,
+  useSession,
+  type SessionBridge,
+  type SessionParams,
+} from "../hooks/useSession";
+import { buildTheme, createTerminal, watchTerminalResize, watchThemeChanges } from "../components/SshTerminal";
+import { captureTerminalThumbnail } from "../render/TerminalThumbnail";
+import { ConnectingOverlay, DisconnectedOverlay, ReconnectOverlay } from "../components/SessionOverlays";
+import { CertPrompt } from "../components/CertPrompt";
+import { CredentialPrompt } from "../components/CredentialPrompt";
+import { SshHostKeyPrompt } from "../components/SshHostKeyPrompt";
+import { ToastShelf } from "../components/primitives";
+import { useToasts } from "../state/ToastContext";
+import { classNames } from "../lib/util";
+import { inTauri, safeInvoke } from "../lib/tauri";
+import type { SessionState } from "../lib/types";
+
+/**
+ * Delay between the session reaching `connected` and the settle capture, so
+ * the shell has actually drawn a prompt instead of a blank grid. Matches
+ * `Session.tsx`'s `THUMBNAIL_SETTLE_MS`, kept as its own constant here since
+ * that file's is not exported and the two capture paths (framebuffer vs.
+ * terminal buffer) have nothing else in common to share.
+ */
+const THUMBNAIL_SETTLE_MS = 1200;
+
+/**
+ * Budget for the last-chance capture raced against an explicit close (tab or
+ * window): long enough for the invoke to land, short enough that a stuck
+ * capture cannot wedge the close. Matches `Session.tsx`'s
+ * `CAPTURE_CLOSE_BUDGET_MS`, kept local for the same reason as the constant
+ * above.
+ */
+const CAPTURE_CLOSE_BUDGET_MS = 700;
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+export interface SshSessionProps {
+  /** Connection parameters. Omit in a session window, where the URL has them. */
+  params?: SessionParams;
+  /** Mounted as a tab rather than owning the window it is in. */
+  embedded?: boolean;
+  /**
+   * This view owns the keyboard.
+   *
+   * There is deliberately no `onScreen` counterpart, as there is on the
+   * framebuffer view. A terminal in a pane nobody is typing in keeps running
+   * and keeps taking output, and xterm draws itself; the only thing that
+   * follows the focus is the caret. Only meaningful when embedded.
+   */
+  focused?: boolean;
+  /** Embedded: take this tab off the strip. */
+  onClose?: () => void;
+  /** Connection state changed, for the tab's status dot. */
+  onState?: (state: SessionState) => void;
+}
+
+/** Status pill next to the host name; mirrors `SshTerminal`'s but keyed off
+ *  `useSession`'s state machine rather than the sidecar's own. */
+function statusPill(state: SessionState): { label: string; dot: string } {
+  switch (state.state) {
+    case "connected":
+      return { label: "Connected", dot: "bg-success" };
+    case "authenticating":
+      return { label: `Authenticating (${authMethodLabel(state.method)})`, dot: "bg-tertiary animate-pulse" };
+    case "reconnecting":
+      return { label: `Reconnecting (attempt ${state.attempt})`, dot: "bg-warning animate-pulse" };
+    case "disconnected":
+      return { label: "Disconnected", dot: "bg-danger" };
+    default:
+      return { label: "Connecting…", dot: "bg-tertiary animate-pulse" };
+  }
+}
+
+/** The words the app uses for a multiplexer kind, for "reattached to your
+ *  ___ session". `MultiplexerKind` is kebab-case on the wire (`ssh-core`);
+ *  "auto"/"none" never reach here with `resumed: true`. */
+function multiplexerLabel(kind: string | null): string {
+  switch (kind) {
+    case "tmux":
+      return "tmux";
+    case "psmux":
+      return "psmux";
+    case "screen":
+      return "screen";
+    case "zellij":
+      return "zellij";
+    case "custom":
+      return "configured";
+    default:
+      return "remote";
+  }
+}
+
+export function SshSession({
+  params: paramsProp,
+  embedded = false,
+  focused: focusedProp = true,
+  onClose,
+  onState,
+}: SshSessionProps): ReactNode {
+  const params = paramsProp ?? readSessionParams();
+  /**
+   * A terminal in a background pane keeps running and keeps taking output; the
+   * only thing that follows the focus is the caret. So unlike `SessionView`,
+   * which has a keyboard hook and a menu listener to arbitrate, this one needs
+   * the focused flag and nothing else.
+   */
+  const owns = !embedded || focusedProp;
+  const containerRef = useRef<HTMLDivElement>(null);
+  const termRef = useRef<Terminal | null>(null);
+  const fitRef = useRef<FitAddon | null>(null);
+  const { push } = useToasts();
+
+  const bridge = useMemo<SessionBridge>(
+    () => ({
+      // A framebuffer/cursor bridge has no meaning here; the terminal is the
+      // whole surface. `SessionView`'s bridge returns the favour for msg_type
+      // 3, see the comment on its own `onPty` no-op.
+      onFrame: () => undefined,
+      onDesktopResize: () => undefined,
+      onCursorShape: () => undefined,
+      onCursorPosition: () => undefined,
+      onPty: (_stream, bytes) => {
+        // Both streams are written verbatim: stream 1 (a terminal-mode reset)
+        // has to reach the terminal exactly like output to actually undo
+        // whatever DEC private mode a dead link left switched on, it is only
+        // kept off `stream` 0 so it is never logged or treated as something
+        // the remote program said (FRAME_FORMAT.md msg_type=3). xterm decodes
+        // UTF-8 itself and carries a partial sequence across writes, which is
+        // exactly why the backend hands over bytes rather than a string.
+        termRef.current?.write(bytes);
+      },
+    }),
+    [],
+  );
+
+  const session = useSession(params, bridge);
+  const sessionRef = useRef(session);
+  sessionRef.current = session;
+
+  // ---------------------------------------------------------- library thumbnail
+  //
+  // Same policy as `Session.tsx`'s VNC/RDP capture (PRD/03 §3.1): once a
+  // short while after `connected`, so the shell has drawn a prompt, and once
+  // more as a last chance on the way out. Never on every frame or on a
+  // timer: terminal output can be continuous and a capture per burst would
+  // be waste.
+
+  // A prompt on top of the terminal means the buffer may be showing a
+  // credential or host-key dialog rather than the shell; never store that.
+  const promptUp =
+    session.credentialRequest !== null ||
+    session.certPrompt !== null ||
+    session.sshHostKeyPrompt !== null;
+  const promptUpRef = useRef(promptUp);
+  promptUpRef.current = promptUp;
+
+  /**
+   * Reads the terminal's buffer and hands the pixels to the shell.
+   * Resolves true only if a capture actually happened, so callers that only
+   * get one shot (the exit paths below) can tell whether they used it.
+   */
+  const captureThumb = useCallback(async (): Promise<boolean> => {
+    if (promptUpRef.current) return false;
+    const term = termRef.current;
+    if (!term) return false;
+    const frame = captureTerminalThumbnail(term);
+    if (!frame) return false;
+    await sessionRef.current.captureThumbnail(frame.width, frame.height, frame.pixels);
+    return true;
+  }, []);
+
+  // Debounced to once per session: the settle timer is armed by the first
+  // `connected` transition and never re-arms, so a flapping reconnect cannot
+  // turn into a capture per attempt.
+  const settledCapture = useRef(false);
+  useEffect(() => {
+    if (session.state.state !== "connected") return;
+    if (settledCapture.current) return;
+    const t = window.setTimeout(() => {
+      settledCapture.current = true;
+      void captureThumb();
+    }, THUMBNAIL_SETTLE_MS);
+    return () => window.clearTimeout(t);
+  }, [session.state.state, captureThumb]);
+
+  // The exit capture for a session that drops (or is disconnected) while the
+  // window stays open: the terminal is still mounted at this point, unlike
+  // the unmount cleanup below, so this is the only chance to catch that case.
+  const exitCaptured = useRef(false);
+  useEffect(() => {
+    if (session.state.state !== "disconnected") return;
+    if (exitCaptured.current) return;
+    void captureThumb().then((captured) => {
+      if (captured) exitCaptured.current = true;
+    });
+  }, [session.state.state, captureThumb]);
+
+  // ------------------------------------------------------------- terminal
+
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    const { term, fit, cancelWebgl } = createTerminal();
+    // Register the resize handler BEFORE the first fit, so the size that fit
+    // measures is actually sent. Done the other way round (the original bug),
+    // the opening fit fired into no handler, the ResizeObserver's later fit
+    // was a no-op that changed nothing and so emitted nothing either, and the
+    // only size the remote ever heard was whatever the connected-effect below
+    // happened to read.
+    const dData = term.onData((d) => sessionRef.current.sendTerminalInput(new TextEncoder().encode(d)));
+    const dResize = term.onResize(({ cols, rows }) => sessionRef.current.sendTerminalResize(cols, rows));
+    const stopClipboard = installTerminalClipboard(term, container);
+    term.open(container);
+    fit.fit();
+    termRef.current = term;
+    fitRef.current = fit;
+    const stopResizeWatch = watchTerminalResize(container, fit);
+
+    return () => {
+      // BEFORE dispose(): a disposed terminal has no buffer to read. The
+      // read itself (inside `captureThumb`, up to its first `await`) runs
+      // synchronously, so calling this without awaiting still reads the
+      // buffer here, ahead of `term.dispose()` two lines down; only the
+      // invoke that follows keeps running after this cleanup returns.
+      if (!exitCaptured.current) void captureThumb();
+      cancelWebgl();
+      stopResizeWatch();
+      dData.dispose();
+      dResize.dispose();
+      stopClipboard();
+      term.dispose();
+      termRef.current = null;
+      fitRef.current = null;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  /**
+   * Tell the remote how big the terminal actually is, once there is a remote
+   * to tell, measuring fresh at that instant.
+   *
+   * The opening `fit()` at mount runs while the session is still connecting (a
+   * TCP dial, a key exchange, authentication, the multiplexer probe and a pty
+   * request all have to finish first), so any resize it produces reaches a
+   * session that does not exist yet and is dropped. That left the connect-time
+   * size resting entirely on this effect, and it used to trust whatever the
+   * opening fit had measured, which on a pane that had not finished its layout
+   * at mount was a stale small grid. The pty then kept 80x24 and a full-screen
+   * program, tmux included, drew into a corner of a much larger window. So
+   * this re-fits against the settled layout before it reads and sends.
+   *
+   * It also covers the reconnect case, where the far side is a brand new pty
+   * that has never been told anything.
+   */
+  useEffect(() => {
+    if (session.state.state !== "connected") return;
+    const term = termRef.current;
+    if (!term) return;
+    // Measure NOW, not whatever the opening fit captured. By the time a
+    // connection completes (a TCP dial, a key exchange, auth, the multiplexer
+    // probe and a pty request), the pane has long since settled its layout,
+    // so this is the first measurement that is guaranteed to be against the
+    // real on-screen size rather than a half-laid-out container from mount.
+    // Without it, a terminal that mounted before its pane had a size would
+    // send that stale small size to the remote and never correct it, and a
+    // full-screen program (tmux included) would sit in a corner of the window.
+    fitRef.current?.fit();
+    session.sendTerminalResize(term.cols, term.rows);
+    // `session` is deliberately not a dependency: it is rebuilt on every
+    // render, and this must fire on the transition into `connected`, not on
+    // every render that happens while connected.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session.state.state]);
+
+  // Live theme: re-read the tokens whenever the app's theme actually
+  // changes, not only once at mount (Preferences ▸ Appearance while a
+  // session window is open).
+  useEffect(() => {
+    const apply = (): void => {
+      const term = termRef.current;
+      if (term) term.options.theme = buildTheme();
+    };
+    return watchThemeChanges(apply);
+  }, []);
+
+  // Taking the focus takes the caret with it, same reasoning as
+  // `SessionView`'s equivalent effect: a pane nobody is typing into must not
+  // hold the keyboard, and clicking into this one has to grab it back.
+  useEffect(() => {
+    if (owns) termRef.current?.focus();
+  }, [owns]);
+
+  // A tab does not own the window title; the shell sets it from whichever
+  // tab is in front.
+  useEffect(() => {
+    if (embedded) return;
+    document.title = params.name;
+  }, [embedded, params.name]);
+
+  const reportStateRef = useRef(onState);
+  reportStateRef.current = onState;
+  useEffect(() => {
+    reportStateRef.current?.(session.state);
+  }, [session.state]);
+
+  // "Reattached to your tmux session" is the one moment worth interrupting
+  // for: it is the answer to "did my work survive the disconnect". Toasted
+  // once per attach, not once per `ssh-attached` state object (a reconnect
+  // that resumes again is worth saying again).
+  const resumeToasted = useRef(false);
+  useEffect(() => {
+    if (session.state.state !== "connected") {
+      resumeToasted.current = false;
+      return;
+    }
+    if (session.sshAttached?.resumed && !resumeToasted.current) {
+      resumeToasted.current = true;
+      push("success", `Reattached to your ${multiplexerLabel(session.sshAttached.multiplexer)} session`);
+    }
+  }, [session.state.state, session.sshAttached, push]);
+
+  // `ssh-notice` is for a status area, never the terminal (FRAME_FORMAT.md);
+  // it says its piece and gets out of the way rather than piling into the
+  // toast shelf, same convention `SshTerminal`'s own notice line uses.
+  const notice = session.sshNotice;
+
+  // ------------------------------------------------------------- close
+
+  // Both branches grab the last-chance capture BEFORE tearing the session
+  // down: `capture_thumbnail` resolves which host the pixels belong to from
+  // the live session registry, and that entry goes away with the session, so
+  // a capture that started after `disconnect_session` would find nothing to
+  // attach to. Raced against a budget so a stuck invoke cannot wedge the tab
+  // or window open; `exitCaptured` is still latched on the unraced promise,
+  // so the terminal effect's own unmount capture (below) does not repeat it.
+  const dismiss = useCallback((): void => {
+    const captured = captureThumb().then((ok) => {
+      if (ok) exitCaptured.current = true;
+      return ok;
+    });
+    if (embedded) {
+      void Promise.race([captured, delay(CAPTURE_CLOSE_BUDGET_MS)])
+        .catch(() => undefined)
+        .finally(() => onClose?.());
+      return;
+    }
+    if (!inTauri()) {
+      window.location.search = "";
+      return;
+    }
+    void Promise.race([captured, delay(CAPTURE_CLOSE_BUDGET_MS)])
+      .catch(() => undefined)
+      .then(() => safeInvoke("disconnect_session", { sessionId: params.sessionId }, null))
+      .finally(() => {
+        void import("@tauri-apps/api/window").then(({ getCurrentWindow }) => {
+          const win = getCurrentWindow();
+          void win.close().catch(() => void win.destroy());
+        });
+      });
+  }, [embedded, onClose, params.sessionId, captureThumb]);
+
+  // ------------------------------------------------------------- render
+
+  const st = session.state;
+  const showConnecting =
+    st.state === "resolving" || st.state === "connecting" ||
+    st.state === "authenticating" || st.state === "negotiating" || st.state === "idle";
+  const pill = statusPill(st);
+
+  return (
+    <div className="relative flex h-full w-full flex-col overflow-hidden bg-canvas">
+      <div className="flex shrink-0 items-center justify-between border-b border-subtle bg-surface px-4 py-2">
+        <h1 className="truncate text-sm font-semibold text-primary">{params.name}</h1>
+        <div className="flex items-center gap-3">
+          <span className="flex items-center gap-1.5 text-2xs text-tertiary">
+            <span className={classNames("h-1.5 w-1.5 rounded-full", pill.dot)} />
+            {pill.label}
+          </span>
+          {st.state === "connected" || st.state === "reconnecting" ? (
+            <button
+              type="button"
+              className="btn-secondary px-2.5 py-1 text-xs"
+              onClick={session.disconnect}
+            >
+              Disconnect
+            </button>
+          ) : null}
+        </div>
+      </div>
+
+      <div className="relative min-h-0 flex-1 bg-inset">
+        <div ref={containerRef} className="h-full w-full px-3 py-2" />
+
+        {showConnecting ? <ConnectingOverlay state={st} name={params.name} /> : null}
+
+        {st.state === "reconnecting" ? (
+          <ReconnectOverlay
+            name={params.name}
+            attempt={st.attempt}
+            nextRetryMs={st.next_retry_ms}
+            reason={st.reason}
+            onRetryNow={session.reconnectNow}
+            onDisconnect={session.disconnect}
+          />
+        ) : null}
+
+        {st.state === "disconnected" ? (
+          <DisconnectedOverlay
+            name={params.name}
+            reason={st.reason}
+            canRetry={st.can_retry}
+            profileId={params.profileId}
+            onEditSecurity={null}
+            onReconnect={session.retryConnect}
+            onClose={dismiss}
+          />
+        ) : null}
+      </div>
+
+      {notice ? (
+        <div className="shrink-0 border-t border-subtle bg-inset/50 px-3 py-1.5 text-2xs text-tertiary">
+          {notice}
+        </div>
+      ) : null}
+
+      {session.certPrompt ? (
+        <CertPrompt
+          data={{
+            fingerprint: session.certPrompt.fingerprint,
+            subject: session.certPrompt.subject,
+            isChange: session.certPrompt.isChange,
+            hostName: params.name,
+            scheme: session.certPrompt.scheme,
+          }}
+          onTrust={() => session.trustCertificate(true)}
+          onConnectOnce={() => session.trustCertificate(false)}
+          onCancel={session.dismissCertPrompt}
+        />
+      ) : null}
+
+      {/* Same stacking lift `Session.tsx` gives this prompt: the connect is
+          parked on the answer while the overlay above still says "Connecting…". */}
+      {session.sshHostKeyPrompt ? (
+        <div className="relative z-50">
+          <SshHostKeyPrompt
+            data={session.sshHostKeyPrompt}
+            onAccept={session.acceptSshHostKey}
+            onCancel={session.dismissSshHostKeyPrompt}
+          />
+        </div>
+      ) : null}
+
+      {session.credentialRequest ? (
+        <div className="relative z-50">
+          <CredentialPrompt
+            request={session.credentialRequest}
+            hostName={params.name}
+            protocol={params.protocol}
+            previous={session.lastCredentialAnswer}
+            onSubmit={session.submitCredentials}
+            onCancel={session.dismissCredentialPrompt}
+          />
+        </div>
+      ) : null}
+
+      {embedded ? null : <ToastShelf />}
+    </div>
+  );
+}

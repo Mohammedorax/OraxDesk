@@ -1,0 +1,2800 @@
+# Changelog
+
+All notable changes to this project are documented here.
+
+The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
+this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+While the version stays below 1.0, minor releases may contain breaking changes
+to stored data and to the IPC contract between the Rust core and the frontend.
+
+## [Unreleased]
+
+## [0.30.0] (2026-10-17)
+
+### Added
+
+* **Get help** in DeskVNC. Someone who already has DeskVNC can now be helped
+  without downloading DeskVNC Support. It has everything that app offers the
+  person being helped: a short code or a full invitation, the approval dialog,
+  control and the helper's tools as separate choices with a list of what the
+  tools did, letting a helper connect any time, and unattended access with
+  paired helpers, a password, and starting DeskVNC at sign in.
+* The approval and a banner naming whoever is connected show over the whole
+  DeskVNC window, and the window comes forward when a helper asks to be let in.
+* The **Get help** dialog lists every helper connected unattended, each with
+  its own banner and its own End and Stop buttons.
+* Unattended access works before anyone signs in. On Windows, switching on
+  "Also before anyone signs in" in DeskVNC Support installs a small service
+  that starts a host on the sign in screen and on a locked screen, and hands
+  over to the signed in app once someone is in. On macOS a login window agent
+  does the same, except on a Mac with FileVault, which has no screen to show
+  until the disk is unlocked. At the sign in screen nobody is there to approve,
+  so only paired helpers and the password get in, and a helper's tools stay off.
+* Up to eight helpers can be connected unattended at the same time. A ninth is
+  told the computer already has eight helpers connected.
+* DeskVNC Support writes unattended connections, refusals and why each session
+  ended to a log beside the machine ID.
+
+### Changed
+
+* The **Boundary support** button is now **Help someone**, so it is clear it
+  is for connecting to another person, and it accepts a short code as well as
+  an invitation.
+* DeskVNC and DeskVNC Support on the same computer share one computer ID, one
+  list of paired helpers and one connection setting. Only one of them answers
+  unattended connections at a time; if both have it switched on, DeskVNC takes
+  over when DeskVNC Support quits.
+* Closing the DeskVNC Support window while unattended access is on keeps it in
+  the tray, so the computer stays reachable. It used to pop back up.
+
+### Fixed
+
+* Agents were refused typing with SCREEN_CHANGED on a screen where nothing had
+  moved. Some VNC servers, wayvnc on a Raspberry Pi among them, resend large
+  unchanged parts of the screen around a blinking cursor, and every resend
+  counted as a new window. The check now counts the pixels that changed, so a
+  cursor or a clock does not trip it and a window opening still does.
+* A long `dvv type` could stop partway and still report delivered. On a
+  Raspberry Pi a 150 character command arrived as its first 24 characters. The
+  result now says how many characters went and quotes the rest, nothing after
+  a refused key is typed, and a busy session is waited out instead of losing
+  keys.
+* An agent driving `dvv` from a shell could be served by an older `dvv` left
+  running from before an upgrade. Each `dvv` binary now keeps its own
+  background holder.
+* `cargo tauri build` on macOS puts `dvv` in the app, as the release build
+  always did. An app built that way and copied to Applications had no `dvv`,
+  so every agent configured for it failed to start the DeskVNC tools.
+* RDP clipboard to and from Windows (#9). Windows ignored every clipboard
+  message from DeskVNC, because the clipboard channel was not opened with its
+  header shown, which Windows requires and xrdp does not. Text now goes both
+  ways with Windows 10 and 11.
+* The credential prompt starts with Remember ticked when the host already has a
+  saved password, so reconnecting does not quietly forget it (#9). The host
+  editor shows the saved login as well.
+* An unattended session that ended kept its "is connected" banner, in DeskVNC
+  and in DeskVNC Support, because the end of the session was never reported.
+  A second unattended helper in DeskVNC also ended the first.
+* A helper paired from the ask dialog did not show in Paired helpers until the
+  window was reopened.
+* The Windows apps start on a Windows that has no Visual C++ redistributable.
+* DeskVNC Support opens on a Windows where OpenGL is only 1.1, such as a
+  virtual machine or a remote session, by using Direct3D or Vulkan instead.
+* An agent's limb whose relay had stopped now reattaches, instead of every
+  action settling as link lost.
+
+## [0.29.0] (2026-10-15)
+
+### Added
+
+* Connecting to a Boundary computer by its machine ID works on a fresh install.
+  A helper that is not paired and has no password is no longer turned away:
+  the person at that computer is asked, as they are for an invitation, and can
+  pair the helper so it comes straight in next time.
+* New Host offers Boundary next to VNC, RDP and SSH, with a machine ID field in
+  place of address and port, so a Boundary computer is saved and reopened like
+  any other.
+* A VNC host shows a User name field when it needs one: Apple Screen Sharing,
+  the VeNCrypt types that take one, and Auto against a Mac. The name is saved
+  with the host and used at connect without a prompt (#9).
+* On macOS, DeskVNC Support notices when it runs from Downloads as a
+  translocated copy and moves itself to Applications with one click.
+
+### Fixed
+
+* Boundary showed a still picture on slow links. Each screen had 750 ms to
+  arrive at one end and 2 s at the other, so on a cellular uplink nearly all
+  of them were thrown away. Screens now go as JPEG, a tenth the size, to a
+  helper that takes it, an unchanged screen is not sent again, and a slow
+  screen is allowed to finish.
+* A Boundary session opened view only and ignored the mouse and keyboard. The
+  window saved its own "view only until allowed" state as the person's choice
+  and read it back next time. Agents were blocked by the same thing.
+* A burst of pointer moves on a slow Boundary link ended the session. Surplus
+  moves are now dropped instead.
+* Boundary computers never got a thumbnail in the Library, because the picture
+  was taken once, before the first Boundary screen had arrived.
+* RDP clipboard sharing (#9): text copied on the server never reached this
+  computer, the clipboard stopped working after a server reactivated the
+  session, and some servers that open the clipboard early failed to connect.
+  The per host "Share my clipboard" switch is now honoured for RDP, and the
+  local clipboard is offered again after a reconnect.
+* Credentials typed at a prompt were lost when a connection, including one
+  through an SSH tunnel, failed or dropped (#9). A VNC password that the
+  server accepted is saved even if the session drops before its first frame,
+  an automatic reconnect no longer asks again, a reconnect after a wrong
+  password keeps the user name, and "Remember" stays ticked between attempts.
+* A host switched to "VNC password only" now uses the password typed after the
+  switch, not one saved earlier under Apple auth.
+* `dvv_run` returns the command's output and exit status; it reported only that
+  the command was delivered.
+* DeskVNC Support for Intel Macs, built with a newer Xcode, failed to launch
+  for want of a Swift runtime path.
+
+### Security
+
+* rustls is updated to 0.23.46 for RUSTSEC-2026-0346, 0347, 0348 and 0349.
+
+### Changed
+
+* Both ends of a Boundary session should be on 0.29.0 for JPEG screens and the
+  approve on screen flow. Older copies still connect, with PNG screens.
+
+## [0.28.0] (2026-10-13)
+
+### Added
+
+* `dvv_run` and `dvv_files` work over a Boundary support session, with no SSH
+  on the far side. DeskVNC Support runs the command itself and answers with the
+  process's own exit status and output, and file operations travel over the
+  session.
+* DeskVNC Support asks the person being helped, separately from viewing and
+  control, whether the helper's tools may run commands and copy files. It is
+  off until they tick it, they can turn it off at any time, and each command
+  and file operation is listed on their screen as it runs. For unattended
+  access it is a setting on each paired helper, off for helpers paired before
+  this release, and an unattended password never grants it.
+* An agent can attach to a Boundary session once that consent is given, and is
+  stopped the moment it is taken back.
+
+### Changed
+
+* A command that passes its timeout on a Boundary computer ends with everything
+  it started, not just its shell.
+* Both ends of a Boundary session need 0.28.0 for commands and files. An older
+  DeskVNC Support still works for viewing and control, and an agent is told to
+  update it rather than left waiting.
+
+## [0.27.11] (2026-10-08)
+
+### Added
+
+* A Linux build of DeskVNC Support is attached to the release, as an x86_64
+  binary in a tarball.
+
+### Changed
+
+* The Boundary crates are compiled, linted and tested in CI on Linux, macOS
+  and Windows, so a platform break shows up before a release.
+
+## [0.27.10] (2026-10-07)
+
+### Changed
+
+* The Windows downloads are now code signed by Open Source Developer Godwin
+  Josh, through Certum. That covers the setup exe, the MSI, the app inside them,
+  dvv and DeskVNC Support. SmartScreen may still ask once while the new
+  certificate builds a reputation.
+
+## [0.27.9] (2026-10-05)
+
+### Added
+
+* Unattended access in DeskVNC Support. During a session the person being
+  helped can let that helper connect any time, and the helper's computer is
+  told this computer's ID to save. An Unattended access section turns it on or
+  off, shows the ID, lists paired helpers and whether each may control, sets or
+  removes an unattended password, and starts the app at sign in. While a helper
+  is in with nobody's approval, a red banner says who, and one button ends it.
+* DeskVNC opens paired and unattended Boundary computers from the Library like
+  any other machine, with one lasting helper identity so a computer that paired
+  it recognises it next time. The Boundary dialog adds a computer by its ID,
+  with an optional password kept in the keychain.
+* A Windows build of DeskVNC Support is attached to the release alongside the
+  macOS one.
+
+### Changed
+
+* DeskVNC Support opens on the screen people know from other remote support
+  tools: Allow remote control on the left with one button and a large code or
+  invitation to copy, Control remote computer on the right with a partner code
+  field and a Connect button, a status bar at the bottom, and everything else
+  behind Settings. It uses DeskVNC's colours and the system font, in light or
+  dark with the operating system.
+* The partner field in DeskVNC Support also takes a computer's ID for
+  unattended access, and the app keeps a lasting helper identity so pairing
+  works from it too.
+* With a code service configured, the short code appears on its own as soon as
+  the invitation exists, instead of after a second button press.
+
+### Fixed
+
+* On a scaled Windows display a helper's pointer landed in the wrong place;
+  clicks now go where the helper clicked.
+* Boundary name lookups ask the operating system first. iroh's own resolver
+  timed out on a Windows PC with a VPN and a disconnected Wi-Fi adapter.
+
+## [0.27.8] (2026-10-04)
+
+### Fixed
+
+* On macOS and Linux, agents installed through nvm, fnm, Volta, asdf, mise,
+  Homebrew or npm are found and connected when the app is opened from the
+  Dock or a desktop menu, which gives it a bare PATH.
+* The Linux AppImage connects agents to a copy of `dvv` that stays put, and an
+  agent starts the AppImage itself when the app is closed.
+* An agent starts the app after it crashed or was killed on macOS and Linux.
+  The socket it left behind used to be taken for a running app.
+* `dvv hosts | head` and similar no longer end in a broken pipe panic.
+* The skill sends OpenCode, Claude Code and Codex to the `dvv_` tools, which
+  hand over the screenshot directly. A model following the shell route saved
+  pictures where OpenCode would not read them without asking the user.
+* The agent plane no longer tries to put its socket at the root of the
+  filesystem when `XDG_RUNTIME_DIR` is set but empty.
+
+## [0.27.7] (2026-10-04)
+
+### Changed
+
+* AI agents work with nothing to set up. The agent plane is on unless you
+  switch it off in the AI Agents panel, and off is remembered.
+* Each time DeskVNCViewer starts it connects the agents installed on the
+  computer: OpenCode, Pi, Claude Code and Codex. An agent installed later is
+  picked up on the next launch, or at once with Connect now in the panel.
+* After an update, every agent is pointed at the new `dvv` on the next launch.
+  Before, an agent kept calling the `dvv` of the version it was set up with.
+* An agent can be used with DeskVNCViewer closed. `dvv` starts it when it is
+  needed.
+* Pi finds `dvv` without any change to PATH: it is placed beside the `pi`
+  command.
+
+## [0.27.6] (2026-10-03)
+
+### Fixed
+
+* AI agents can drive machines on Windows. The agent plane had no Windows
+  transport, so the app would not start it and `dvv` refused every call. Both
+  now use a named pipe that only the user who started DeskVNCViewer can open.
+* The Windows and Linux installers include `dvv`. Before this release only the
+  macOS bundle carried it.
+* Pi and other shell driven agents work on Windows. `dvv open` no longer hangs
+  when its output is read, and a machine stays held between commands, including
+  one first picked up from `dvv limbs`.
+* An agent started before DeskVNCViewer, or before a machine was saved, can
+  open that machine. It used to be refused for the whole session.
+* Typing no longer drops characters or Shift on a Windows desktop. Text goes at
+  250 characters a second unless the agent asks for a speed.
+* A screenshot after a minute or more of quiet works again instead of failing
+  for the rest of the task.
+* `dvv setup` finds OpenCode, Pi and Claude Code on Windows and writes paths
+  they can run. The Connect Claude Code button finds `claude.exe`.
+* `dvv open` accepts a machine's saved name as well as its id, and `dvv type`
+  takes `--wpm`.
+* CI passes again on Rust 1.99, and now tests the agent crates on every
+  platform.
+
+## [0.27.5] (2026-09-26)
+
+### Fixed
+
+* macOS release bundles now include the universal `dvv` executable. Release
+  checks verify that it runs, contains both architectures and has a valid signature.
+* Windows Cargo manifests now use LF on checkout, matching Tauri and preventing
+  a false dirty stamp caused by line ending rewrites.
+* Release builds require a clean checkout and the committed Cargo lockfile.
+  Generated sidecars and installer output no longer affect the dirty stamp.
+* Both SSH views support native clipboard copy and paste with Cmd+C/V or
+  Ctrl+Shift+C/V. Pasting preserves terminal newline and bracketed paste handling.
+* The capture indicator detects a helper that exits unexpectedly, and the same
+  session can restart capture. The Windows shortcut fix remains in v0.27.4.
+* Corrected the maximum limb ID length for Boundary and included limb identity
+  tests in CI.
+* Updated codec iteration for the current Rust lints so CI can run its tests.
+
+## [0.27.4] - 2026-09-23
+
+### Fixed
+
+- On Windows, Alt+Tab, Win+Tab, the Windows key and the other system
+  shortcuts now reach the remote computer when "Pass system shortcuts to
+  remote" is on. Before, the switch showed Captured but Windows kept the
+  shortcuts. The keyboard hook was installed inside the application, where
+  Windows does not call it while a DeskVNC window is in front, and it was also
+  removed on every window activation because WebView2 takes the keyboard focus
+  from the window that owns it. The grab now runs in a small helper process
+  started from the same executable. It only takes keys while the session
+  window is in front, and it ends when pass-through is switched off or the
+  application exits.
+- Pass-through on Windows also covers Alt+F4, F10, F11 and Ctrl+W. Alt+F4
+  closed the session window it was typed into, F10 opened the local menu bar,
+  and F11 and Ctrl+W were this application's own menu shortcuts.
+- A modifier held down in another application no longer turns a later Tab
+  into a grabbed Alt+Tab that the remote never saw the Alt for. Left and right
+  Shift, Ctrl and Alt are tracked separately, so releasing one no longer
+  clears the other.
+- The host dialog's "Capture system shortcuts by default" was saved with the
+  profile but never read. A session on that host now starts with pass-through
+  on. What the toolbar switch was last set to on that computer still wins.
+- The pass-through help text on Windows named Ctrl+Tab and Ctrl+Space. It now
+  names Alt+Tab and the Windows key.
+- Black and White and Low no longer paint palette indices as grey levels
+  after a pixel format switch on servers with Fence support (TigerVNC,
+  TurboVNC). The colour map the server sends before answering the guard fence
+  was being discarded as stale.
+- Black and White mode no longer flickers at scaled sizes. Grey levels are
+  now worked out per remote pixel and then filtered, rather than the other way
+  round, so a one unit change in one pixel cannot flip a run of screen pixels
+  between two levels. The 1-bit dither is anchored to the desktop rather than
+  the window.
+
+## [0.27.3] - 2026-09-21
+
+### Added
+
+- DeskVNC now includes the Boundary support transport and the macOS DeskVNC
+  Support recipient app in the same source checkout and release workflow.
+- Attended support can use a temporary numeric code when a shared or private
+  Boundary code service is configured.
+
+### Fixed
+
+- Pasting into an SSH side terminal now captures keyboard, context menu and
+  system paste events before the xterm input element handles them, then sends
+  the text through the SSH input channel. Reported in issue #2.
+
+## [0.27.2] - 2026-09-14
+
+### Fixed
+
+- **Scrolling ran backwards in every session, on every platform.** The wheel
+  delta a webview reports has already been resolved by the operating system:
+  macOS reports one sign with natural scrolling on and the other with it off,
+  and Windows reports its own. Forwarding that delta unchanged is what makes a
+  gesture on the remote desktop agree with the same gesture in every local
+  window, and the input handler negated it instead. The preference controlling
+  that negation defaults on, so this was not a minority with an unusual setting,
+  it was everybody. The test that covered scrolling passed throughout, because
+  it ran on the class default while a real session ran on the preference
+  default and the two disagreed; they now agree, and three tests cover the
+  setting a session actually runs with. The preference survives, relabelled:
+  turning it off reverses the direction on the remote only, for anyone who
+  wants that. Reported in #1.
+- **The toolbar's fullscreen button advertised a shortcut that does nothing.**
+  It showed Ctrl or Cmd plus Alt plus Enter, which is bound nowhere, so
+  pressing it typed into the remote desktop instead. The accelerator belongs to
+  the View menu item: F11 on Windows and Linux, Cmd+Ctrl+F on macOS. Both the
+  tooltip and the About window's shortcut list now read it from one constant,
+  so neither can drift from the menu again. Reported in #1.
+- **That same button left the menu bar on screen** while F11 hid it, so the two
+  ways to do one thing produced two different screens. It toggled the window
+  straight from the webview and skipped the backend helper that hides the menu
+  on the way in and restores it on the way out. It goes through that helper
+  now, and falls back to the plain window toggle if the session has already
+  gone. Reported in #1.
+- **Disconnect wore a power symbol.** On a remote desktop that reads as an
+  offer to shut the remote machine down, which is not a thing anybody should
+  have to guess about with their hand on the mouse. It is an arrow leaving a
+  frame now, and the tooltip says the machine keeps running. Reported in #1.
+- **Windows CI could not run the PuTTY key tests.** The fixture directory was
+  resolved from `XDG_CACHE_HOME` or `HOME` and panicked when neither was set,
+  which on Windows is always: it has `USERPROFILE`. Every Windows run went red
+  on the one suite whose subject, PuTTY key files, mostly comes from Windows.
+  It now falls back to the local application data directory, then to the
+  platform temporary directory, and it still refuses to write fixtures
+  anywhere inside the repository.
+
+### Note on the version
+
+Patch. Nothing stored changes, the IPC contract is untouched, and no protocol
+behaviour moves. One preference changes meaning rather than name: the wheel is
+no longer inverted by default, so anyone who had worked around the inversion by
+turning "natural scrolling" off should turn it back on.
+
+## [0.27.1] - 2026-09-08
+
+### Fixed
+
+- **Claude Code could not connect to the agent server.** `dvv mcp` spoke
+  only the 2026-07-28 revision of MCP, which opens with `server/discover`,
+  and answered the `initialize` handshake that Claude Code and every client
+  built on the official SDKs send first with method not found. The one-click
+  registration in the app therefore produced a server that no installed
+  client could reach, and `claude mcp list` showed it as failed. The server
+  now answers `initialize` for every earlier revision (2024-11-05 through
+  2025-11-25), echoing the revision the client asked for and offering the
+  newest it knows to a client asking for one it does not, and takes the
+  `initialized` notification in silence as the specification requires. Over
+  HTTP, a request under one of those revisions is served without the
+  `Mcp-Method` and `Mcp-Name` headers that only 2026-07-28 defines, and its
+  `MCP-Protocol-Version` header is accepted with the revision it names. A
+  request that claims 2026-07-28 is still held to that revision's rules.
+  `tools/list` and `tools/call` are the same shape under every revision, so
+  nothing else changes on the wire. Verified with Claude Code's own health
+  check against the installed build.
+
+### Note on the version
+
+Patch. Nothing stored changes and the shell to webview contract is untouched.
+The MCP surface gains a handshake it used to refuse, which is additive.
+
+## [0.27.0] - 2026-09-08
+
+Typing into a terminal on a LAN Windows desktop felt like typing over a
+satellite link. Measured with the new trace (`DVV_TRACE_PROTOCOL=1` now also
+stamps the webview's own timeline: key seen by JavaScript, frame received,
+frame applied, frame drawn), a keystroke took a median 370 ms from the OS key
+event to the painted echo, and 440 ms at the slow end, on an 8 ms link. Two
+causes, both in the client.
+
+### Fixed
+
+- The once a second round-trip probe cost a whole screen. On a server
+  without Fence the client times the link by asking, non-incrementally, for
+  one pixel. Both of the author's Windows servers answer any non-incremental
+  request with the entire desktop, and the pipelined request behind it with
+  the entire desktop again: 136 rects and 3.7 MB decoded, twice, every quiet
+  second, on a still text screen. The probe now notices that its answer was
+  most of the screen twice running and switches itself off for the session;
+  the passive readout that already existed carries the round-trip figure
+  from then on. Over a 576 second session before the change the probe went
+  out 171 times and 311 full-screen repaints came back for it. After, one
+  probe and none.
+
+- JPEG tiles were decoded on the webview's main thread. Each of those
+  full-screen repaints took 89 to 116 ms inside `createImageBitmap`, on the
+  thread that also has to notice the next keystroke; a keydown posted during
+  one waited 63 ms to be seen by JavaScript at all. The shell now decodes
+  JPEG rects natively (zune-jpeg, already in the tree for thumbnails) on the
+  event forwarding task, before the update crosses into the webview. The
+  same 136-rect screen applies in 1 to 3 ms as RGBA and costs about 4 ms
+  more to cross the IPC. The webview decoder stays as the fallback for a
+  tile that will not decode or whose size disagrees with its rect, so the
+  wire format is unchanged. The agent mirror is fed from the same rects and
+  gets pixels without a decoder of its own.
+
+After both, the same keystrokes on the same host: median 51 ms from the OS
+key event to the painted echo, 111 ms at the slow end, of which 30 to 40 ms
+is the server noticing the change and encoding it. The client's share is
+about 16 ms to the socket and 5 to 10 ms from the frame arriving to the
+pixel.
+
+- **Cmd+V did nothing in the app's own text fields on macOS, and neither did
+  dictation.** Wispr Flow and its relatives insert a transcript by writing it
+  to the clipboard and posting Cmd+V, and that paste never landed in a host
+  name, a Connect box or a search field, while typed keys did. The menu bar
+  was built without an Edit menu. A WKWebView does not perform Cmd+X, C, V, A
+  or Z by itself: a key equivalent the page leaves alone is offered to the
+  main menu, and the paste happens only when a Paste item with that key
+  equivalent is there to send it back. The Edit menu now carries the six
+  standard items. A session is unaffected, since its keyboard hook takes the
+  forwarded chord before the menu is consulted, so pass-through still pastes
+  on the remote and never locally.
+
+- **Dictation now reaches the remote desktop from a Mac.** With pass-through
+  off (the default), a Cmd chord is left to macOS so that Cmd+Tab keeps
+  switching local windows, and that included Cmd+V: the session neither
+  forwarded it nor did anything with the paste it produced, measured on the
+  wire as no packet at all. Wispr Flow delivers every transcript that way,
+  by writing the clipboard and posting Cmd+V, so nothing dictated at a
+  session ever arrived; Ctrl+V, which is forwarded with a clipboard push
+  ahead of it, was the only paste that worked. The paste that lands on the
+  session's capture element is now typed on the remote, one key per
+  character, which works in a field or a terminal on any remote system and
+  needs no clipboard support on the server. Edit ▸ Paste picked with the
+  mouse does the same. Preferences ▸ Input ▸ "Type a paste that stays on
+  this Mac into the remote" switches it off for anyone who would rather such
+  a paste stay local. It is on by default. Line breaks and tabs in typed
+  text now go out as Return and Tab. A newline used to be sent as keysym
+  0x0a, which no server maps, so a dictated paragraph arrived with its lines
+  run together.
+
+- **"Show the remote pointer" was ignored by every new session.** The
+  preference was applied by an effect that ran before the session's renderer
+  existed, so a fresh session always drew the remote pointer, whatever
+  Preferences said, and only changing the setting while the session was open
+  made any difference. The renderer now takes the stored value the moment it
+  is created.
+
+### Added
+
+- `DVV_TRACE_PROTOCOL=1` marks the webview timeline in the same log as the
+  wire trace (`trace_enabled` and `trace_marks` commands, off unless the
+  variable is set; a mark costs one boolean test otherwise). `tools/keylatency`
+  holds the harness that produced the numbers above: it posts real OS key
+  events into the session window, reads the log, and prints one timeline per
+  keystroke.
+
+### Note on the version
+
+Minor. Two commands are added to the IPC contract and the frame path now
+carries RGBA where it carried JPEG. Nothing stored changes.
+
+## [0.26.4] - 2026-09-08
+
+### Changed
+
+- **The quality presets are named for the trade they make.** They were split
+  across two lists, a "Network" one (Auto / LAN / WAN) and a "Quality" one
+  (Auto / High / Medium / Low / B&W), which called the same setter with the
+  same five values: the same choice twice, in two vocabularies, and neither
+  said what picking it costs. One list now, named for the decision: Auto
+  (sharp when idle, faster under load), Sharp (best picture, never adapts),
+  Balanced, Responsive (softer picture, lowest lag), Black & White. The same
+  five values go on the wire, so nothing stored or negotiated changes.
+
+  Auto is the one that does both ends, and 0.26.3 is what made it worth
+  choosing: it holds the picture while the client can afford it and steps down
+  while the client is genuinely saturated, then comes back. Measured against a
+  video playing on a real remote desktop, a right-click menu went from 2208 ms
+  to 346 ms with Auto doing that unaided.
+
+### Note on the version
+
+Patch. Labels, and one duplicated list removed. No behaviour, stored data or
+protocol change.
+
+## [0.26.3] - 2026-09-08
+
+Measured on the author's machines against a real YouTube video playing on a
+1920x1080 Windows desktop, with a harness that posts OS mouse events, reads the
+packets off the socket, and watches the screen for the menu to appear.
+
+### Fixed
+
+- **A context menu took over two seconds to open while a video played on the
+  remote.** The click was never slow: it reached the server in under 30 ms
+  throughout. What was slow was the picture coming back, and two separate
+  things caused it.
+
+  The renderer drew every stale video frame in order. It has a per-tile check
+  for "has a newer frame already repainted this region", but a video arrives as
+  thousands of small dirty rectangles a second whose edges shift frame to
+  frame, so they never nest exactly and the coverage set, capped at 256 regions
+  for cost, was blown long before it could prove an old tile invisible. The
+  queue sat 29 updates deep, about a second and a half, and a right-click menu
+  waited behind all of it. Frames are now superseded by their DAMAGE BOX, one
+  box per frame rather than thousands of tiles, so tens of boxes decide it and
+  the cap is never reached. An older frame whose region a newer one has already
+  repainted is dropped; a menu, whose damage box is elsewhere on the screen, is
+  kept and drawn with the newest frame. Queue depth fell from 29 to 4 to 6.
+  Barriers are unchanged: a CopyRect reads the framebuffer and an H264 rect
+  carries decoder state, so the walk still stops at the first update holding
+  one.
+
+  The rest was this client's own quality brake refusing to go low enough. The
+  duty-cycle cap added in 0.26.0 was capping the ladder at Medium, on the
+  stated reasoning that dropping below Medium "would trade picture quality
+  against a problem it cannot fix". On real hardware that was wrong: at Medium
+  the duty cycle sat between 0.72 and 0.99, meaning almost no time was left for
+  the person driving, and the menu took 1359 ms; forced to Low by hand on the
+  same video it was 508 ms. The cap now has a second rung. Past 0.85 duty it
+  drops to Low; below that it still stops at Medium and keeps the picture, so a
+  window drag or an animation is not over-reacted to.
+
+  End to end on Auto, the setting people actually use, with the video playing:
+  the menu appears in 346 ms, down from 2208 ms.
+
+### Note on the version
+
+Patch. No stored data change, no new command, no IPC contract change.
+
+## [0.26.2] - 2026-09-07
+
+### Fixed
+
+- **A machine opened by an agent landed in its own window, never in the tab
+  strip.** 0.26.1 fixed `dvv open` dialling nothing at all, but did it by
+  opening a window, which put every agent session outside the tabs a person
+  actually works in. The shell cannot build a tab: the tab strip lives in the
+  library webview, and so does the tab-or-window preference, in browser
+  storage the shell cannot read. So the plane no longer guesses. It sends the
+  library webview the same request a click makes (`library://agent-open`), and
+  the webview runs its own `openSession`: it honours the preference,
+  de-duplicates against a session already open, and mounts the viewer with the
+  code that mounts every other session. The shell then finds the session by
+  machine, the lookup it already uses for the window rule, and hands it to the
+  agent. If the library window is closed, or does not claim the session within
+  five seconds, the shell opens a window instead, so an agent still gets its
+  machine.
+
+### Note on the version
+
+Patch. One new shell-to-webview event, no new command, no stored data change.
+
+## [0.26.1] - 2026-09-07
+
+Measured on the author's own machines this time, against two real VNC
+servers, with a harness that posts real mouse events and reads the packets
+off the socket. Every number below comes from that harness.
+
+### Fixed
+
+- **After every left click the remote pointer jumped to the top-left corner.**
+  Clicks landed where they were aimed; the cursor then flew to the corner, and
+  a right-click menu opened up there. WebKit dispatches `lostpointercapture`
+  with `button = 0` and `clientX/clientY = 0` when the implicit capture taken
+  on pointerdown is released, so the release handler read it as an ordinary
+  left release at (0,0) and sent it. That event is a state change, not a place
+  the pointer went. It now has its own listener, keyed on the event type, that
+  keeps the tracked position and reconciles only the buttons. Zero phantom
+  packets across every click test since.
+
+- **A click took half a second to a second to reach the socket.** Input went
+  out one IPC call per packet, each awaited before the next could be issued,
+  and while the webview is drawing that answer takes around 500 ms to come
+  back. A click is a press and a release, so it paid twice; a right-click menu
+  waited on both. Two changes: everything pending drains into one call
+  (`decode_input` has always accepted a body as a sequence of events), and the
+  webview no longer waits for any answer before sending the next batch.
+  Ordering, the reason it used to wait, is enforced in the shell instead:
+  every call carries `x-input-seq` and is admitted once the one before it has
+  been queued. Press, release, right-click and the first move of a drag now
+  reach the socket in 15 to 65 ms, from 460 to 850 ms.
+
+- **Pointer motion could overtake a press queued after it.** The coalescing
+  added in 0.26.0 rewrote a replaced motion packet in place, keeping its old
+  slot ahead of a later press. A replacement now moves to the tail.
+
+- **The frame credit scheme from 0.26.0 is gone.** It held frames until the
+  webview acknowledged one, buffered up to 64 MB meanwhile, and on overflow
+  asked the server for a full-screen repaint, which is a bigger frame, which
+  starved the credit again. On a fast LAN server that loop ran every few
+  seconds and pinned the session at 13 MB/s and 68 percent duty cycle while
+  the picture sat still. Frames go straight through again. The renderer keeps
+  the part that helps, a bounded queue that prunes rects a later rect
+  repaints, which cannot feed back into the protocol. The per-frame
+  acknowledgement, a full IPC round trip competing with input, is gone with it.
+
+- **`dvv open` had not started a session since 0.23.0.** The agent plane asked
+  for a tab, and the tab parameters were handed back to a caller that could
+  not build one, so every open returned a session id for a session that was
+  never dialled. It opens a window now. Restoring the tab is a follow-up that
+  needs the library webview to listen for it.
+
+- **Pointer coordinates are logged on the wire** at debug level
+  (`RUST_LOG=vnc_core=debug`), which is what made both the corner bug and the
+  latency measurable at all.
+
+### Note on the version
+
+Patch: the `frame_ack` command added in 0.26.0 is removed and `send_input`
+gains an optional header, both within a release nobody installed (0.26.0 was
+never published; its draft is withdrawn). No stored data changed.
+
+## [0.26.0] - 2026-09-06
+
+### Fixed
+
+- **Control of the remote machine was lost whenever its screen played video or
+  ran a window animation.** Moving the mouse or typing appeared to do nothing
+  for seconds at a time, and the delay scaled with how much of the remote
+  screen was changing. A static desktop behaved normally.
+
+  The input was never actually late. Keystrokes and pointer events reached the
+  server in microseconds, as they always had. What was late was the picture.
+  Frame delivery had no flow control anywhere along its length: the shell
+  handed every update it decoded into a Tauri channel with a synchronous send
+  that always succeeds, and every queue behind that send was unbounded, ending
+  in a promise chain in the renderer that applied each update strictly in
+  order and never skipped one. When the remote screen changed faster than the
+  webview could draw, the backlog grew for as long as the motion lasted. The
+  user was looking at a frame from several seconds ago, so their clicks did
+  land, immediately, and they could not see it happen. That reads as a machine
+  that has stopped responding.
+
+  It is bounded now, at both ends. The shell keeps at most two frames in
+  flight and will not send a third until the renderer acknowledges one, so the
+  queue cannot grow behind a webview that is falling behind. Updates that pile
+  up while it waits are merged, and then pruned: walking the merged list from
+  newest to oldest, any region a later rect is about to repaint is dropped,
+  because painting it would be overwritten a moment later anyway. The renderer
+  does the same to its own queue. A backlog of thirty video frames collapses
+  to roughly the newest one instead of being replayed faithfully and far too
+  late. The renderer also no longer starts JPEG decodes for rects it is about
+  to discard, which was the largest single cost on the webview's main thread
+  during video.
+
+  CopyRect and H.264 rects are never dropped, never reordered, and nothing
+  older than one is dropped either. A CopyRect reads pixels an earlier rect
+  wrote, and H.264 carries inter-frame state, so both act as hard barriers
+  that stop the pruning walk. Getting that wrong corrupts the framebuffer
+  rather than merely slowing it down.
+
+- **Pointer motion queued up and then replayed itself.** Motion is produced
+  once per animation frame, about every 16 ms, and it was drained one packet
+  per IPC round trip through a strictly ordered queue. While the remote screen
+  was busy that round trip grew past 16 ms, and from then on the queue grew
+  for as long as the mouse kept moving. Every stale position was still
+  delivered, so the remote pointer walked the scenic route through places the
+  user had left seconds earlier. Keystrokes shared the same queue and
+  inherited the whole delay, which is why the keyboard went with the mouse.
+
+  Pure motion now replaces the pending motion packet instead of queueing
+  behind it. Presses, releases, wheel clicks and keystrokes keep the strict
+  ordering they need, because a press and its release must never be able to
+  overtake each other. Dropping a stale position is safe because every pointer
+  packet carries its own absolute coordinates, so a later press does not
+  depend on an earlier motion packet having arrived. A burst of five hundred
+  queued positions now collapses to two.
+
+- **Automatic quality raised the quality when a video started.** The tier
+  ladder decided from measured link speed alone. Video on a fast link makes
+  the link measure fast, so Auto climbed to its most expensive setting a few
+  seconds after playback began and then stayed there, because coming back down
+  required a slow-link reading that never arrives on a LAN.
+
+  The controller now also sees how much of each second the session spends
+  handling framebuffer updates. Sustained saturation on a link that is
+  demonstrably fast means the client is drowning rather than the wire being
+  full, and that caps the ladder and asks for the update rate to be governed.
+  Downgrades were made faster than upgrades: a load spike now costs about two
+  seconds instead of seven, while the slow upgrade side keeps the session from
+  oscillating. A recommendation that resolves to the settings already in force
+  no longer burns the cooldown that a real downgrade needs.
+
+- **The one mechanism that could reduce the load was switched off by the
+  load.** The session's select loop polls the socket before its once-a-second
+  timer, and under a continuous stream the socket is always ready, so the
+  timer never fired. That timer is the only caller of the quality controller,
+  so the client stopped adapting at exactly the moment adaptation mattered.
+  The measurement half of that tick now runs between rects while a long update
+  streams in. Nothing that changes the wire format is sent from there; a
+  quality or pacing change is parked and applied at the next message boundary,
+  because switching encodings partway through reading an update risks
+  desynchronising the stream.
+
+- **The client had no way to slow the server down.** Continuous updates were
+  enabled the moment a server offered them and were never disabled, which
+  hands pacing entirely to the server and leaves the client no lever but the
+  size of each update. It can now turn continuous updates off and fall back to
+  requesting one update at a time, which is the only rate control the protocol
+  offers. The handshake for that is careful: a server acknowledging our own
+  disable used to be indistinguishable from a fresh offer, which turned the
+  stream straight back on, and an acknowledgement that never arrives now
+  resumes the pipeline after two seconds rather than stranding the session.
+
+- **Every SSH-tunnelled session paid Nagle's delay on each keystroke.** The
+  direct TCP path sets `TCP_NODELAY` deliberately, and has done for a long
+  time, with a comment naming the 40 ms stall on mouse movement as the reason.
+  The tunnel path does not go through that code at all, and the SSH client
+  library leaves the option off by default, so the fix had never applied to a
+  tunnelled connection. It does now.
+
+- **A full command queue could drop a key release.** Key events from the
+  native shortcut forwarder were sent with a non-blocking send that discards
+  the event when the queue is full. Discarding a press loses a keystroke.
+  Discarding a release leaves a modifier held down on the remote machine,
+  which is the exact failure the release-all-keys safety net exists to
+  prevent. Key events now wait for room instead.
+
+### Note on the version
+
+Minor rather than patch. The frontend and the Rust shell now exchange a frame
+acknowledgement (`frame_ack`), which adds a command to the IPC contract, and
+this project treats any change to that contract as minor even when it is
+additive. Nothing about stored data changed, so profiles and settings carry
+over untouched.
+
+A renderer that does not send the acknowledgement falls back to a one second
+timeout, so the symptom of a mismatched frontend and shell is a session that
+runs at about one frame per second rather than an error. The two halves ship
+together here.
+
+## [0.25.1] - 2026-09-02
+
+### Fixed
+
+- **An SSH terminal could attach at 80x24 and stay there.** A remote shell,
+  and any tmux session attached in it, behaved as though it were on a small
+  low-resolution screen: a full-screen program drew into a corner of a much
+  larger window. The terminal reports its real size to the remote once the
+  connection completes, but it was reading a measurement taken at mount, and
+  when the pane had not finished laying out at that instant (a timing the
+  native window hit and a browser did not) that measurement was the empty
+  80x24 default. Nothing re-measured, so the stale size was what the remote
+  heard for the whole session. It now measures against the settled layout at
+  the moment it connects, and registers its resize handler before the first
+  measurement so a later size change reaches the remote too. The terminal
+  fills its window like any other, and tmux attaches at the real size.
+
+Patch-shaped but tagged minor for the one visible behaviour change: an SSH
+session without a multiplexer now echoes what you type, where before it showed
+nothing.
+
+### Fixed
+
+- **Typing was invisible in a plain SSH shell.** The terminal asked the remote
+  for a raw line discipline (no echo, no cooking), on the theory that the
+  local emulator echoes keystrokes itself. It does not: xterm.js renders what
+  the server sends and nothing else, so with the remote echo turned off,
+  nothing echoed at all and every keystroke vanished. The remote now echoes
+  and cooks the line the way it does for `ssh`, so a shell prompt behaves like
+  a shell prompt: characters appear, Backspace rubs one out, Ctrl-C shows as
+  `^C`. A full-screen program (an editor, tmux) still takes the terminal raw
+  itself when it starts, so nothing about them changes.
+
+  This was hidden for a long time because the default profile attaches a
+  multiplexer, and tmux and psmux draw their own screen and so echo whatever
+  the mode. Only a session that fell back to a bare login shell, a host with
+  no multiplexer found, ever showed the blank line.
+
+### Note on "no multiplexer found" with WSL
+
+If a host reports no multiplexer even though tmux is installed, check whether
+"Connect inside WSL" is ticked for it in the host editor. That option wraps
+every command in `wsl.exe`, which is right for a Windows host you reach over
+OpenSSH and land in PowerShell on. It is wrong for a host whose SSH already
+drops you into a Linux shell (a Linux box, or a Windows box whose SSH default
+shell is bash): the wrapper then re-enters WSL from inside it, the probe
+fails, and tmux is not found. Untick it and the multiplexer is detected
+normally.
+
+## [0.24.0] - 2026-08-31
+
+Minor: opening an SSH machine for the first time asks whether to trust it,
+instead of refusing and telling you why in a sentence with no button on it.
+
+### Added
+
+- **A Trust button on first contact with an SSH machine.** Connecting to a
+  machine nobody here has met before now shows its fingerprint, the command
+  to check it against on the server, and a button that trusts it and connects.
+  It is the same dialog the tunnel and the Files panel have always used, and
+  the same saved key: trust a machine once and its terminal, its files and its
+  tunnel are all covered.
+
+  The decision happens before the session starts, and only for a machine with
+  no saved key: that costs one key exchange with no sign-in attempt behind it,
+  and a machine you have connected to before costs nothing at all.
+
+  The dialog says "this machine" or "the SSH gateway" depending on which one
+  is presenting the key, because trusting the server in front of a machine is
+  not the same as trusting the machine.
+
+### Fixed
+
+- **An unknown host key was a dead end.** The message named the machine and
+  printed the fingerprint, and the only button was Close. Nothing anywhere in
+  the interface would have trusted the key, so the machine could not be opened
+  at all.
+
+- **Long text ran off the side of the disconnect panel.** An SSH fingerprint
+  is forty-odd characters with no space or hyphen in it, and nothing told the
+  panel it could break inside a word. The panel now wraps it, and does the
+  same for a long machine name in the title.
+
+- **Two SSH messages arrived as raw core text.** An untrusted key and a
+  changed key both landed in the panel verbatim, fingerprint and all. They now
+  say what happened and what to do about it: reconnect to see the fingerprint
+  and decide, or forget the saved key if you know it legitimately changed.
+
+## [0.23.0] - 2026-08-31
+
+Minor: signing in to an SSH machine with a key is an ordinary thing to want,
+and it stopped being an expert setting. The choice between a password and a
+key sits in the main form now, and choosing the key is a pick from a list or a
+Browse button instead of a path typed from memory.
+
+### Changed
+
+- **Password or key is the second thing you decide, right under the user
+  name.** It used to live inside Advanced, under a heading about ssh-agents,
+  which is a fine place for it if you already knew it was there. Most people
+  want one of two things, a password or a key, and now they are three buttons
+  at the top of the form beside the box the choice gives meaning to. The
+  passphrase box relabels itself when you pick a key, because it is the same
+  keychain slot either way and only the label was ever wrong.
+
+### Added
+
+- **The keys you already have, in a list.** The editor reads the names of the
+  private keys in your `.ssh` folder and offers them, with the algorithm and
+  the comment from the public half so two generated names are tellable apart.
+  A key that is protected says so, and the field says where to put the
+  passphrase. None of the key itself is read: the file is opened far enough to
+  tell a private key from a `known_hosts` and closed again, and it is still
+  the Rust side that reads it for real when you connect.
+
+- **A Browse button.** For the key on a USB stick, or anywhere else that is
+  not `.ssh`. The dialog opens at your `.ssh` folder, which macOS and Windows
+  both hide from an ordinary Open dialog. The path box is still there for
+  anyone who would rather type it, and it appears on its own for a path that
+  is not one of the listed keys, so a browsed path is always visible and
+  always editable.
+
+### Fixed
+
+- **`~/.ssh/id_ed25519` did not work when you typed it.** A shell expands the
+  `~` before a program ever sees it, and a path typed into a text box has no
+  shell in front of it, so the app went looking for a directory called `~` and
+  told you there was no such file. Every piece of SSH documentation writes the
+  path that way, including this app's own placeholder. It is expanded now.
+
+- **A terminal opened beside a session in a tab could not connect.** The
+  window that holds your tabs was never granted the remote-shell commands, so
+  the call was refused before it reached any code that could explain itself.
+  It only worked when the session had its own window.
+
+## [0.22.0] - 2026-08-29
+
+Minor: the three things an agent was told it could not do yet, it can do now.
+It opens a machine on its own, it gets an answer back from a command it ran,
+and it can read your machine library to know what there is to open. The
+connect instructions carry the real path to the binary instead of a
+placeholder, and there is a button that does the registration for you.
+
+### Added
+
+- **An agent can open one of your machines itself.** It names a saved machine
+  or an endpoint and the session opens as a tab in your window, with a pane, a
+  badge saying an agent is driving it, and the control that takes the wheel
+  back. It goes through the same call your click goes through, which is why it
+  looks like an ordinary session: it is one. The password comes out of the
+  keychain on the far side of that call, exactly as it does for a click, so an
+  agent names a machine and never a secret. It still cannot supply one and
+  still cannot read one.
+
+- **An agent can read your machine library.** What is saved and what discovery
+  has found, with the protocol and whether a credential is stored, never the
+  credential. It needs that capability on its grant, and without it the answer
+  is the refusal rather than an empty list, so an empty answer means the
+  library really is empty.
+
+- **A button that registers the server with Claude Code.** It runs the command
+  for you and says what came of it: registered, already registered, Claude
+  Code is not installed, it refused and here is what it said. The lines to
+  copy are still there, folded away, for anybody driving a different agent or
+  wanting to read what the button did.
+
+- **The connect instructions carry the real path.** An installed copy ships
+  `dvv` inside the bundle, signed and notarised with everything else, and
+  reports where it is, so every line in the modal is complete and runnable
+  with nothing left to edit. A development build has no bundle to read it out
+  of, says so in a sentence, and shows an obvious placeholder rather than
+  inventing a path that would be right on one machine and wrong everywhere
+  else.
+
+### Fixed
+
+- **A command an agent ran over SSH never answered.** The command ran, the
+  exit status came back from the far side, and the reply was dropped on the
+  way to the socket. The agent saw a timeout saying the command might still be
+  running, on a command that had already finished. It gets the real answer now.
+
+- **The tool descriptions claimed three things were not built.** They said
+  opening a machine, listing the library and reading a command's output all
+  reported not implemented. Two of those had been built and the sentence was
+  never updated, which is worse than a missing feature: an agent reads that
+  and does not try. The third is genuinely not served, and now says why and
+  what to use instead.
+
+## [0.21.0] - 2026-08-28
+
+Minor: an agent can reach the application over HTTP as well as over a pipe, a
+screenshot arrives as a picture rather than as text, and there is somewhere in
+the interface to find all of it. The IPC contract gains fields, which is what
+makes this a minor rather than a patch.
+
+### Added
+
+- **An AI Agents button, above Preferences, that gets somebody connected in
+  about a minute.** It is the one piece of agent interface that exists while
+  the plane is switched off, because the plane being invisible until you want
+  it is right and leaves exactly one problem: nobody can find it. So the modal
+  is the door. With the plane off it offers the switch and nothing else, on
+  purpose: registering an agent against a socket that does not exist teaches
+  people the feature is broken. With it on, it offers the lines to paste, a
+  command to check the result, and an honest list of what an agent can and
+  cannot do yet.
+
+- **Reach it over HTTP, not only over a pipe.** Some agents cannot spawn a
+  process: a hosted assistant, something in a container, something on another
+  machine you own. `dvv mcp --http` listens on `127.0.0.1:7333` and prints the
+  registration line with your token already in it.
+
+  It listens on loopback and asks for a token even there. That is not
+  belt and braces: any web page open in your browser can reach a port on your
+  own machine, so a local listener without a token is a service every site you
+  visit can drive. Requests carrying a browser `Origin` are refused for the
+  same reason. Binding anywhere other than loopback takes its own flag and
+  says plainly what it just exposed.
+
+- **A screenshot is a picture now.** Reading a desktop returns a real image
+  block, so a model can look at it, with the region, the dimensions and the
+  scale beside it: that is what turns a point on the picture back into a
+  coordinate on the remote. It used to arrive as several thousand characters
+  of text, which is not something anything can look at.
+
+- **A line saying who is driving what.** How many agents are connected, how
+  many machines they are holding right now, and how many sessions are open in
+  total, reading as "2 agents driving 5 of 11". Driving means an agent is
+  holding the controls, not merely watching, because those are different
+  things and only one of them is worth interrupting. It can be switched off
+  under Preferences ▸ Agents, and neither the line nor the tab exists at all
+  until the plane is on.
+
+### Fixed
+
+- **Reading only what changed re-read the whole screen.** The crop was taken
+  from a rectangle drawn around every change at once, so two small changes in
+  opposite corners covered everything between them, and asking for the cheap
+  read fetched a whole desktop. It now crops to the changes themselves.
+
+- **A screen read could not tell it was looking at a stale picture.** The
+  answer carried a fixed geometry number instead of the real one, so a read
+  taken across a resize looked current. It now carries the real one and a
+  stale read is refused by name.
+
+## [0.20.0] - 2026-08-28
+
+Minor: an AI agent can now drive the machines this application has open,
+over MCP or a command line, while a person watches and can take the wheel
+back at any moment. Nothing changes for anyone who does not switch it on,
+and it is off by default. The IPC contract gains commands and events, which
+is what makes this a minor rather than a patch.
+
+### Added
+
+- **An agent plane, and the application is the thing that already has your
+  machines open.** A new `dvv` binary speaks the Model Context Protocol on
+  its standard input and output, so an assistant that knows how to load an
+  MCP server can point, type, scroll and read on a real desktop or a real
+  terminal. `dvv doctor` prints the exact line to install it. The same
+  surface is a command line: `dvv limbs`, `dvv click`, `dvv type`,
+  `dvv screen`, `dvv watch`, all with `--json` for a script.
+
+  It attaches to the sessions DeskVNCViewer already has, rather than
+  dialling out on its own. That is deliberate. The credential stays in the
+  keychain, an agent cannot read one and cannot ask for one, and the
+  machine an agent is driving is a machine you opened and can see.
+
+  Off by default. With the setting off, no socket is created, no task is
+  spawned, and the build is the one that shipped before. Turning it on
+  needs no restart.
+
+- **Watch it happen, and take over without asking.** A pane an agent is
+  driving says so, in a badge that reads across a wall of twelve, and says
+  what the agent is doing right now. A strip along the bottom of the
+  library window shows every driven machine at once, including ones this
+  window has never had a pane for.
+
+  Clicking into a pane takes control. So does the stop button. Neither is a
+  request and neither needs the agent's cooperation: a person outranks an
+  agent, so the keyboard is released and the agent's next instruction is
+  refused before it reaches the wire. The badge clears on the same frame as
+  the click rather than after a round trip, because a stop button that
+  spins for two seconds is not a stop button.
+
+- **Several machines at once, of different kinds.** VNC, RDP and SSH limbs
+  are driven side by side, so an agent can read a build log in a terminal
+  and click through a dialog on a Windows box in the same task. The
+  concurrent limit is four, and it is four because that is what the shared
+  decode budget measures out at, not because four is a round number.
+
+- **A screenshot an agent can act on.** Reading a screen returns the changed
+  region by default rather than a whole frame, at native resolution, with
+  the exact transform needed to turn a coordinate in the image back into a
+  coordinate on the remote. Open H.264 is negotiated away first for any
+  session an agent is looking at, because the decoder that makes it fast
+  lives in the window and a picture assembled without it would be stale in
+  exactly the region that is moving.
+
+- **A command with a real exit code.** Running something on an SSH limb
+  opens a channel of its own, so the status is the one the remote's own
+  shell produced and delivered over SSH. A signal is reported as a signal
+  and never as a number. Output is bounded, and when it is cut the answer
+  says how many bytes and lines went missing rather than trimming in
+  silence.
+
+### Fixed
+
+- **A held mouse button survived losing focus on a VNC session.** The
+  release path let go of every key and no button, and the RFB protocol
+  holds the last button state it was told, so a drag interrupted by a
+  window losing focus finished wherever the pointer next went instead of
+  being cancelled. A file dragged at that moment landed somewhere nobody
+  chose. The RDP side had already been fixed; the VNC side now matches it,
+  including releasing buttons before keys so a gesture ends the way it
+  began.
+
+- **Closing one library window stopped the other one finding machines.**
+  Discovery held a single browse for the whole application, and the first
+  window to close cancelled it for every window still open, with no error
+  anywhere. The Nearby list simply stopped. It is now counted per window.
+
+- **A second network scan is refused by name.** It already refused, but the
+  message named nothing, so a caller could not tell which scan was in the
+  way. It now says which subnet, when it started, and which window owns it.
+
+- **The terminal bell never rang.** It was recognised, translated and
+  serialised, and never once produced. It now rings, and does not ring for
+  the `BEL` that ends a window title sequence, which shells write on every
+  prompt.
+
+## [0.19.0] - 2026-08-26
+
+Minor: a tab can now be divided into panes, so several machines are on
+screen at once. Nothing stored changes shape and no command gains a
+field, but a tab stops being a synonym for a session, which is a change
+to what the frontend means by both.
+
+### Added
+
+- **Split a tab into panes, and see several machines at once.** A tab
+  used to hold one session filling the window. It can now be divided,
+  the way tmux divides a terminal: split right, split down, split either
+  of the results again, and drag the dividers to give each machine the
+  room it needs. VNC, RDP and SSH mix freely, so a desktop can sit
+  beside a shell on the box serving it.
+
+  Splitting leaves an empty pane offering the two things anyone would
+  want in it. Either connect something new, by saved host or by typing
+  an address, or move a session that is already open, including one from
+  another tab. Moving does not reconnect: the viewer is mounted once and
+  the layout only decides where its box goes, so a machine dragged from
+  one pane to another does not drop a frame, let alone the connection.
+
+  `⌘⌥D` splits right and `⌘⌥⇧D` splits down. `⌘⌥` with an arrow key
+  moves to the pane in that direction, chosen by what is actually beside
+  it on screen rather than by how the splits happen to nest, which is
+  the difference between a shortcut you can aim and one you have to
+  think about. `⌘⌥W` closes a pane, `⌘⌥=` gives them all an equal share,
+  and the whole set is on the Window menu with the same accelerators.
+  The session toolbar grew two buttons for it.
+
+  Splitting a pane halves that pane and nothing else, so a fourth
+  machine does not rearrange the three already placed. Splitting twice
+  along the same axis gives one row of three rather than a row nested
+  inside a row, which is what makes dragging the middle divider move two
+  neighbours instead of reflowing half the layout.
+
+- **Ready made grids, and a group that remembers how you arranged it.**
+  Window ▸ Arrange lays the tab in front out as 2, 3, 4, 6, 8, 9 or 12
+  panes in one go, rather than splitting a wall of machines into
+  existence one divider at a time. Whatever is already connected is kept
+  and re-placed, and the rest of the panes come up empty.
+
+  A group in the sidebar answers a secondary click with **Open as grid**,
+  which connects every host in it at once and lays them out together. The
+  panes appear first and fill as each connection answers, since half a
+  dozen machines will not finish dialling in any particular order.
+
+  Arrange them how you like, then **Save this layout to group**. From
+  then on that group opens exactly as you left it, down to where the
+  dividers sat, and the menu says so. A group that has never been
+  arranged opens as an even grid in library order, which is the thing you
+  then rearrange and save, so an arrangement is something a group picks
+  up rather than something it has to be given first. **Forget saved
+  layout** puts it back to a plain grid.
+
+  What is remembered is the hosts, not the sessions, so it survives
+  quitting the app. A saved arrangement that has drifted from its group
+  (a host deleted, or new ones added) opens what still matches and says
+  that it did, rather than quietly opening the wrong set of machines.
+
+- **Each pane has a title bar once a tab holds more than one.** It names
+  the machine, carries its connection status, maximises that pane and
+  closes it. Drag it onto another pane and the two trade places, which is
+  a swap rather than an insert: both boxes stay exactly where they are,
+  so nothing else on screen jumps to make room. A single pane shows none
+  of this and stays full bleed.
+
+- **Maximise a pane and put it back**, from its title bar, by double
+  clicking that bar, with `⌘⌥Z`, or from Window ▸ Maximise Pane. The
+  layout underneath is untouched while a pane is blown up: the others
+  keep their boxes, so they keep their framebuffers and come back
+  instantly rather than reconnecting or redrawing from scratch.
+
+### Changed
+
+- **Only the pane you last clicked in holds the keyboard.** A window has
+  one keyboard, one menu bar, one clipboard and one drag-and-drop
+  target, and a split puts several sessions in front of you at once, so
+  those had to stop following "which session is on screen" and start
+  following "which pane has the focus". The focused pane is ringed in
+  the accent colour, the menu bar shows that session's settings, files
+  dropped on the window go to that machine, and the toolbar belongs to
+  it and stays inside it. Every other pane keeps drawing, keeps taking
+  frames, and stays connected.
+
+  A first click into an unfocused pane moves the focus and is not passed
+  on to the remote desktop. That is deliberate: the alternative is a
+  stray click landing on a machine you were not typing at a moment ago.
+
+- An RDP session opened into a pane asks the server for a desktop the
+  size of that pane, rather than the size of the whole window and then
+  resizing once the canvas measured itself.
+
+### Fixed
+
+- A shell keyboard shortcut ran twice for one keystroke whenever a
+  session had the keyboard. The session's own hook answers first and
+  calls `preventDefault`, but it does not stop the event, so it reached
+  the shell's listener as well. This never showed up while the only such
+  shortcuts were "switch to tab N", which lands in the same place
+  however many times it runs.
+
+- The toolbar's own button could not bring it back in a split. A pane
+  too narrow for the open bar puts it away, and that was written as an
+  override on what gets drawn rather than as a nudge: pressing the
+  chevron cleared the flag, the override put it straight back, and the
+  one control whose job is to recall the toolbar did nothing at all.
+  Narrowing a pane now collapses the bar once and then leaves it alone,
+  so asking for it works. In a pane it genuinely does not fit, an
+  expanded toolbar will overhang its neighbour, which is the lesser of
+  the two problems and is undone by collapsing it again.
+
+- **The session toolbar ran off the side of its pane, and off the side of
+  the window with it.** It is one flex row of two dozen controls, laid
+  out with nothing to stop it growing, and clamping its top-left corner
+  keeps the left of it on screen without keeping all of it on screen, so
+  the controls at the far end were simply out of reach. Given a width to
+  work within it now folds onto a second row, which the pill was always
+  able to do and was never asked to.
+
+- **A stray Paste menu came back over the tab strip.** The webview builds
+  its editing menu from whatever is FOCUSED rather than from what was
+  clicked, which is what `lib/contextMenu.ts` exists to deal with, and
+  splitting a pane started leaving a real search box focused for as long
+  as that pane sat empty. A field focused as a courtesy rather than by
+  choice now lets go when a secondary click lands somewhere else, and
+  when its pane stops being the one in use. A field the user deliberately
+  clicked into keeps both its focus and its menu.
+
+- The remote pointer could land somewhere other than where the mouse
+  was. The panes are laid out against a measured box, and that box was
+  measured with a `ResizeObserver`, which reports a change of size and
+  says nothing about a change of position. The tab strip appears the
+  moment the first session connects and pushes the whole layout down, so
+  the recorded origin could stay at the top of the window while the
+  panes really began below the strip. Pane rectangles are derived from
+  it, the canvas fills its pane, and the pointer is mapped through the
+  canvas's own rectangle, so the error carried all the way to the remote
+  desktop: clicks landed on whatever was under the offset position
+  rather than under the cursor. The box is now re-measured after every
+  render as well, which is what catches a move.
+
+## [0.18.0] - 2026-08-26
+
+Minor: a new SSH authentication format, and two user-visible changes to
+how a session looks in the Library. Nothing stored changes shape, no
+thumbnail already on disk needs rewriting, and no command or event gains
+a field: a PuTTY key is named by the same `keyPath` an OpenSSH key
+already was.
+
+### Added
+
+- **PuTTY private keys (`.ppk`) now work anywhere a key file is
+  accepted.** Point "Private key path" at a `.ppk` and it connects. This
+  covers the remote shell, the SFTP file panel and the SSH tunnel, since
+  all three authenticate through the same place.
+
+  Versions 2 and 3 are both read, encrypted or not, for RSA, Ed25519 and
+  ECDSA on the NIST P-256, P-384 and P-521 curves. Version 3 keys go
+  through Argon2 as PuTTY specifies, with the parameters recorded in the
+  file rather than assumed. The format is detected by reading the file,
+  not by its extension, so a key that lost its suffix somewhere between
+  Windows and here still works.
+
+  The MAC every `.ppk` carries is verified before the key is used, which
+  is also what tells a wrong passphrase apart from a damaged file, so the
+  error says which one it was instead of guessing.
+
+  DSA (`ssh-dss`) keys are refused with a message explaining why: the
+  algorithm is obsolete, OpenSSH disabled it in 7.0 and removed it in
+  9.8, and nothing in this build can produce a DSA signature. Accepting
+  the file would only move the failure to the handshake, where nothing
+  would point at the algorithm.
+
+  Nothing new is vendored for this. The parser is about 400 lines in
+  `ssh-transport`, and the crypto it needs was already in the build.
+
+### Changed
+
+- **Library thumbnails for SSH sessions now carry the terminal's colour.**
+  A shell tile used to be flat theme foreground on theme background: the
+  thumbnail was drawn from the text of each row and every attribute the
+  cells carried was thrown away with it. Beside a VNC or RDP tile, which
+  is literal framebuffer pixels, it read as a grey wall of text and told
+  you very little about which machine you were looking at.
+
+  The capture now walks the visible grid cell by cell and paints what
+  each one says: foreground and background through all three of xterm's
+  colour modes (default, the 256 colour palette, 24-bit true colour),
+  plus inverse, bold, dim, italic, underline and strikethrough. The
+  sixteen ANSI slots come from the app's own theme, the same ones the
+  live terminal uses, so the tile and the session it came from agree.
+  Cells sharing a colour are batched into one fill, so a full grid still
+  costs a few dozen draws per row rather than one per cell.
+
+### Fixed
+
+- **A Library tile showed the desktop upside down while its session was
+  live.** With "Live previews" on, a connected VNC or RDP tile flipped
+  vertically the moment the first preview frame arrived, and flipped back
+  when the session ended and the saved thumbnail took over.
+
+  The two readbacks take different routes to the same pixels. The
+  thumbnail capture attaches the frame texture to a framebuffer object and
+  reads it with no draw, so rows come back in upload order, top-down. The
+  preview renders the frame through the quad program into a small target
+  first, to downscale it on the GPU. That draw maps the top of the desktop
+  to the top of clip space, which is what the screen wants, but
+  `readPixels` reads from the lower left, so the top scanline was the last
+  row returned and every preview came back mirrored. The preview draw now
+  samples the source bottom-up, which cancels the flip in the sampler
+  rather than paying for a row reversing copy after the read.
+
+## [0.17.3] - 2026-08-26
+
+Patch: one fix. Nothing stored changes and no command or event gains a
+field.
+
+### Fixed
+
+- **A terminal opened, printed its attach command, and then sat there.**
+  The session connected, the prompt appeared, and the line that attaches
+  to tmux was typed out in full and never run, so nothing happened and
+  the terminal waited at the shell prompt.
+
+  The line was terminated with a line feed. A terminal sends a carriage
+  return when Enter is pressed, and that is what the shell on the far
+  side waits for. `cmd.exe` on a Windows host therefore never saw a
+  completed line at all. A POSIX shell only tolerated it because its line
+  discipline happened to be translating one to the other, so the same
+  code could look correct on one host and do nothing on another. The line
+  now ends the way a keypress ends it.
+
+
+## [0.17.2] - 2026-08-26
+
+Patch: one frontend fix. Nothing stored changes and no command or event
+gains a field.
+
+### Fixed
+
+- **Clicking a tab occasionally showed a Paste menu.** The click was
+  never the cause: a secondary click anywhere in the window produced it,
+  and on macOS both Ctrl+click and a two-finger trackpad tap count as
+  one, so it was easy to do by accident.
+
+  What made it a *paste* menu was where the focus was. Both kinds of
+  session keep a focused, editable element to own keyboard input: a VNC
+  or RDP session has the transparent composition overlay that dictation
+  and IME need in the accessibility tree, and an SSH session has the
+  terminal's own hidden input. A webview picks its context menu from the
+  **focused** element rather than the clicked one, so with either of
+  those focused the editing menu appeared over the tab strip, the
+  toolbar, anywhere at all. It needed a session to be open, which is also
+  the only time there are tabs to click, which is why it seemed
+  intermittent.
+
+  The native menu is now suppressed everywhere except a genuine text
+  field, where Cut, Copy and Paste are the point. The session canvas
+  still owns the right click it forwards to the remote desktop.
+
+
+## [0.17.1] - 2026-08-26
+
+Patch: behaviour only. Nothing stored changes shape and no command or
+event gains a field.
+
+### Fixed
+
+- **Detaching from tmux or psmux hung up the connection.** `Ctrl-B D`
+  ended the whole session instead of returning to the remote prompt.
+
+  The attach command was run as the SSH command itself, which ties the
+  connection's life to the multiplexer: the moment it exits, the channel
+  closes and the connection goes with it. That is what
+  `ssh -t host tmux attach` does, and it is not what anyone wants from a
+  terminal. A login shell now starts and the attach is typed into it, so
+  detaching behaves like `ssh host` followed by `tmux attach`: back at
+  the remote prompt, still connected, free to reattach or do something
+  else.
+
+  The previous release only changed the wording of the message. The
+  session still ended, which is not a fix.
+
+- **A saved SSH password was ignored unless the profile also said to use
+  one.** A host with a password in the keychain still failed with "the
+  ssh agent holds no identities", because authentication was an
+  exclusive choice and the default was the agent.
+
+  Every real SSH client treats authentication as a preference order, and
+  this one now does too: the configured method is tried first, then
+  whatever else there is material for. Saving a password is enough to
+  make it work, whatever the setting says. A method with nothing behind
+  it is skipped rather than attempted and refused, which would burn a
+  try against servers that count them.
+
+- **A profile's startup command never ran.** It was stored and read and
+  then never reached the far side. It now runs inside the multiplexer,
+  so it is as persistent as the rest of the session, and is covered by
+  tests.
+
+
+## [0.17.0] - 2026-08-26
+
+Minor rather than patch under the sub-1.0 rule in this file's own header:
+the `ssh_settings` blob gains two more fields and there is a new command.
+
+### Added
+
+- **Connect straight into WSL.** A Windows host can be set to enter a WSL
+  distribution instead of its native shell, and attach to tmux **inside**
+  the distribution.
+
+  That last word is the whole point. The multiplexer a WSL user cares
+  about lives in the distribution, not on the Windows side, so the probe
+  runs in there too. A probe that asked Windows whether it had tmux would
+  be answering for the wrong machine, and would answer "no" on a box
+  whose WSL has had tmux for years.
+
+  The distribution can be detected rather than typed: where a host has
+  saved credentials, the editor asks it which ones it has and offers
+  them. Where it cannot ask, for a host with no WSL or no saved
+  credential, a name can be typed instead, and a blank one means the
+  default distribution. None of that is treated as an error, because
+  none of it is one.
+
+- **An SSH host tile shows its terminal.** It fell back to the
+  hashed-colour placeholder before, because a terminal has no framebuffer
+  to snapshot. The visible buffer is now drawn to an image and stored the
+  same way a desktop's thumbnail is, so an SSH host looks alive in the
+  Library like every other host. The store's existing downscale is reused
+  rather than a second one invented.
+
+
+## [0.16.1] - 2026-08-26
+
+Patch rather than minor: nothing stored changes shape and no command or
+event gains a field. The one contract addition is a new value in the
+`symbol` vocabulary, which the contract already specifies is to be
+ignored when unrecognised, so it cannot break a webview that predates it.
+
+### Fixed
+
+- **A terminal used only the top-left corner of its window.** The remote
+  stayed at the size the profile was saved with, usually 80 by 24, so a
+  full-screen program drew into a small box and left the rest of the
+  window empty.
+
+  The terminal measures itself the moment it appears and sends its size
+  immediately, but the session is still connecting then: a dial, a key
+  exchange, authentication, the multiplexer probe and a pty request all
+  have to finish first. That first message arrived before there was
+  anything to receive it and was dropped, and nothing sent another. The
+  size is now sent again once the session connects, which also covers a
+  reconnect, where the far side is a new pty that has never been told
+  anything.
+
+- **Detaching from tmux or psmux looked like a failure.** `Ctrl-B D`
+  reported "the remote shell exited", because detaching makes the attach
+  command exit cleanly and at that level a detach and typing `exit` are
+  the same event.
+
+  They mean opposite things to the person watching, and the multiplexer
+  is what tells them apart: with one attached, a clean exit means the
+  session is still running on the remote. It now says so. It deliberately
+  does not reconnect on its own, because reattaching someone who has just
+  asked to detach would make detaching impossible.
+
+
+## [0.16.0] - 2026-08-26
+
+Minor rather than patch under the sub-1.0 rule in this file's own header:
+the `ssh_settings` blob gains two fields. The release exists for the fix
+below, which made SSH host profiles unusable in 0.15.0.
+
+### Fixed
+
+- **An SSH profile ignored its username and password.** Adding a host with
+  an account and a password, then connecting, failed with "no ssh agent is
+  available: the ssh agent holds no identities" whatever had been typed.
+
+  The shell loaded the saved credential correctly and then the conversion
+  into the session's own options threw it away, so every SSH connection was
+  attempted as agent authentication with an empty user name. The comment on
+  that function asserted the shell had already turned the credential into an
+  `SshAuth`; nothing did, and the claim is what made the gap look deliberate.
+  The credential is now read where the comment said it already was, and four
+  tests pin it, one of them named for this failure.
+
+- **An SSH profile had no way to say how to authenticate.** There was no
+  setting for it at all, so agent was not merely the default, it was the only
+  possibility. Profiles now choose between the agent, a password from the
+  keychain, and a key file, and the host editor asks first, above the
+  multiplexer, because it decides whether the connection works at all.
+
+- **Quick Connect could not open an SSH session.** An ad-hoc target has no
+  profile, so it has no stored account and no secret, and without a way to
+  ask, the only authentication that could ever succeed was an agent. A
+  refused authentication now asks, reusing the credential dialog the other
+  protocols already use, and retries with the answer. Only an authentication
+  refusal asks: a refused dial or a changed host key are not things a
+  password fixes, and a dialog for either would be one that cannot help.
+
+  An empty user name now resolves to the local account rather than being
+  sent as empty, which a server rejects outright.
+
+
+## [0.15.0] - 2026-08-25
+
+Minor rather than patch under the sub-1.0 rule in this file's own header:
+the host store gains an `ssh_settings` column and two credential fields,
+and the IPC contract gains SSH commands, events and a binary message
+type.
+
+### Added
+
+- **SSH is a third protocol**, alongside VNC and Remote Desktop. A host
+  profile can speak it, so an SSH machine gets a tile in the Library, an
+  `ssh://` address in Quick Connect, its own session window or tab, and the
+  same connection history and reconnect behaviour as any other session. It
+  goes through the same `connect_session` and the same session registry, so
+  it inherits all of that rather than growing a parallel copy of it.
+
+  Per-host settings cover which multiplexer to attach to and under what
+  session name, a startup command to run instead of the login shell, and the
+  terminal's font size and scrollback.
+
+- **psmux and tmux are both first class, on Linux and on Windows.** The
+  default is to detect rather than assume: the app asks the far side what it
+  actually has, in one round trip, and takes the best of psmux, tmux, zellij
+  or screen. psmux ranks ahead of tmux, and because it speaks tmux's command
+  language the two share one implementation rather than two that could drift.
+
+  A Windows machine running OpenSSH Server is a first-class target here, not
+  an afterthought. Its default shell may be `cmd.exe` or PowerShell, where a
+  POSIX probe does not fail loudly, it fails *silently*: the shell errors, the
+  answer is unrecognisable, and the session quietly opens a plain shell on
+  exactly the machine the user most wanted persistence on. So the question is
+  asked in a second dialect when the first goes unanswered, and "nothing is
+  installed" is kept distinct from "I did not understand the reply".
+
+  A remote with none of them still gets a working terminal. It is told once,
+  quietly, that this session will not survive a disconnect.
+
+- **A remote shell**, as its own module (`ssh-core`) over the SSH connection
+  the Files panel and the tunnel already use. It is built around the four
+  things that make running `ssh` in a window irritating:
+
+  - **It reconnects by itself.** On the same backoff ladder as a VNC session
+    (250 ms doubling to a 15 second cap, with jitter), so this is one set of
+    numbers to reason about rather than two. "Reconnect now" skips the wait
+    and resets the counter, for when you know the network is back.
+
+  - **It notices a hang instead of sitting in one.** A link whose peer went
+    away without closing the socket looks identical to an idle one, and TCP
+    will happily wait minutes before admitting it. Keepalive probes every five
+    seconds, three misses, so a dead link is called in about fifteen seconds
+    and reconnected through.
+
+  - **Your work is still there afterwards.** Reconnecting on its own gets you
+    a fresh empty shell, which just makes the loss quicker to find: the remote
+    PTY died with the link and took everything under it. So the session
+    attaches to a multiplexer instead (`tmux` by default, `screen`, `zellij`
+    or a command of your own), whose session belongs to the remote machine and
+    outlives any one connection. Where the multiplexer is not installed it
+    opens a plain shell and says so, rather than refusing to connect.
+
+  - **A session cut mid-`tmux` no longer wrecks the terminal.** Programs like
+    `tmux`, `vim` and `htop` switch the terminal into mouse reporting and
+    bracketed paste and are expected to switch it back on exit. A severed link
+    never gives them the chance, which is why moving the mouse then prints
+    escape garbage at the prompt and pasting arrives wrapped in control codes.
+    The session now tracks which of those modes the remote turned on and sends
+    exactly what undoes them whenever the link goes away.
+
+  Host keys are trust-on-first-use against the **same** pin store as the Files
+  panel and the tunnel, so trusting a machine once covers all three; a changed
+  key is the same hard stop it is everywhere else.
+
+### Changed
+
+- **The SSH connection code moved into its own crate**, `ssh-transport`
+  (dialling, host-key pinning, authentication, tunnelling, the reachability
+  probe). It was inside `vnc-files`, which would have meant a terminal
+  depending on a file-transfer crate to open a socket. Nothing on the wire
+  changed and no behaviour changed: `vnc-files` re-exports every name it used
+  to export, and the file-transfer IPC shape is identical, which is what the
+  `#[serde(flatten)]` on `FileTransferConfig` is there to preserve.
+
+## [0.14.0] - 2026-08-25
+
+Minor rather than patch: the stored per-host Remote Desktop settings gain a
+field and lose one, and the `connect_session` IPC call takes two more
+arguments.
+
+### Added
+
+- **A resolution setting for Remote Desktop connections**, in the connection
+  dialog, the View menu and Preferences. One control with three choices: match
+  this window when connecting, match it and keep matching, or a fixed size from
+  1280 by 720 up to 3840 by 2160, or one you type. They are one setting rather
+  than a size plus a "follow the window" switch because they are not
+  independent: a fixed size that also tracked the window would stop being fixed
+  as soon as the window moved.
+
+  The default is to match the window when connecting and then leave the desktop
+  alone, which is what Windows' own client does. A desktop that resizes every
+  time you drag a window edge rearranges that machine's icons each time.
+
+### Fixed
+
+- **Every Remote Desktop session connected at 1024 by 768**, whatever the
+  window size. The size was a constant with a comment saying the real one
+  arrived from the shell "once the window exists"; that hand off was never
+  built, so nothing ever wrote it. The shell now measures the window and the
+  session asks for a desktop that fits it.
+
+- **A 4K desktop could not be reached.** The connection request cannot carry a
+  height above 2048, so a 3840 by 2160 desktop was silently cut to 2048. It now
+  connects at the size the request can carry and asks for the rest over the
+  Display Update channel, which has room for it.
+
+- **Preferences' Remote Desktop defaults did nothing.** Every one of them had a
+  switch, a row in the store and no consumer, so turning one on changed nothing
+  and the next host still arrived with the built-in defaults. Sound, clipboard,
+  multiple monitors and the new resolution setting all apply to new hosts now.
+
+- **The floating toolbar refused to resize an RDP desktop**, saying the Display
+  Update channel was not supported yet. It has been for several releases, and
+  the View menu never refused the same thing, so the two disagreed.
+
+- **A resize asked for before the Display Update channel opened was lost.**
+  Harmless while dragging a window, since another follows, and wrong for a size
+  that is only ever asked for once.
+
+### Changed
+
+- The per-host "Match the remote resolution to this window" checkbox and the
+  matching preference are replaced by the resolution setting. Existing profiles
+  keep their behaviour: a host with the box ticked becomes "match this window,
+  and keep matching".
+
+- `.rdp` import understands `desktopwidth`, `desktopheight` and `dynamic
+  resolution` together, the way mstsc treats them. The first two were parsed,
+  range checked and then discarded because no field held them.
+
+## [0.13.4] - 2026-08-25
+
+### Fixed
+
+- **RDP colours, properly this time.** 0.13.2 fixed the width of the planar
+  colour loss reconstruction and 0.13.3 shipped with the amount still wrong,
+  which left hard edged patches of roughly the complementary hue across the
+  most saturated parts of the picture: teal blotches on a red face, a teal band
+  along the sand.
+
+  The shift is one less than the colour loss level, and the non lifting form of
+  the transform goes with it. The lifting form carries two halvings of its own
+  and needs the full level; pairing it with the eight bit reconstruction
+  introduced in 0.13.2 meant every chroma sample in the top half of its range
+  overflowed and wrapped, flipping its sign.
+
+  The check that passed 0.13.3 could not see this. A wrap stays inside 0 to
+  255, so nothing clamped: it reported zero clamped tiles while 15.72% of its
+  chroma was sign flipped. The check that does see it is that a correct scale
+  never discards a set bit. Measured live: 2,474,934 of 15,745,024 chroma bytes
+  lost a bit before, 0 of 15,728,640 after. There is now a test for that
+  invariant that needs no server.
+
+  Verified on the desktop icons rather than the wallpaper, because their
+  colours are known: Chrome's blue centre and red arc, blue Edge, blue Recycle
+  Bin arrows, a red Core Temp bulb, a blue ASUS gear, orange OpenVPN, a yellow
+  folder. Every one of them was wrong before, in ways the photograph hid.
+  Cross checked against FreeRDP, which agrees.
+
+- **NSCodec's colour transform had the same two faults**, plus the sign of Co,
+  which it defines the opposite way round from the planar codec. Its encoder
+  here is rewritten as the inverse of the corrected decoder, rounding to
+  nearest rather than truncating. Still unverified against a real NSCodec
+  server: this crate's encoder is the only thing it has been checked against,
+  which is precisely the weakness that hid both planar faults.
+
+## [0.13.3] - 2026-08-25
+
+### Fixed
+
+- **A pointer press could be dropped after a reconnect.** The shell decides
+  whether a pointer event is safe to shed under backpressure by comparing it
+  to the last button mask it saw, and that cache survived a reconnect the
+  backend's input state did not. A real press whose mask matched the stale
+  value was classified as stale motion and dropped if the queue was full. It
+  is now forgotten on any state change. Same family as the stuck button fixed
+  in 0.13.2.
+
+- **RDP reported no frame rate and no rectangles.** The stats overlay showed 0
+  for both, and a throughput figure that was neither a rate nor in the right
+  unit: the byte delta since the last tick went into a field that means bits
+  per second, so it read eight times low against a VNC session and drifted
+  with any late tick. Frames are now counted where every graphics path
+  converges, so the legacy bitmap updates, the surface bits and the graphics
+  pipeline are all covered, and rates divide by the time actually elapsed.
+  Decode time is still reported as 0 rather than guessed at.
+
+- **CI was red on `main`.** Rust 1.98 became stable and its clippy carries two
+  lints the previous toolchain did not, so the test gate had been failing on
+  every platform since v0.13.1. Both are cleared, and the gate was rerun
+  against 1.98 itself rather than a newer local toolchain that does not raise
+  them.
+
+## [0.13.2] - 2026-08-25
+
+### Fixed
+
+- **RDP colours were wrong.** Large areas of the remote desktop came out in
+  flat, blown out primaries over a picture that was otherwise sharp and
+  correctly placed, and changing the colour depth made no difference. A
+  Windows 11 host sends every 32 bpp tile with a colour loss level of 3, which
+  leaves five meaningful bits in each stored chroma byte; the reconstruction
+  has to happen in eight bits so the rest falls off the top, and this did it
+  in sixteen and kept it. A stored `0x12` means -112 and was read as +144, so
+  every strongly coloured pixel left the 0 to 255 range and clamped.
+
+  Converting a real pixel to YCoCg and back cannot leave that range, so a
+  decode that clamps has misread the stream. Against a real host, 1125 of 1921
+  tiles clamped before this and none after. The client's own encoder made the
+  same assumption, so the round trip test agreed with the fault; the new test
+  uses the bytes the host actually sent.
+
+- **A cancelled pointer left a button held down.** On both VNC and RDP the
+  right button would stop working, then start arriving long after the gesture,
+  and then ordinary left clicks would open context menus. All three are one
+  stuck bit: `pointercancel` and `lostpointercapture` report no button, so the
+  release path ignored them and the bit survived for the rest of the session.
+  A left press then travelled as left and right together.
+
+  Button state now follows what the browser reports as actually held, on every
+  event, so a mask that drifts is corrected on the next one. A cancelled pan
+  had the same hole and stopped pointer input entirely. On the RDP side,
+  releasing everything now releases held buttons as well as keys, and turning
+  view only on no longer remembers a mask it never sent.
+
+
+## [0.13.1] - 2026-08-24
+
+### Fixed
+
+- **RDP showed no picture.** The first bitmap update of every session was
+  rejected as malformed and ended the connection. The fast path body carries a
+  two octet type field that this client skipped, so the count of rectangles was
+  read as the first rectangle's left edge and the rectangle came out inverted.
+  A Windows 11 host sends 162 tiles in that first update; none of them arrived.
+  Verified against a real host: 155 frames and 42 cursor updates in twenty
+  seconds, where 0.13.0 managed none.
+
+  The test server had the same gap, which is why two thousand passing tests
+  agreed with the fault. It now sends what a real server sends, and the twelve
+  octets a Windows host actually put on the wire are a test vector.
+
+## [0.13.0] - 2026-08-24
+
+### Added
+
+- **DeskVNCViewer speaks RDP.** Add a host, choose Windows Remote Desktop, and
+  the port and the fields change to suit it. Quick connect takes `rdp://host`.
+  Saved hosts connect, ask about the certificate the first time, ask for a
+  password if none is saved, and show a desktop you can type into and click on.
+  The clipboard works both ways, the remote desktop follows the window when you
+  resize it, and a dropped connection retries on the same ladder VNC has always
+  used.
+- The whole RDP stack is written in this repository. No third party RDP,
+  CredSSP, NTLM or Kerberos library is used anywhere, and a test refuses one
+  from the lockfile up. Cryptography is the exact opposite: every cipher, hash,
+  MAC and key derivation is a call into a vetted library, and three tests fail
+  if a source file starts to look like a hand written primitive.
+- Graphics arrive through the modern graphics channel: RemoteFX, ClearCodec,
+  NSCodec, progressive RemoteFX, the planar and interleaved codecs, and the
+  RDP 8.0 bulk decompressor. There is no `unsafe` in any of it, and every
+  decoder beats the performance budget written for it.
+- Network Level Authentication with NTLMv2, checked against the published test
+  vectors at every intermediate value. Kerberos is implemented too, for domains
+  whose policy refuses NTLM, though see the limitations below.
+- Network discovery finds RDP hosts as well as VNC ones, and reads the name off
+  the certificate on the connection it already opened rather than opening a
+  second one. It can be turned off, and when it is off it opens nothing.
+- `.rdp` files can be imported.
+- A message for a case domain users actually hit: a host whose policy refuses
+  NTLM now names the two Group Policy settings to change, in the words an
+  administrator sees, and does not ask for the password again. Asking again
+  would have spent three attempts against a lockout counter for a password that
+  was never wrong.
+- `docs/RDP_SPEC_NOTES.md`, which records every place the code had to choose a
+  reading that only a specification vector can settle, so nobody has to
+  rediscover them from a module comment.
+
+### Changed
+
+- **The host database gains a schema version, and the interface contract gains
+  fields.** Existing profiles migrate and keep working exactly as they did, and
+  a profile written by a newer build is refused with a message saying so rather
+  than misread. This is what makes the release a minor one rather than a patch.
+- Internals were split so two protocols can share them rather than growing a
+  second copy: the session contract, pixel conversion, the reconnect ladder,
+  the credential and certificate prompts, the renderer, the frame channel and
+  the SSH tunnel are now common to both. The VNC side behaves as it did, and
+  its tests pass without an assertion being edited.
+
+### Fixed
+
+- **Four faults that only a real server could find.** The first connection to a
+  real Windows host found all of them in an hour. The domain parameters in the
+  MCS connect were tagged as an application type rather than a plain sequence,
+  which the host rejected by name. The length the host gives for its own
+  greeting understates it by the two blocks it appends afterwards, and trusting
+  that number cut the greeting short. A server lists its codecs with no
+  identifiers assigned, which was read as four codecs colliding. And the
+  priority marking on the host's first real message was compared against the
+  one value this client happens to send. Every one of them passed every test in
+  the suite, because the test server was written from the same misreadings.
+- **A right click could do nothing, and then take effect much later.** Input
+  packets were sent as independent IPC requests, and nothing made the shell
+  handle two of them in the order they were issued. A press and its release
+  milliseconds apart, which is what a trackpad tap and a synthesised context
+  click both are, could therefore land reversed, leaving the remote holding a
+  button the user had already let go of: the click appeared to do nothing, and
+  only came out later when some unrelated pointer event happened to carry a
+  mask without that bit. Input is now queued so no packet can overtake
+  another, and a synthesised right click travels as a single packet the way a
+  wheel click already did.
+
+### Security
+
+- Every decoder is fed bytes controlled by a remote peer, so every one has a
+  test asserting that a truncated input returns an error rather than panicking,
+  for every possible prefix. The codec decoders also have fuzz targets driven
+  from raw bytes.
+- RDP certificates are pinned under their own scheme rather than sharing the
+  VNC one. A host can serve both protocols with unrelated certificates, and a
+  shared row would have let one vouch for the other.
+- Nothing is sent to a server whose certificate you have not approved. The
+  prompt holds the connection open until you answer, and dismissing it ends the
+  attempt before the first credential is built.
+- A password that came from the keychain rather than from you is tried once and
+  not replayed, because replaying a saved credential is how a domain account
+  gets locked out.
+- Locking the credential store now wipes every decrypted secret it was holding.
+  It previously wiped only the key and let the decrypted entries drop, which
+  left every password it had opened sitting in freed memory.
+
+### Known limitations
+
+RDP is new in this release and these are the edges of it.
+
+- **It has been connected to one real machine.** A Windows 11 host, on
+  2026-08-24, reaching the desktop through NLA and receiving the picture. That
+  work found five faults in an afternoon that two thousand passing tests never
+  could, because the mock server is built from the same reading of the
+  specification as the client and agrees with every misreading. Expect more of
+  them on hosts that differ: older Windows, a domain, a gateway, xrdp. `docs/RDP_SPEC_NOTES.md` names the
+  two places where being wrong shows up as subtly wrong pixels rather than an
+  error, and neither is settled.
+- **H.264 is not used.** The client advertises graphics capability versions 8
+  and 8.1, which contain no H.264, so a server will not send it. Everything
+  else in the graphics channel is used.
+- **Kerberos is not reachable from a running session.** The implementation is
+  complete and tested against the RFC vectors, but the session does not yet
+  perform the name lookup that finds a domain controller, and it is behind a
+  build feature. A Kerberos only domain still fails today.
+- **Audio is decoded and not played.** Where playback should happen is not
+  decided yet.
+- TLS 1.0 and 1.1, for Windows 7 and Server 2008 R2 hosts, is built but the
+  handshake is not implemented, and the feature is off.
+- Not planned: RemoteApp, printer and smart card redirection, drive
+  redirection, audio input, and the RD Gateway.
+
+## [0.12.0] - 2026-08-23
+
+### Added
+
+- **Hosts can be selected in bulk and dropped onto a group or a tag.** Click a
+  tile, Cmd/Ctrl-click to add one, Shift-click for a run of them, or sweep a
+  marquee across empty space the way you would over files. Cmd/Ctrl+A selects
+  everything on screen, Escape clears it. Dragging the selection onto a group
+  in the sidebar moves the whole lot; dropping it on a tag adds that tag and
+  leaves the tags those hosts already carried alone; dropping it on All Hosts
+  takes them out of their group. The same two moves are in a bar above the
+  grid and in the right-click menu, for anyone who would rather not drag, and
+  every one of them can be undone from the toast it raises. The gesture is
+  built on pointer events rather than HTML5 drag and drop, which the file-drop
+  handler the session window needs would have blocked on Windows.
+- Three new IPC commands behind it, `set_hosts_group`, `add_tag_to_hosts` and
+  `remove_tag_from_hosts`, each writing the whole selection in one
+  transaction.
+
+### Fixed
+
+- **New groups and new tags are created again.** The Library sent only the
+  name it had just asked for, but the shell deserializes a complete record, so
+  every creation was rejected before it reached the database. The failure was
+  then swallowed into a console warning: the dialog closed, the sidebar did
+  not change, and nothing said why. The payload is now complete, and a
+  creation that does fail says so in a toast.
+
+## [0.11.0] - 2026-08-23
+
+### Added
+
+- **The floating toolbar can be switched off, and the app menu carries
+  everything it did.** Preferences ▸ Session has a "Hide the floating
+  toolbar" switch for anyone who would rather have nothing at all on top of
+  the remote desktop. The View and Session menus grew to cover the whole bar
+  first: scaling and zoom, the monitor list, pointer options, quality and
+  gray levels, view only, shortcut pass-through and the send-to-remote
+  chords, clipboard, file transfer, screenshot, refresh, and a Connection
+  Info dialog with the latency and throughput figures the status button used
+  to show. The menu is live rather than decorative, it shows which scaling
+  mode, quality preset and monitor are actually in force, follows whichever
+  session is in front, and greys the session half out when nothing is
+  connected. The zoom items deliberately carry no keyboard shortcuts:
+  a menu accelerator is claimed by the OS before the webview sees it, so
+  Cmd/Ctrl+= and Cmd/Ctrl+- would have been stolen from every remote
+  application for the life of the app.
+- **Preferences ▸ Session sets the defaults for every toolbar option.**
+  Scaling, quality, gray levels, view only, always-request-fresh-frames,
+  shortcut pass-through, zoom lock and edge panning all have a global default
+  now, which is where a computer starts before anything has been adjusted on
+  it. "My pointer" joined "Show the remote pointer" under Input.
+
+### Fixed
+
+- **The chosen monitor is remembered, and no longer thrown away by a
+  reconnect.** Picking a monitor is now kept against that computer, through a
+  disconnect, a reconnect, and closing the app. It survived none of those
+  before, and the reconnect case was not really about persistence: the
+  selection was cleared the instant its id was missing from the list of
+  monitors, and a reconnect arrives with an empty list before the server
+  describes itself again, so the choice was dropped in the gap and never came
+  back. The selection is now derived from a remembered intent rather than
+  stored as an applied id, so a list that momentarily matches nothing shows
+  the whole desktop and the monitor returns with the layout. Matching is by
+  identity where there is one (a server's own screen id, or the detected
+  left/right pair, which is followed even when the seam moves by a pixel
+  between runs) and by rectangle otherwise, so a manual cut is never carried
+  onto a desktop of another size where its id would mean a different piece of
+  the screen.
+- **"Always request fresh frames" never did anything.** `set_always_refresh`
+  was wired up as a command and called by the toolbar, but was missing from
+  the permission manifest and from both capability files, so every call was
+  refused with "Command not found" and the switch moved without changing the
+  session. It is allowed from the library and session windows now.
+- **Menu items could act twice on one click.** The `menu://action` listeners
+  resolved a turn after the effect that registered them, so a cleanup that had
+  already run left the unsubscribe function to be assigned after the fact and
+  the listener stayed registered for good; every re-run added another. It went
+  unnoticed while the menu held only one-way actions, and would have made
+  every new toggle a no-op, applied once by each listener and landing back
+  where it started.
+- **Everything else the toolbar changes is remembered too**, per computer:
+  scaling mode, zoom, quality preset, gray levels, view only,
+  always-request-fresh-frames and shortcut pass-through. Pass-through is
+  re-armed quietly on reconnect, without raising the Accessibility explainer
+  on its own. Ending a session no longer counts as switching pass-through
+  off, which is what used to erase that setting on every disconnect.
+
+## [0.10.0] - 2026-08-17
+
+### Added
+
+- **The seam between two monitors is now detected from the picture.** When
+  the server describes no layout, the desktop is sampled at full resolution
+  shortly after the connection settles and the one column where two side by
+  side monitors visibly disagree (different wallpapers, a taskbar stopping
+  dead, a letterbox band) is searched for, but only at positions where a
+  monitor boundary could plausibly sit: the midpoint, or a common panel
+  width from either edge. A find appears in the Displays menu as "Display 1
+  / Display 2 (detected)" above the manual cuts; a miss (mirrored
+  wallpapers, a window straddling the seam) keeps the manual cuts, and a
+  "Detect displays again" entry re-runs the search once the seam is
+  uncovered. Detection re-runs on every desktop resize and never crosses a
+  server-described layout.
+
+## [0.9.1] - 2026-08-17
+
+### Fixed
+
+- **Monitor selection did nothing against the servers that need it most.**
+  The TightVNC family serves a multi-head desktop as one wide framebuffer and
+  never says where the seams are, so 0.9.0's Displays menu could only shrug
+  at exactly the "two monitors squeezed into one view" complaint it was built
+  for. When the server describes no layout, the menu now offers manual cuts
+  of the desktop instead: equal halves, one common monitor width (2560, 1920
+  or 1440) on either side for unequal pairs, and thirds when the desktop is
+  wide enough, labelled as the guesses they are. Selecting one crops the
+  view exactly as a server-described monitor would.
+
+## [0.9.0] - 2026-08-17
+
+### Added
+
+- **Pick a single monitor of a multi-head desktop.** The toolbar's Displays
+  menu is now real: it lists every monitor the server advertises through
+  ExtendedDesktopSize, in left to right order with resolutions, and selecting
+  one shows just that monitor. Every scaling mode, edge panning, the drag
+  pan and pointer mapping work against the selection, and the pointer cannot
+  leave the selected monitor. Thumbnails, live previews and screenshots still
+  capture the whole desktop. Servers that never describe their monitors keep
+  the whole desktop view, and the menu says so.
+- **A diagnostics toolkit for "the picture is slow"** (`docs/DIAGNOSTICS.md`).
+  The interesting failures are attribution problems: the network, the server's
+  encoder, our protocol behaviour, our decoder and the webview all look the
+  same from inside the app. So there is now a set of small probes that stand
+  outside it and measure one thing each (`tools/limbs`), plus a headless
+  client (the `stall_probe` example) that runs the real vnc-core stack with no
+  UI and reports the update gap distribution.
+- **Connection stats say where the latency figure came from** (a fence, an
+  idle probe, or the passive update pipeline readout) **and how hard the
+  server is working for us** (the fraction of time spent inside framebuffer
+  updates), because the sources are not comparable and a reader that treats
+  them as one number draws the wrong conclusion.
+
+### Fixed
+
+- **The automatic quality tuner could saturate the link and never notice.**
+  Compression relief on the High tier could drive Tight compression to 0,
+  which does not mean "a bit less zlib", it means no zlib at all: measured
+  against TightVNC on a 2880x1800 desktop, a steady 9.9 MB/s of raw
+  sub-encodings on an 82 Mbit/s link. It was also self-sustaining, because
+  uncompressed rects take longer to read off the wire, which kept the relief
+  that caused them engaged. The ladder never asks for less than compression
+  level 1 now.
+- **A fast link in front of a slow server pinned quality at High while
+  interactivity collapsed.** The tier choice had no term for what the chosen
+  tier costs the server. Measured at 2880x1800: High bought about twice
+  Medium's bandwidth and cost about twenty times its response time, 430 ms
+  against 19 ms. The ladder is now capped while the server's measured
+  response stays over budget, with a two minute penalty so the cap cannot
+  limit cycle through the improvement its own remedy produces.
+- **Latency now reads on servers without the Fence extension even when the
+  screen never goes quiet.** The idle probe only samples a still screen, so a
+  busy desktop could go minutes without a reading. A passive readout now
+  times request to next header during busy streaks, takes the median so one
+  full screen repaint cannot set the figure, and expires stale samples so an
+  idle stretch cannot leave a ten minute old number standing.
+- **"Always refresh" could be parked for the rest of the session by one lost
+  answer.** A refresh is now recognised by damage coverage rather than exact
+  size, abandoned after ten seconds, and asked less often of a server that
+  answers slowly.
+
+## [0.8.2] - 2026-08-07
+
+### Fixed
+
+- **The latency reading was consistently too low, never too high** ([#1]). The
+  probe for servers without the Fence extension was completed by whichever
+  framebuffer update arrived first, and an unrelated update is always *earlier*
+  than the probe's own answer, which is why the error only ever ran one way: a
+  276 ms link read as 200 ms, and a loopback connection read tens of
+  milliseconds. A one-pixel probe is answered by a one-pixel update, so an
+  update carrying real damage now spoils the probe instead of completing it,
+  and the next quiet moment tries again. Note the figure is a round trip
+  through the server's update loop, not a network ping: it includes however
+  long the server takes to notice and answer, which is why even a loopback
+  connection does not read as zero.
+- **The connection detail panel still showed "0 ms" before anything had been
+  measured** ([#1]). The toolbar was fixed in 0.8.0; the panel behind it was
+  not. It now reads "-" as well.
+- **Fullscreen was bound to Ctrl+F on Windows and Linux** ([#1]). The
+  accelerator was written as `CmdOrCtrl+Ctrl+F`, which collapses to a plain
+  Ctrl+F on those platforms, quietly taking Find away from every remote
+  application. It is now F11 there, the convention on both, and stays
+  Cmd+Ctrl+F on macOS.
+- **Help ▸ About from a session window opened the dialog on the library
+  window** ([#1]), behind the session being looked at. The shell that renders
+  it is only mounted in the library window; a session window now has its own.
+
+### Removed
+
+- **Space-drag panning, which never worked** ([#1]). Nothing ever told the
+  input handler the space bar was down, so holding it simply typed a space on
+  the remote desktop. Wiring it up would have been the wrong fix: space is an
+  ordinary key that belongs to the remote, and holding it to pan would stop it
+  typing. Edge scrolling covers what it was meant for, and Alt+middle-drag
+  still pans deliberately.
+
+[#1]: https://github.com/psmux/DeskVNC/issues/1
+
+
+## [0.8.1] - 2026-08-07
+
+### Fixed
+
+- **The latency reading jumped between about 1 ms and 180 ms on the same
+  link** ([#1]). The round-trip probe introduced in 0.8.0 for servers without
+  the Fence extension is closed by the next framebuffer update, and on a busy
+  screen that update is somebody else's: one already in flight ends the timer
+  almost immediately, while the probe's own answer queued behind a full
+  repaint reads as hundreds of milliseconds. It now waits for a quiet moment
+  before probing, when the parked incremental request means the only update
+  that can arrive is the answer to the probe, and the figure is smoothed so a
+  single scheduling hiccup does not throw it. An unanswered probe is
+  abandoned after five seconds rather than freezing the reading.
+- **Fullscreen kept the menu bar on Windows and Linux** ([#1]), so the remote
+  desktop never actually filled the screen. There the menu belongs to the
+  window, and it is now hidden while fullscreen and restored on the way out.
+  macOS puts the menu in the system bar, which it hides for fullscreen
+  windows itself. The toolbar's fullscreen button and its shortcut both still
+  work with the menu gone; Escape is deliberately left alone, since it has to
+  reach the remote desktop.
+
+[#1]: https://github.com/psmux/DeskVNC/issues/1
+
+
+## [0.8.0] - 2026-08-07
+
+### Added
+
+- **The view scrolls itself when you push against an edge** ([#1]). At 1:1 on
+  a desktop larger than the window, everything past the edge was simply
+  unreachable: panning existed, but only as a space-drag nobody could be
+  expected to discover. Moving the pointer into the edge of the view now
+  scrolls toward it, faster the closer you get, the way RealVNC does. It is
+  inert whenever the desktop already fits, and it only scrolls in a direction
+  that has something left to show. The remote pointer keeps up with the
+  moving view rather than lagging behind it. "Pan by moving to edges" in the
+  toolbar's Scaling menu turns it off, next to the pinch-zoom lock;
+  space-drag panning works either way.
+
+### Fixed
+
+- **The Session and Connection menus did nothing at all** ([#1]). Every
+  custom menu item is emitted to the frontend to be routed, and the library
+  window and app shell each handled their own, but nothing ever listened for
+  the session's. So Show/Hide Toolbar, Actual Size, Fit to Window, the
+  Quality items, View Only, Refresh Screen, Send Ctrl+Alt+Del, Release All
+  Keys, Reconnect and Disconnect were all dead from the menu bar, while the
+  same actions worked from the session toolbar. Only the view in front acts,
+  so the item does what you would expect with several tabs open.
+- **The toolbar hid itself while the pointer was resting on it.** Auto-hide
+  is driven by pointer movement, so a stationary pointer over the toolbar
+  produced no events and it collapsed at exactly the moment it was being
+  used. Hovering it now holds it open, and the countdown restarts when the
+  pointer leaves.
+- **The toolbar twitched sideways once a second.** The latency readout is
+  re-measured every second and sized itself to its contents, so the whole bar
+  shifted as the figure moved between "-", "9ms" and "290ms". The field now
+  has a fixed width.
+- **The connection status reported "0ms" on servers that cannot be
+  measured** ([#1]). Round-trip time is probed with the Fence extension,
+  which the libvncserver family (x11vnc among others) does not implement, so
+  the figure sat at its initial zero for the whole session and was displayed
+  as though it were real. Those servers are now probed with a one-pixel
+  non-incremental update request, which any RFB server must answer, and the
+  status shows "-" until a measurement actually exists rather than claiming
+  an instant connection.
+
+[#1]: https://github.com/psmux/DeskVNC/issues/1
+
+
+## [0.7.0] - 2026-08-06
+
+### Added
+
+- **A Pointers menu in the session toolbar.** "Show the remote pointer" is
+  now reachable while you are looking at the desktop rather than only from
+  Preferences, and it is joined by a choice of how your own pointer is drawn
+  over the session: the standard arrow, a small dot, or hidden entirely. The
+  arrow covers the pixels under its own tip, which is exactly where the
+  remote pointer sits, so with both drawn the two crowd each other; the dot
+  is a ring centred on the hotspot with a light outline, which stays legible
+  on dark and light desktops. Hidden leaves only the remote pointer, which is
+  the closest thing to sitting at the machine itself. Both settings are
+  remembered, and the remote pointer still defaults to shown.
+
+- **"Lock zoom (ignore pinch)" in the session toolbar's Scaling menu.** A
+  trackpad pinch is easy to start by accident in the middle of a two-finger
+  scroll, and rescaling the view is rarely what was meant. With the lock on,
+  the gesture is swallowed: it neither rescales the view nor reaches the
+  remote as scroll clicks. The zoom controls in the same menu keep working,
+  so this stops accidents rather than taking the feature away. The setting is
+  remembered, since a gesture that gets in the way once gets in the way every
+  time.
+
+
+### Fixed
+
+- **A server with no password could not be connected to at all** ([#1]). A
+  stock `x11vnc` started without a password offers exactly one security type,
+  "None", and the client refused it and hung up before choosing one, which is
+  why the server logged `rfbProcessClientSecurityType: client gone`. Four
+  separate places refused it, and VeNCrypt Plain was refused the same way, all
+  gated behind an "allow insecure" opt-in that **no part of the app could set**:
+  every refusal told the user to enable *"Allow an unencrypted connection" for
+  this host*, a control that never existed. The client now takes the security
+  type the server offers when it is the only one; that is not a downgrade,
+  since anything stronger is always preferred, and it matches how VncAuth has
+  been treated since the start, whose session is equally cleartext. The
+  session's unencrypted badge remains the honest signal.
+- **The failure was reported as "Incorrect password"** on a server that has no
+  password, because any message containing "auth" was matched, including "no
+  *auth*entication at all". Only messages that really mean rejected
+  credentials are reported that way now.
+- **The host editor's "Security type" setting did nothing.** It was written to
+  the database and never read when connecting, so pinning a type (including
+  "None", the workaround the old error implied) had no effect.
+
+Why the tests were green through all of this: the shared integration-test
+helper switched the insecure opt-in **on**, so the test that connects to a
+"None"-only server proved nothing about the path a real session takes. It now
+runs on the shipping defaults, which is what turned this red.
+
+[#1]: https://github.com/psmux/DeskVNC/issues/1
+
+## [0.6.1] - 2026-08-05
+
+### Fixed
+
+- **Two-finger tap on a Mac trackpad now right-clicks the remote desktop.**
+  The gesture every Mac laptop uses for a secondary click reaches the page as
+  a lone `contextmenu` event, with none of the button-2 press/release the
+  client was listening for, so it produced nothing at all on the remote while
+  a physical right button worked. The click is now synthesised from the
+  gesture itself, and a real right button still cancels it so one gesture can
+  never right-click twice.
+
+
+## [0.6.0] - 2026-08-03
+
+### Added
+
+- **Dictation and IME text now reaches the remote desktop.** Session keyboard
+  focus moved from the canvas to a hidden capture element, which is what
+  dictation tools (macOS dictation, Wispr Flow), CJK input methods, and
+  accessibility software need: they insert text into the focused editable
+  element rather than pressing keys, and a canvas cannot receive text at all.
+  Inserted and composed strings are forwarded keystroke by keystroke, synthetic
+  key events that carry a whole word (the other way dictation tools type) are
+  recognised and forwarded too, and ordinary typing is unaffected because
+  forwarded keys never reach the element. This also makes Chinese, Japanese,
+  and Korean input methods work in a session for the first time. Preferences ▸
+  Input ▸ "Type text inserted by dictation tools" turns the software-insertion
+  half off; accents and CJK input methods are deliberately not behind the
+  switch, since those are the user typing.
+- **A forwarded paste now carries the clipboard as it is at that moment.**
+  Pressing Cmd/Ctrl+V (or Shift+Insert) into a session first pushes the
+  current local clipboard to the remote, holding that one chord until the
+  text is ordered ahead of it on the wire, with a 300 ms ceiling so a wedged
+  clipboard read can never freeze typing. Previously the clipboard was only
+  synced when the window regained focus, so anything that wrote the clipboard
+  mid-session, dictation tools in clipboard mode, clipboard managers,
+  scripts, pasted stale text on the remote. Preferences ▸ Clipboard ▸ "Push
+  clipboard when pasting into the remote" is its own switch, and the master
+  "Sync clipboard automatically" also gates it: with either off, nothing is
+  sent implicitly.
+
+## [0.5.0] - 2026-08-03
+
+### Added
+
+- **The About dialog now fingerprints the exact build.** Alongside the version
+  it shows the `git describe` stamp (nearest tag, commits since, short hash,
+  and a dirty marker for locally modified builds), the full commit, branch and
+  commit date, the build profile and toolchain (tauri, rustc), and the machine
+  it is running on (OS and version, architecture, webview engine version). A
+  "Copy report for a bug ticket" button puts the whole block on the clipboard
+  as preformatted text, so an issue report identifies the precise code it came
+  from even when the version number hasn't moved. The stamp is compiled into
+  the binary at build time and degrades to "unknown" outside a git checkout
+  rather than failing the build. A small ? button in the library toolbar opens
+  the dialog, and the macOS app menu's About item now opens it as well: the
+  native About panel is gone, so there is exactly one About surface and it is
+  the one with the fingerprint.
+- **A keyboard mode: Preferences ▸ Input ▸ "Match my local keyboard layout".**
+  Against a server that speaks the QEMU extended key extension, the client
+  prefers scancodes, which means the *server's* layout decides what a physical
+  key types; a German ö on an en-US server types `;`. The new switch suppresses
+  scancodes and sends layout-aware keysyms instead, so keys type what they type
+  locally. Off by default, because scancode mode is what makes remote shortcuts
+  and games behave, and the two only disagree when the layouts differ. Toggling
+  it mid-chord releases held keys first so nothing sticks in the old encoding.
+- **AltGr, Option-composed characters, and dead keys now work.** The webview
+  key path previously sent the composing modifier along with the character
+  (AltGr+Q arrived as Ctrl+Alt+@ and typed nothing) and discarded dead keys
+  outright, so every accented character on French, German, Spanish and Nordic
+  layouts was unreachable. Composed characters are now delivered with the
+  standard fake-modifier dance, the Windows AltGr pair is detected and sent as
+  ISO_Level3_Shift, and dead-key sequences compose through a hidden overlay and
+  arrive as the finished character.
+
+### Fixed
+
+- **A mid-session pixel-format switch could kill the session against
+  TigerVNC-family servers.** The switch was guarded by a fence that never
+  requested a response, and the decoder flipped formats immediately, so every
+  rectangle still in flight was decoded in the wrong format and the connection
+  died with "decompressed data exceeds cap", then reconnected, then died again:
+  the window is widest on slow links, which is exactly when the Auto tuner
+  triggers the switch. The fence now demands an answer and the decoder holds
+  the old format until it arrives, which is the synchronisation point the
+  protocol provides for exactly this.
+- **Input froze for the length of every large framebuffer update.** The run
+  loop read an entire update before looking at the command queue again, so on
+  a slow link the remote pointer stopped for seconds and then jumped. Pointer
+  and key events are now serviced between rectangles while an update streams
+  in. Relatedly, when the input queue filled during a stall, *all* input was
+  silently dropped, including key-ups and button releases, leaving the remote
+  with stuck keys; now only stale pointer motion is shed, and state-changing
+  events are always delivered.
+- **Growing the remote desktop left the new area permanently blank.** Neither
+  continuous updates (still scoped to the old geometry) nor the one-outstanding
+  request pipeline (already spent on the old rect) covered the newly exposed
+  strip. Continuous updates are re-armed and an update for the new geometry is
+  requested on every real resize.
+- **The automatic lossless refresh never actually sharpened anything.** The
+  adaptive encodings were restored on the wire before the server had encoded
+  the refresh, so the "sharp" repaint came back as JPEG, re-marked the region
+  as lossy, and the cycle repeated every five seconds forever, a permanent
+  bandwidth leak on idle sessions. The restore now waits until the answering
+  update has been consumed. H.264 regions now count as lossy and are refreshed
+  too, and cursor-shape-only updates no longer reset the idle clock that gates
+  the refresh.
+- **The link estimator could be fooled in both directions.** A burst left open
+  across an idle gap completed with a near-zero rate and walked a gigabit LAN
+  down to 256 colours; a kernel receive backlog (the normal case over an SSH
+  tunnel) read as multiple gigabits and pinned full quality on a 5 Mbit link.
+  Bursts must now span real wall time, stale bursts are abandoned at the
+  threshold-crossing delivery too, and implausible samples are rejected.
+- **Auto quality now behaves like a controller instead of a coin flip near a
+  boundary.** Tier thresholds gained directional hysteresis, a genuinely slow
+  fresh sample downgrades within seconds instead of waiting out a ten-second
+  window maximum, the ladder no longer switches H.264 on and off (which
+  restarted the codec and forced a keyframe every crossing), returning to Auto
+  after a manual preset detour resyncs the tuner instead of doing nothing, the
+  "client is slow" relief no longer fires on slow *links* (it read network
+  wait as decode time and lowered compression exactly where compression was
+  needed most), and the per-second stats divide by real elapsed time.
+- **Black and White was the most expensive preset on the wire.** It negotiated
+  full 32-bit colour with JPEG off and greyed the image client-side, costing
+  more bandwidth than Medium while promising the opposite. It now negotiates
+  the same 256-colour indexed format as Low.
+- **Stuck keys and buttons, four separate ways.** Global capture forgot which
+  key-downs it had swallowed, so releasing the modifier before the key left
+  the key held on the remote; a key-up targeting a just-opened dialog was
+  ignored; releasing the left button during a middle-drag pan was never sent;
+  and a release cancelled after the coalesced pointer move was sent out of
+  order. All four now release correctly.
+- **Cursor fidelity.** Cursors on the 256-colour presets rendered as grey
+  noise (the colour map was never applied), alpha cursors kept their
+  premultiplied fringe, an alpha cursor delivered through a non-Raw encoding
+  was channel-scrambled, and a hostile hotspot could push the cursor overlay
+  off-target. All fixed, with the conversion now shared with the framebuffer
+  path.
+- **Robustness against misbehaving servers.** An unknown negative encoding now
+  fails cleanly as unsupported instead of silently desynchronising the stream;
+  an endless stream of empty rects under the unknown-length sentinel is
+  bounded instead of growing memory without limit; and a full-screen Raw
+  rectangle from a 5K/6K display (macOS Screen Sharing sends these) no longer
+  trips a cap sized for 4K.
+- **Renderer correctness and cost.** H.264 frames could land out of order with
+  other rects (the one path that escaped the ordered apply chain); JPEG rects
+  were colour-managed differently from RGBA rects and could tint; library live
+  previews did a full-resolution GPU readback twice a second (now downscaled
+  on the GPU, roughly a hundredth of the traffic at 4K); and the CopyRect
+  scratch texture never shrank after a 4K session.
+- **"Natural scrolling" in Preferences now does something.** It was stored and
+  never read. It now flips wheel direction, page-mode scrolls (Firefox) are no
+  longer dead, one trackpad flick can no longer fire hundreds of wheel events,
+  a plain middle-click always reaches the remote instead of depending on zoom
+  level, and the toolbar's Ctrl+Alt+Del and friends carry scancodes so they
+  work on scancode-only hosts.
+
+## [0.4.0] - 2026-08-02
+
+### Added
+
+- **"Always request fresh frames" in the session toolbar's Quality menu.** The
+  manual override for a server whose damage tracking cannot be trusted: while
+  it is on, the client re-fetches the whole screen every second instead of
+  relying on the server to report what changed, so a picture can never stay
+  stale no matter what the server forgot to send. It costs real bandwidth,
+  which is why it is a switch rather than the default.
+- **LAN / WAN override in the session toolbar.** The Quality menu now leads
+  with a Network section: Auto (detect from the link), LAN (full quality, no
+  adaptation), and WAN (save bandwidth). LAN pins full quality and disables
+  the adaptive tuner entirely.
+
+### Fixed
+
+- **The quality settings were inverted: "High" produced the worst picture.**
+  The JPEG-quality and compression pseudo-encodings are ascending on the wire
+  (`QualityLevel0 = -32` … `QualityLevel9 = -23`), but both were computed
+  descending, so asking for level 9 transmitted the encoding meaning level 0.
+  Choosing High, or LAN, requested the most heavily compressed image the
+  server could produce, and choosing Low requested a good one. Everything
+  built on top inherited the inversion, including the Auto ladder, which is
+  why quality appeared to *fall* as conditions improved. The formulas are now
+  pinned to the literal wire constants by a test, because the old tests
+  compared the buggy helper against itself and were blind to it by
+  construction.
+- **Fence replies tore the session down.** `ServerFence` is message type 248
+  (249 is an unrelated registry entry), but the client dispatched on 249, so
+  a real fence reply fell through to "unknown server message type" and killed
+  the connection. Reachable on any server implementing the Fence extension,
+  which the client always advertises. Round-trip time also read as 0 for the
+  life of every session because of it.
+- **The Low preset painted grey noise.** It asks the server for a 256-colour
+  indexed format, and `SetColourMapEntries` was parsed and then discarded, so
+  the decoders fell back to their grayscale identity path and drew palette
+  *indices* as grey levels. The map is now handed to the decoder, which is
+  what makes the automatic low-bandwidth tier usable at all.
+- **Keyboard was mismapped: backspace typed "u", among others.** The client
+  sent X11 keycodes (evdev + 8) where the QEMU Extended Key Event carries XT
+  (PC set 1) scancodes. The two numberings differ by 8, so Backspace (X11 22 =
+  0x16) arrived as the U key, and the whole main block was shifted the same
+  way. The table is now real XT scancodes, including the `0xE0`-prefixed
+  extended keys (arrows, Home/End, right Ctrl/Alt, Delete), which would
+  otherwise hit their numpad twins.
+- **Pixelated, ghosted picture on Raspberry Pi (wayvnc) sessions.** Window
+  animations left the screen posterised and smeared with stale content that
+  only healed under the mouse. Three causes, all fixed:
+  - wayvnc loses track of damaged regions when the client is busy rendering
+    during an animation storm, and never re-sends them. The client now
+    requests one full repaint whenever a burst of activity settles, so the
+    picture always converges to the truth within about a second of things
+    going quiet, whatever the server lost.
+  - The same damage loss happens around a mid-session quality change; every
+    encoding switch is now followed by a full repaint request too.
+  - Auto quality no longer reduces colour depth (that now belongs only to the
+    explicit Low and Black & White presets), its floor rose from JPEG q2 to
+    q3, and link speed is measured from stall-anchored bursts with a windowed
+    maximum instead of an average of time-spent-waiting, so a slow server's
+    encoder is no longer mistaken for a slow network. A Raspberry Pi on
+    gigabit ethernet used to read as ~1.5 Mbit/s and got 64 colours; it now
+    reads as a fast LAN and gets full quality.
+
+- **Copying on this computer and pasting into the remote did nothing.** The
+  local clipboard was only ever sent by the toolbar's "Send clipboard to
+  remote" button, so pasting into the remote pasted whatever that machine
+  already had. Preferences ▸ Clipboard offered "Sync clipboard automatically"
+  and "Push clipboard when the window gains focus", both on by default, and
+  both were wired to nothing. They now work: the local clipboard is pushed
+  when a session connects and whenever you switch back to it, which is exactly
+  when it can have changed, since while the session has the keyboard every
+  Ctrl/Cmd+C goes to the remote. Text that just arrived *from* the remote is
+  not echoed back, and an unchanged clipboard sends nothing.
+- **Clipboard text never reached servers that ask before accepting it.** With
+  the Extended Clipboard extension negotiated, the client pushed an unsolicited
+  `provide`, which a server that advertised it wants no unsolicited data drops;
+  it then asks with a `request`, which the client ignored. The client now
+  announces with a `notify` and answers a `request` with the text, so both
+  kinds of server receive it.
+
+## [0.3.0] - 2026-08-02
+
+### Added
+
+- **SSH tunnelling for the VNC connection.** A host profile can now run its
+  whole session through an SSH login (Edit Host ▸ Advanced ▸ "Tunnel over
+  SSH"): the app connects to the SSH gateway, asks *it* to reach the VNC
+  endpoint, and carries the session over that encrypted channel. This is what
+  makes the recommended hardened setup usable, a VNC server bound to the
+  remote machine's own loopback, reachable only through SSH, and it encrypts
+  and authenticates the connection even when the VNC server itself offers
+  nothing.
+  - The gateway defaults to the VNC address and the user to your local
+    username, so the common case is a single checkbox. Authentication is the
+    Files panel's: a saved passphrase/password from the keychain, your
+    ssh-agent, or a private key file.
+  - No local forwarded port is ever opened; the channel itself is the
+    session's byte stream, so no other local process can race onto the
+    tunnel. Auto-reconnect re-dials through the tunnel, re-verifying the
+    gateway against its pin.
+  - The gateway's host key is trust-on-first-use with the same pin store the
+    Files panel uses: trusting a machine once covers both. First contact
+    shows a fingerprint prompt before anything connects; a *changed* key is a
+    hard stop with no way to click through, exactly as everywhere else.
+  - The host editor grew an SSH password / key-passphrase field alongside the
+    tunnel settings, stored in the system keychain and shared with the Files
+    panel.
+- **`connect_session` now returns a tagged outcome** (`started` /
+  `ssh-host-key-prompt` / `ssh-host-key-changed`) instead of a bare session
+  id, and takes `acceptSshHostKey`; see `IPC_CONTRACT.md`. For profiles
+  without a tunnel the behaviour is unchanged.
+
+### Fixed
+
+- Saving a password no longer erases the other credentials stored for the
+  same host: `save_password` merges per field, so a host can hold a VNC
+  password and an SSH passphrase (Files panel, and now the tunnel) without
+  one save wiping the other.
+
+## [0.2.0] - 2026-08-01
+
+### Added
+
+- **Tabbed view.** Connected computers can be shown as tabs across the top of
+  the library window and switched between like browser tabs, instead of each
+  one opening a window of its own. Turn it on in Preferences ▸ Connections,
+  "Show sessions as tabs in one window"; it is off by default, so nothing
+  changes unless you ask for it.
+  - The library is the first tab and cannot be closed. Every session tab
+    carries a status dot, the name the server reports for that desktop, and a
+    close button; middle-click closes one too.
+  - `Ctrl+Tab` and `Ctrl+Shift+Tab` move between tabs, `Cmd/Ctrl+1…9` jump
+    straight to one (1 being the library), `Cmd/Ctrl+Shift+W` closes the tab in
+    front and `Cmd/Ctrl+Shift+L` returns to the library. The first two and the
+    last two are real menu items under Window, which is what makes them work
+    while shortcut pass-through is sending everything else to the remote
+    machine. The palette (`Cmd/Ctrl+K`) also lists every open session.
+  - Only the tab you are looking at draws, holds the keyboard, or answers
+    dropped files. The others stay connected and keep their picture up to date,
+    so switching back shows the desktop as it is now, not as it was.
+  - The preference decides where the *next* session goes. Sessions already
+    running stay where they are, in a window or in a tab, because a live
+    picture cannot be moved between the two without reconnecting. Connecting to
+    a machine that is already open still finds it either way and brings it
+    forward rather than starting a second session.
+  - Closing the library window with tabs open shuts those sessions down
+    cleanly, but skips the parting thumbnail refresh; closing a tab does not.
+- **A windows/tabs switch in the library toolbar**, beside the grid and list
+  buttons. It is the same preference as Preferences ▸ Connections and the two
+  always agree; it is simply within reach of the moment it matters, which is
+  the moment before connecting.
+- **The session toolbar can be put away by hand.** A collapse button sits next
+  to the pin, and `Cmd/Ctrl+Shift+M` now toggles rather than only recalling, so
+  the chord that brings the toolbar back also sends it away. Previously it
+  could only be waited out, and a pinned toolbar never hid at all.
+- **The session toolbar can be dropped anywhere in the window**, not only along
+  one of the four edges. Let go within 40px of an edge and it still docks
+  flush, which keeps the tidy docked look and keeps the edge meaningful for
+  which way menus open and the collapse chevron points. Its position is
+  remembered, as before, and shared by every toolbar mounted in tabbed view.
+  The collapsed chevron is a drag handle too, so the toolbar can be moved
+  without opening it first.
+
+### Fixed
+
+- A key held down while switching away from a session stayed down on that
+  remote desktop. Detaching the input handler unhooked its listeners without
+  releasing anything, so the keyup went elsewhere and every later keystroke in
+  that session arrived with the modifier still applied. Held mouse buttons had
+  the same problem. Releasing is now part of detaching, which also covers the
+  gesture most likely to cause it, a modifier held down while pressing the key
+  that switches tabs.
+- Keyboard capture (shortcut pass-through) is now released and re-armed based
+  on which window actually asked for it, rather than on the window's name. The
+  old rule read the session id back out of a `session-<id>` window label, which
+  meant nothing owned capture in a window hosting several sessions, and focusing
+  any window that was not a session window force-released the grab.
+
+- SSH host-key pins are keyed on one canonical spelling of the host, so `::1`,
+  `[::1]`, `studio.local` and the mDNS-qualified `studio.local.` are one
+  machine rather than up to four. Previously each spelling earned its own
+  trust prompt and its own pin. Both sides are normalized at lookup time
+  rather than only on write, so pins already on disk keep matching and no
+  migration is needed. A store that already holds duplicates is folded on
+  load, keeping the most recently seen pin: without that, forgetting a key
+  would leave a shadow pin behind that answers the next connection, and a
+  disagreeing fingerprint there is a hard stop with no way through it.
+
+- The session toolbar could be dragged almost entirely out of the window, drag
+  handle and all, leaving no way to get it back. The clamp bounded the anchor
+  point to 5 to 95% of the window, but the anchor was the toolbar's *centre* and
+  the box hung off it, so on a 1400px window a 614px toolbar reached
+  `left: -237px`. Placement is now computed as a clamped top-left corner, which
+  is the thing that actually has to stay on screen. A position already stored
+  off-screen is re-clamped when it loads, so a toolbar previously lost that way
+  comes back rather than staying lost.
+- Moving the pointer over the collapsed toolbar chevron reopened the toolbar,
+  so it could not be moved past or picked up without it springing open. It now
+  opens on a click, and lights up on hover instead.
+
+## [0.1.2] - 2026-07-31
+
+### Added
+
+- **QuickConnect address bar**, always visible under the library toolbar. Type
+  an address, press Enter, and you are connected without saving anything first.
+  The feature existed before as a dialog behind `Cmd/Ctrl+T` with no visible
+  entry point anywhere in the window, so in practice it could not be found.
+  - Suggestions as you type, drawn from saved hosts, machines found by
+    discovery, and the addresses you last quick-connected to. The last of those
+    are kept in the settings blob rather than the store's `history` table,
+    because that table is keyed by host id and a quick connect has no host.
+  - Typing an address that a saved host already covers connects through that
+    host, so its quality, view-only setting and stored password still apply.
+  - `Cmd/Ctrl+T` and File -> Connect to… now focus the bar.
+- **"Remember this password" now works on a quick connect.** Credentials are
+  keyed by host id, so a session with no host profile had nowhere to put one:
+  the tick was silently discarded and the password was asked for again on the
+  next connection. Ticking it now adopts the endpoint as a saved host, stores
+  the password against it, and the new tile appears in the Library while the
+  session is still open. A quick connect that saves nothing still leaves no
+  trace, and a repeat connect to the same endpoint reuses the host it already
+  made rather than adding a second tile.
+
+### Fixed
+
+- An IPv6 address given as a bare literal could not be connected to. `resolve`
+  joined the host and port as `{host}:{port}`, so `::1` became `::1:5900`,
+  which is not a parseable address. Bare literals are now bracketed before the
+  lookup.
+- The same fault in the SFTP sidecar: the connection label, the SSH session
+  label, and three user-visible error messages (`Connect`, `HostKeyUnknown`,
+  `HostKeyChanged`) all joined host and port the same way. Its mirror image
+  was there too: `russh::client::connect` and `TcpStream::connect` take
+  `(host, port)` as a tuple, which accepts neither a bracketed literal nor a
+  DNS name spelled that way, so a host saved as `[::1]` would connect over VNC
+  while its Files panel reported the machine unreachable. Brackets are now
+  added where a string is built and removed where a resolver is called.
+- Matching a typed address against the saved hosts now normalizes case and a
+  trailing dot on both sides, so `Studio.local`, `studio.local` and the
+  mDNS-qualified `studio.local.` are one machine rather than three. There is
+  one definition of that rule (`vnc_store::normalize_address`) instead of the
+  session layer and the store each having their own.
+- The native `Cmd/Ctrl+T` and `Cmd/Ctrl+N` menu accelerators did nothing. Both
+  emitted `menu://action` to the focused window and no window listened for
+  them. They are now routed to the library window and handled there, so they
+  also work while a session window is in front.
+- Address parsing was duplicated between the host dialog and quick connect, and
+  both copies mangled IPv6: `[::1]:5901` parsed to a host of `[` or `[::1]`
+  depending on the copy. There is now one parser (`ui/src/lib/address.ts`),
+  which also understands `host::5901`, `vnc://` links, and rejects out-of-range
+  ports instead of passing them to an IPC call that only takes a `u16`.
+- The host dialog reported "address is required" for everything. It now shows
+  the specific reason the address cannot be used.
+
+## [0.1.1] - 2026-07-31
+
+### Fixed
+
+- Text copied on the remote never reached the local clipboard. Two independent
+  faults, both on that path:
+  - The Extended Clipboard handshake was half implemented. The client
+    advertised the pseudo-encoding but never answered the server's capabilities
+    message with its own, and never answered a `notify` (which carries no data)
+    with a `request`, so servers using the modern flow had no way to hand the
+    text over. A capabilities announcement also sets the notify bit, so it was
+    additionally being read as an offer of data.
+  - The delivery into the OS clipboard went through `navigator.clipboard`.
+    WebKit only honours it while a user gesture is live, and remote clipboard
+    text arrives from the socket, so the write was rejected and the rejection
+    swallowed. Both directions now go through the shell
+    (`set_local_clipboard` / `read_local_clipboard`).
+
+## [0.1.0] - 2026-07-30
+
+Everything below shipped in the `v0.1.0` build. The entries were still filed
+under "Unreleased" when that tag was cut; they are grouped here rather than
+moved into `0.1.1`, which contains only the clipboard fix above.
+
+### Added
+
+- `#![forbid(unsafe_code)]` on `vnc-core`, `vnc-transport`, and `vnc-store`,
+  making the existing absence of `unsafe` compiler enforced rather than a review
+  convention. `vnc-discovery` and `vnc-files` already declared it.
+- In-app **About and Help** dialog with version, author, license, keyboard
+  shortcut reference, and troubleshooting notes. Reachable from the command
+  palette, the Help menu, and the macOS application menu.
+- macOS code signing and notarization tooling under `scripts/`: self-signed
+  identity setup for local development, a linker shim that keeps the code
+  identity stable across rebuilds, and a packaging script that signs, notarizes,
+  and staples both the `.app` and the `.dmg`.
+- `docs/MACOS_SIGNING.md` explaining why an ad-hoc signed build loses keychain
+  and TCC grants on every rebuild, and how a stable signing identity fixes it.
+- Project documentation for public release: `LICENSE-MIT`, `LICENSE-APACHE`,
+  `CONTRIBUTING.md`, `SECURITY.md`, `CODE_OF_CONDUCT.md`, and this changelog.
+
+### Fixed
+
+- Text copied on the remote never reached the local clipboard. Two independent
+  faults, both on that path:
+  - The Extended Clipboard handshake was half implemented. The client
+    advertised the pseudo-encoding but never answered the server's capabilities
+    message with its own, and never answered a `notify` (which carries no data)
+    with a `request`, so servers using the modern flow had no way to hand the
+    text over. A capabilities announcement also sets the notify bit, so it was
+    additionally being read as an offer of data.
+  - The delivery into the OS clipboard went through `navigator.clipboard`.
+    WebKit only honours it while a user gesture is live, and remote clipboard
+    text arrives from the socket, so the write was rejected and the rejection
+    swallowed. Both directions now go through the shell
+    (`set_local_clipboard` / `read_local_clipboard`).
+- Native menu items were inert. `menu.rs` emitted a `menu://action` event for
+  every custom item, but nothing in the frontend listened for it, so
+  **Settings** and **Help** did nothing when selected. The frontend now routes
+  those events.
+- Notarization stapled the ticket to the disk image only. An app dragged out of
+  the DMG carried no ticket of its own, so its first launch on a machine without
+  network access would fail Gatekeeper. The `.app` is now notarized and stapled
+  before the DMG is assembled, giving both layers a ticket.
+
+### Changed
+
+- Dependency refresh. Rust: `russh` 0.49 to 0.62 (see Security), `rusqlite`
+  0.32 to 0.40, `keyring` 3 to 4, `netdev` 0.31 to 0.45, `mdns-sd` 0.11 to
+  0.20, `directories` 5 to 6, `zune-jpeg` 0.4 to 0.5, `fast_image_resize` 5 to
+  6, `webpki-roots` 0.26 to 1.0. Frontend: React 18 to 19, Vite 6 to 8,
+  TypeScript 5 to 7, `@vitejs/plugin-react` 4 to 6.
+- CI and the documented prerequisite move to Node 22, which Vite 8 requires
+  (`^20.19.0 || >=22.12.0`).
+- `rand` stays at 0.8 on purpose. rand 0.9+ implements the rand_core 0.9/0.10
+  traits while `rsa` 0.9 requires rand_core 0.6, and the RA2 handshake passes
+  an RNG straight into `RsaPrivateKey::new`. Moving forward needs `rsa` 0.10,
+  which is still a release candidate. Recorded in `.cargo/audit.toml`.
+- The macOS About panel is populated with name, version, author, copyright,
+  license, and project URL. It previously used `AboutMetadata::default()` and
+  showed only the bundle name.
+- `.gitignore` now covers `*.key`, `*.cer`, `*.p8`, `*.pfx`,
+  `*.certSigningRequest`, `*.mobileprovision`, and editor directories. It
+  previously covered only `*.pem` and `*.p12`.
+
+### Security
+
+- **Upgraded `russh` 0.49 to 0.62**, which fixes RUSTSEC-2026-0154 (unbounded
+  32-bit allocation) and RUSTSEC-2026-0153 (unchecked `CryptoVec` allocation),
+  both reachable from a hostile SSH peer during file transfer. Patched upstream
+  in 0.60.3. The ignore entries for these were removed rather than retained, so
+  a regression fails the build.
+- Migrated `vnc-files` to the russh 0.62 API: `Handler` now uses
+  return-position `impl Future` instead of `#[async_trait]`, authentication
+  returns `AuthResult` (which distinguishes full success from partial success)
+  rather than a bare bool, `PrivateKeyWithHashAlg::new` is infallible, and the
+  agent hands back `AgentIdentity` values that may wrap a certificate.
+- `rsa` RUSTSEC-2023-0071 (Marvin) remains accepted and documented. There is
+  still no fixed release; the only newer publication is a release candidate
+  carrying the same advisory. It is now present twice, directly for RA2 and
+  transitively through `ssh-key`.
+- Test fixtures no longer embed a real machine name captured from a developer's
+  network. The mDNS packet fixture in `crates/vnc-discovery/src/dnsmsg.rs` was
+  rewritten with a same-length placeholder label so all wire length fields stay
+  valid and the packet remains byte exact.
+- Personal signing identifiers and an Apple ID address were removed from
+  `docs/MACOS_SIGNING.md`, which now reads as generic setup instructions.
+
+### Initial implementation
+
+Core capability at this point:
+
+- Pure Rust RFB implementation covering protocol versions 3.3 through 3.8.
+- Encodings: Raw, CopyRect, RRE, Hextile, Zlib, ZRLE, Tight, and H.264.
+- Pseudo-encodings including Cursor, Cursor With Alpha, Desktop Size, Extended
+  Desktop Size, Desktop Name, Extended Clipboard, Fence, Continuous Updates,
+  LastRect, Extended Mouse Buttons, and the QEMU key, LED, and pointer
+  extensions.
+- Authentication: None, VncAuth, VeNCrypt, RealVNC RSA-AES (RA2), Apple
+  Diffie-Hellman, MS-Logon, and Tight security negotiation.
+- TLS through rustls with trust-on-first-use certificate pinning.
+- Host library backed by SQLite, with groups, tags, thumbnails, and history.
+- Credential storage in the OS keychain, with an encrypted-file fallback using
+  XChaCha20-Poly1305 under an Argon2id derived key.
+- LAN discovery over mDNS plus a rate-limited subnet scan with RFB banner
+  fingerprinting, and hostname resolution over mDNS, LLMNR, NetBIOS, and MS-RPC.
+- Wake-on-LAN.
+- SFTP file transfer with a dual-pane browser and drag and drop.
+- Adaptive quality presets, remote desktop resize, and automatic reconnect with
+  backoff and jitter.
+
+[Unreleased]: https://github.com/psmux/DeskVNC/compare/v0.27.8...HEAD
+[0.27.8]: https://github.com/psmux/DeskVNC/compare/v0.27.7...v0.27.8
+[0.27.7]: https://github.com/psmux/DeskVNC/compare/v0.27.6...v0.27.7
+[0.27.6]: https://github.com/psmux/DeskVNC/compare/v0.27.5...v0.27.6
+[0.27.5]: https://github.com/psmux/DeskVNC/compare/v0.27.4...v0.27.5
+[0.27.4]: https://github.com/psmux/DeskVNC/compare/v0.27.3...v0.27.4
+[0.14.0]: https://github.com/psmux/DeskVNC/compare/v0.13.4...v0.14.0
+[0.13.4]: https://github.com/psmux/DeskVNC/compare/v0.13.3...v0.13.4
+[0.13.3]: https://github.com/psmux/DeskVNC/compare/v0.13.2...v0.13.3
+[0.13.2]: https://github.com/psmux/DeskVNC/compare/v0.13.1...v0.13.2
+[0.13.1]: https://github.com/psmux/DeskVNC/compare/v0.13.0...v0.13.1
+[0.13.0]: https://github.com/psmux/DeskVNC/compare/v0.12.0...v0.13.0
+[0.12.0]: https://github.com/psmux/DeskVNC/compare/v0.11.0...v0.12.0
+[0.11.0]: https://github.com/psmux/DeskVNC/compare/v0.10.0...v0.11.0
+[0.10.0]: https://github.com/psmux/DeskVNC/compare/v0.9.1...v0.10.0
+[0.9.1]: https://github.com/psmux/DeskVNC/compare/v0.9.0...v0.9.1
+[0.9.0]: https://github.com/psmux/DeskVNC/compare/v0.8.2...v0.9.0
+[0.2.0]: https://github.com/psmux/DeskVNC/compare/v0.1.2...v0.2.0
+[0.1.0]: https://github.com/psmux/DeskVNC/releases/tag/v0.1.0

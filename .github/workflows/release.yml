@@ -1,0 +1,670 @@
+name: Release
+
+# Installers are slow and large, so they are not built on every push.
+#
+#   workflow_dispatch  build installers on demand and keep them as artifacts
+#   push tag v*        the same, plus a draft GitHub release with the files
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+env:
+  CARGO_TERM_COLOR: always
+  # Link the C runtime into every Windows exe. Without it the viewer, dvv
+  # and DeskVNC Support all stopped at start on a Windows that has no Visual
+  # C++ redistributable, with "VCRUNTIME140.dll was not found". A fresh
+  # Windows 10 has none. Only Windows targets read this.
+  CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUSTFLAGS: -C target-feature=+crt-static
+
+jobs:
+  # One draft release, made before the platforms build. Each platform used to
+  # create it if missing, and when two finished together the second made its
+  # own and failed, which held back the publish.
+  draft:
+    name: Create the draft release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      id: ${{ steps.draft.outputs.id }}
+    steps:
+      - id: draft
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_REF_TYPE" != "tag" ]; then
+            echo "Not a tag, so there is no release to draft."
+            exit 0
+          fi
+          id=$(gh api "repos/$GITHUB_REPOSITORY/releases" --paginate \
+                 --jq ".[] | select(.tag_name == \"$GITHUB_REF_NAME\") | .id" | head -n1)
+          if [ -z "$id" ]; then
+            cat > "$RUNNER_TEMP/notes.md" <<'NOTES'
+          Download the file for your platform below. See docs/INSTALL.md for
+          install guidance and checksums.
+
+          **macOS** is signed and notarized, so it opens normally.
+          **Windows** is signed by Open Source Developer Godwin Josh (Certum). A new certificate may still get one SmartScreen prompt until it builds reputation: choose **More info** then **Run anyway**.
+          **Linux** packages are unsigned.
+
+          **DeskVNC Support** is also attached, for macOS, Windows and Linux,
+          for people who need to receive help. Download it on the computer being
+          supported, press Get a code, and share the code or invitation.
+
+          Full changes in [CHANGELOG.md](https://github.com/psmux/DeskVNC/blob/main/CHANGELOG.md).
+          NOTES
+            sed -i 's/^          //' "$RUNNER_TEMP/notes.md"
+            id=$(gh api -X POST "repos/$GITHUB_REPOSITORY/releases" \
+                   -f tag_name="$GITHUB_REF_NAME" -f name="DeskVNCViewer $GITHUB_REF_NAME" \
+                   -F body=@"$RUNNER_TEMP/notes.md" -F draft=true -F prerelease=false --jq .id)
+          fi
+          echo "id=$id" >> "$GITHUB_OUTPUT"
+          echo "Release $GITHUB_REF_NAME is $id"
+
+  build:
+    name: ${{ matrix.label }}
+    needs: draft
+    runs-on: ${{ matrix.os }}
+    # tauri-action creates the GitHub release and uploads to it. The default
+    # token is read-only for contents, which fails with "Resource not
+    # accessible by integration".
+    permissions:
+      contents: write
+    # Code sign Windows binaries on release tags.
+    environment: ${{ github.ref_type == 'tag' && 'windows-signing' || '' }}
+    env:
+      CERTUM_CONFIGURED: ${{ github.ref_type == 'tag' && secrets.CERTUM_USERNAME != '' && secrets.CERTUM_TOTP_SECRET != '' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # NSIS produces the setup .exe, WiX produces the .msi. `targets: all`
+          # in tauri.conf.json builds both on Windows.
+          - os: windows-latest
+            label: Windows (x64 installer)
+            bundle-target: x86_64-pc-windows-msvc
+            toolchain-targets: x86_64-pc-windows-msvc
+            artifact: windows-x64
+          - os: ubuntu-22.04
+            label: Linux (deb + AppImage)
+            bundle-target: x86_64-unknown-linux-gnu
+            toolchain-targets: x86_64-unknown-linux-gnu
+            artifact: linux-x64
+          # One universal binary rather than two per-architecture jobs. GitHub
+          # retired the Intel macOS image, so a `macos-13` job simply never gets
+          # a runner: it sits queued until the 6 hour timeout and then reports
+          # a failure. `universal-apple-darwin` is a Tauri pseudo-target that
+          # lipo's both real targets together, so this covers Apple Silicon and
+          # Intel from a single Apple Silicon runner.
+          - os: macos-latest
+            label: macOS (universal)
+            bundle-target: universal-apple-darwin
+            toolchain-targets: aarch64-apple-darwin,x86_64-apple-darwin
+            artifact: macos-universal
+
+    steps:
+      # A release tag ships a signed Windows build or nothing.
+      - name: Require Windows signing for a release
+        if: runner.os == 'Windows' && github.ref_type == 'tag' && env.CERTUM_CONFIGURED != 'true'
+        shell: bash
+        run: |
+          echo "::error::Windows signing is not configured, and a release must be signed."
+          exit 1
+
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Linux system dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf \
+            libssl-dev libdbus-1-dev pkg-config
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.toolchain-targets }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.bundle-target }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+
+      - name: Install frontend dependencies
+        run: npm ci
+        working-directory: ui
+
+      - name: Build universal dvv for macOS
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo build --locked --release -p dvv --target aarch64-apple-darwin
+          cargo build --locked --release -p dvv --target x86_64-apple-darwin
+          mkdir -p src-tauri/binaries
+          cp target/aarch64-apple-darwin/release/dvv src-tauri/binaries/dvv-aarch64-apple-darwin
+          cp target/x86_64-apple-darwin/release/dvv src-tauri/binaries/dvv-x86_64-apple-darwin
+          lipo -create \
+            target/aarch64-apple-darwin/release/dvv \
+            target/x86_64-apple-darwin/release/dvv \
+            -output src-tauri/binaries/dvv-universal-apple-darwin
+          src-tauri/binaries/dvv-universal-apple-darwin version
+
+      # The same sidecar on Windows and Linux. Without it the installers had no
+      # dvv at all, so no agent could reach the plane on either platform. Tauri
+      # installs it beside the app as dvv.exe, or as /usr/bin/dvv from the deb.
+      - name: Build dvv for Windows and Linux
+        if: runner.os != 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          target=${{ matrix.bundle-target }}
+          ext=""
+          if [ "$RUNNER_OS" = "Windows" ]; then ext=".exe"; fi
+          cargo build --locked --release -p dvv --target "$target"
+          mkdir -p src-tauri/binaries
+          cp "target/$target/release/dvv$ext" "src-tauri/binaries/dvv-$target$ext"
+          "src-tauri/binaries/dvv-$target$ext" version
+
+      - name: Verify release source is clean
+        shell: bash
+        run: |
+          set -euo pipefail
+          git status --short
+          test -z "$(git status --porcelain)" || {
+            echo "::error::Release inputs differ from the checked out commit"
+            exit 1
+          }
+
+      # notarytool rejects bad credentials instantly, whereas the bundler only
+      # discovers them after compiling and signing. Fail in seconds instead.
+      - name: Preflight the notarization credentials
+        if: runner.os == 'macOS'
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          if [ -z "$APPLE_ID" ]; then
+            echo "No notarization credentials configured; skipping preflight."
+            exit 0
+          fi
+          if xcrun notarytool history --apple-id "$APPLE_ID" \
+               --password "$APPLE_PASSWORD" --team-id "$APPLE_TEAM_ID" \
+               >/dev/null 2>/tmp/notary.err; then
+            echo "Notarization credentials accepted."
+          else
+            echo "::error::Apple rejected the notarization credentials."
+            echo "APPLE_PASSWORD must be an app-specific password from"
+            echo "account.apple.com (Sign-In & Security -> App-Specific"
+            echo "Passwords), not the Apple ID password, and APPLE_ID must be"
+            echo "the account that owns team \$APPLE_TEAM_ID."
+            sed 's/'"$APPLE_PASSWORD"'/***/g' /tmp/notary.err || true
+            exit 1
+          fi
+
+      # Code sign Windows binaries on release tags.
+      - name: Log in to Certum SimplySign
+        id: certum
+        if: runner.os == 'Windows' && env.CERTUM_CONFIGURED == 'true'
+        uses: jay0lee/certum-cloud-code-sign@a3324503499c49090869856eeeecfe95fb613d87 # v1, reviewed 2026-10-07
+        with:
+          username: ${{ secrets.CERTUM_USERNAME }}
+          totp_secret: ${{ secrets.CERTUM_TOTP_SECRET }}
+          totp_algorithm: ${{ vars.CERTUM_TOTP_ALGORITHM || 'SHA-256' }}
+          cert_sha1: ${{ vars.CERTUM_CERT_SHA1 }}
+
+      # Hand the certificate to the Tauri bundler, which then signs the app,
+      # the NSIS installer and its uninstaller, and the MSI. The config goes
+      # in the runner's temp directory rather than the checkout, so the clean
+      # source check still holds. The dvv sidecar is signed here as well,
+      # before the bundler copies it into the installers.
+      - name: Prepare Windows signing
+        if: steps.certum.outcome == 'success'
+        shell: pwsh
+        env:
+          SIGNTOOL: ${{ steps.certum.outputs.signtool-path }}
+          CERTUM_THUMBPRINT: ${{ steps.certum.outputs.cert-thumbprint }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $signArgs = @('sign', '/sha1', $env:CERTUM_THUMBPRINT, '/tr', 'http://time.certum.pl',
+                        '/td', 'SHA256', '/fd', 'SHA256', '/d', 'DeskVNCViewer')
+          $conf = @{ bundle = @{ windows = @{ signCommand = @{ cmd = $env:SIGNTOOL; args = $signArgs + '%1' } } } }
+          $path = Join-Path $env:RUNNER_TEMP 'windows-sign.conf.json'
+          $conf | ConvertTo-Json -Depth 6 | Set-Content -Path $path -Encoding utf8
+          Add-Content $env:GITHUB_ENV "WINDOWS_SIGN_CONFIG=--config $path"
+          Add-Content $env:GITHUB_ENV "SIGNTOOL=$env:SIGNTOOL"
+          Add-Content $env:GITHUB_ENV "CERTUM_THUMBPRINT=$env:CERTUM_THUMBPRINT"
+          & $env:SIGNTOOL @signArgs 'src-tauri/binaries/dvv-x86_64-pc-windows-msvc.exe'
+          if ($LASTEXITCODE -ne 0) { throw "signtool could not sign dvv.exe" }
+
+      # tauri-action runs the frontend build via beforeBuildCommand, bundles
+      # for the host platform, and on a tag creates a draft release.
+      #
+      # macOS signing: when APPLE_CERTIFICATE and APPLE_CERTIFICATE_PASSWORD
+      # are present, the Tauri bundler imports the .p12 into a throwaway
+      # keychain, signs with hardened runtime and the entitlements named in
+      # tauri.conf.json, then notarizes and staples the .app. Stapling the app
+      # (not just the disk image) is what lets it launch offline after being
+      # dragged to /Applications.
+      #
+      # Secrets are absent on pull requests from forks, which GitHub enforces.
+      # The bundler falls back to an ad-hoc signature there instead of failing,
+      # so contributor PRs still build.
+      #
+      # Windows is signed by the two steps above when the Certum secrets are
+      # set, and Linux is unsigned. The macOS secrets come from
+      # scripts/setup-github-signing-secrets.sh.
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          DESKVNC_REQUIRE_CLEAN: "1"
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        with:
+          args: --target ${{ matrix.bundle-target }} --config src-tauri/tauri.release.conf.json ${{ env.WINDOWS_SIGN_CONFIG }} -- --locked
+          releaseId: ${{ needs.draft.outputs.id }}
+          tagName: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || '' }}
+          releaseName: DeskVNCViewer ${{ github.ref_name }}
+          releaseBody: |
+            Download the file for your platform below. Checksums and full
+            install notes are in the sections that follow once this draft is
+            edited; see docs/INSTALL.md for the current guidance.
+
+            **macOS** is signed and notarized, so it opens normally.
+            ${{ env.CERTUM_CONFIGURED == 'true' && '**Windows** is signed by Open Source Developer Godwin Josh (Certum). A new certificate may still get one SmartScreen prompt until it builds reputation: choose **More info** then **Run anyway**.' || '**Windows** is unsigned: SmartScreen will say "Windows protected your PC", and you continue with **More info** then **Run anyway**.' }}
+            **Linux** packages are unsigned.
+
+            **DeskVNC Support** is also attached, for macOS, Windows and
+            Linux, for people who need to receive help. Download it on the computer being
+            supported, press Get a code, and share the code or invitation.
+
+            Full changes in [CHANGELOG.md](https://github.com/psmux/DeskVNC/blob/main/CHANGELOG.md).
+          releaseDraft: true
+          prerelease: false
+
+      # The bundler signs the viewer from a keychain it creates and destroys
+      # within its own step, so nothing it set up survives to here. The support
+      # app needs the certificate in a keychain of its own, and this runs after
+      # tauri-action precisely so the two never share a search list.
+      - name: Import the Developer ID certificate for the support app
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [ -z "${APPLE_CERTIFICATE:-}" ]; then
+            echo "No certificate configured; the support app step will refuse to ship."
+            exit 0
+          fi
+          KEYCHAIN="$RUNNER_TEMP/boundary-signing.keychain-db"
+          KEYCHAIN_PASSWORD=$(uuidgen)
+          P12="$RUNNER_TEMP/boundary-cert.p12"
+
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          # Without this the keychain relocks mid-job and codesign fails with a
+          # bare "User interaction is not allowed".
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+
+          printf '%s' "$APPLE_CERTIFICATE" | base64 --decode > "$P12"
+          security import "$P12" -k "$KEYCHAIN" \
+            -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign -f pkcs12
+          rm -f "$P12"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: \
+            -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" >/dev/null
+
+          # Prepend rather than replace, so the login keychain stays searchable.
+          KEYCHAINS=()
+          while IFS= read -r existing; do
+            KEYCHAINS+=("$existing")
+          done < <(security list-keychains -d user | sed 's/^[[:space:]]*"//; s/"[[:space:]]*$//')
+          security list-keychains -d user -s "$KEYCHAIN" "${KEYCHAINS[@]}"
+          security find-identity -v -p codesigning "$KEYCHAIN"
+
+      - name: Build, sign and notarize the DeskVNC Support recipient app
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          # On a tag the app must be shippable or the build fails. Elsewhere a
+          # degraded build is still useful, and fork PRs have no secrets at all.
+          BOUNDARY_REQUIRE_SIGNING: ${{ (startsWith(github.ref, 'refs/tags/') && secrets.APPLE_CERTIFICATE != '') && '1' || '0' }}
+        run: scripts/build-boundary-macos.sh
+
+      - name: Package the DeskVNC Support recipient app
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Zipped after the script stapled the ticket, so the download carries
+          # its own notarization rather than needing Apple on first launch.
+          ditto -c -k --sequesterRsrc --keepParent \
+            "dist/DeskVNC Support.app" "DeskVNC-Support-macOS.zip"
+          shasum -a 256 "DeskVNC-Support-macOS.zip" | tee SHA256SUMS-DeskVNC-Support-macOS.txt
+          # "Collect installers" below checksums everything in dist/, and a
+          # bundle directory sitting there makes shasum complain and skip it.
+          rm -rf "dist/DeskVNC Support.app"
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            gh release upload "${GITHUB_REF_NAME}" \
+              "DeskVNC-Support-macOS.zip" \
+              "SHA256SUMS-DeskVNC-Support-macOS.txt" --clobber
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload the DeskVNC Support recipient app artifact
+        if: runner.os == 'macOS'
+        uses: actions/upload-artifact@v4
+        with:
+          name: deskvnc-support-macos
+          path: |
+            DeskVNC-Support-macOS.zip
+            SHA256SUMS-DeskVNC-Support-macOS.txt
+
+      # The same app for Windows, signed with the viewer's certificate when
+      # signing is configured. The zip carries the checksum beside it.
+      - name: Build the DeskVNC Support recipient app for Windows
+        if: runner.os == 'Windows'
+        shell: bash
+        run: cargo build --locked --release -p boundary --target x86_64-pc-windows-msvc
+
+      - name: Sign the DeskVNC Support recipient app for Windows
+        if: runner.os == 'Windows' && steps.certum.outcome == 'success'
+        shell: pwsh
+        run: |
+          & $env:SIGNTOOL sign /sha1 $env:CERTUM_THUMBPRINT /tr http://time.certum.pl `
+            /td SHA256 /fd SHA256 /d "DeskVNC Support" `
+            target/x86_64-pc-windows-msvc/release/boundary.exe
+          if ($LASTEXITCODE -ne 0) { throw "signtool could not sign DeskVNC Support" }
+
+      - name: Package the DeskVNC Support recipient app for Windows
+        if: runner.os == 'Windows'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          mkdir -p support
+          cp target/x86_64-pc-windows-msvc/release/boundary.exe "support/DeskVNC Support.exe"
+          (cd support && 7z a -tzip ../DeskVNC-Support-Windows.zip "DeskVNC Support.exe")
+          sha256sum DeskVNC-Support-Windows.zip | tee SHA256SUMS-DeskVNC-Support-Windows.txt
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            gh release upload "${GITHUB_REF_NAME}" DeskVNC-Support-Windows.zip SHA256SUMS-DeskVNC-Support-Windows.txt --clobber
+          fi
+
+      - name: Upload the Windows DeskVNC Support artifact
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: deskvnc-support-windows
+          path: |
+            DeskVNC-Support-Windows.zip
+            SHA256SUMS-DeskVNC-Support-Windows.txt
+
+      # Fail loudly rather than shipping something users cannot open. The
+      # bundler only warns when notarization credentials are missing, so
+      # without this a tag could publish an ad-hoc signed DMG that Gatekeeper
+      # rejects outright.
+      - name: Verify the macOS build is signed and notarized
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          APP=$(find "target/${{ matrix.bundle-target }}/release/bundle/macos" \
+                  -maxdepth 1 -name '*.app' | head -1)
+          [ -n "$APP" ] || { echo "no .app produced"; exit 1; }
+          [ -x "$APP/Contents/MacOS/dvv" ] || { echo "dvv missing from the release app"; exit 1; }
+          "$APP/Contents/MacOS/dvv" version
+          lipo "$APP/Contents/MacOS/dvv" -verify_arch arm64
+          lipo "$APP/Contents/MacOS/dvv" -verify_arch x86_64
+          codesign --verify --strict "$APP/Contents/MacOS/dvv"
+          echo "== signature =="
+          codesign -dvv "$APP" 2>&1 | grep -E '^Authority|^TeamIdentifier' || true
+
+          if [ -z "${{ secrets.APPLE_CERTIFICATE }}" ]; then
+            echo "No signing certificate configured; skipping the strict check."
+            echo "This build is ad-hoc signed and will NOT run on other Macs."
+            exit 0
+          fi
+
+          codesign --verify --strict --deep "$APP"
+          codesign -dvv "$APP" 2>&1 | grep -q 'Authority=Developer ID Application' \
+            || { echo "not signed with a Developer ID"; exit 1; }
+          xcrun stapler validate "$APP" \
+            || { echo "no notarization ticket stapled to the .app"; exit 1; }
+          # The check that actually predicts a user's experience: a downloaded
+          # copy carries a quarantine attribute, and a plain `spctl -a` on a
+          # never-quarantined file is lenient enough to pass unsigned builds.
+          spctl -a -vv -t exec "$APP" 2>&1 | tee /tmp/spctl.txt
+          grep -q 'source=Notarized Developer ID' /tmp/spctl.txt \
+            || { echo "Gatekeeper does not see this as notarized"; exit 1; }
+          echo "macOS build is signed, notarized and stapled."
+
+      # The bundler notarizes and staples the .app and then builds the disk
+      # image around it, so through 0.27.1 the image itself was signed but
+      # never notarized. The app inside opened cleanly once it was dragged to
+      # /Applications, but the download people actually double click first was
+      # judged on its own ticket, which it did not have. Notarizing the image
+      # too, and stapling to it, removes the detour.
+      #
+      # This runs after tauri-action has already uploaded the image, so the
+      # stapled copy replaces it rather than joining it: stapling rewrites the
+      # file, and an unstapled duplicate on the release would be the one half
+      # the world downloads.
+      - name: Notarize the disk image itself
+        if: runner.os == 'macOS' && startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${APPLE_ID:-}" ]; then
+            echo "No notarization credentials configured; leaving the image as built."
+            exit 0
+          fi
+          DMG=$(find "target/${{ matrix.bundle-target }}/release/bundle/dmg" \
+                  -maxdepth 1 -name '*.dmg' | head -1)
+          [ -n "$DMG" ] || { echo "no .dmg produced"; exit 1; }
+
+          xcrun notarytool submit "$DMG" \
+            --apple-id "$APPLE_ID" --password "$APPLE_PASSWORD" \
+            --team-id "$APPLE_TEAM_ID" --wait
+          xcrun stapler staple "$DMG"
+
+          # What a person with a freshly downloaded image is judged by.
+          spctl -a -vv -t open --context context:primary-signature "$DMG" 2>&1 \
+            | tee /tmp/spctl-dmg.txt
+          grep -q 'source=Notarized Developer ID' /tmp/spctl-dmg.txt \
+            || { echo "the disk image is still not notarized"; exit 1; }
+
+          gh release upload "${{ github.ref_name }}" "$DMG" --clobber
+          echo "disk image notarized, stapled and re-uploaded."
+
+      - name: Collect installers
+        shell: bash
+        run: |
+          mkdir -p dist
+          # Copy whatever this platform produced; each pattern is optional.
+          for p in \
+            "target/${{ matrix.bundle-target }}/release/bundle/nsis"/*-setup.exe \
+            "target/${{ matrix.bundle-target }}/release/bundle/msi"/*.msi \
+            "target/${{ matrix.bundle-target }}/release/bundle/deb"/*.deb \
+            "target/${{ matrix.bundle-target }}/release/bundle/appimage"/*.AppImage \
+            "target/${{ matrix.bundle-target }}/release/bundle/dmg"/*.dmg ; do
+            for f in $p; do [ -e "$f" ] && cp "$f" dist/ ; done
+          done
+          echo "Collected:"; ls -la dist
+
+      # Every Windows file a user runs, checked against the Windows trust
+      # chain. When signing is configured a missing signature fails the build
+      # rather than shipping a file SmartScreen blocks. A build run by hand is
+      # unsigned on purpose and this only says so.
+      - name: Verify the Windows build is signed
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          if ($env:CERTUM_CONFIGURED -ne 'true') {
+            # A release tag never ships unsigned.
+            if ($env:GITHUB_REF_TYPE -eq 'tag') {
+              Write-Host "::error::Windows signing is not configured, and a release must be signed."
+              exit 1
+            }
+            Write-Host "Not a release tag, so the Windows build is unsigned on purpose."
+            exit 0
+          }
+          # The bundler signs the app exe as it packs each installer and
+          # leaves the copy in target unsigned, so the app is checked inside
+          # the MSI and the NSIS installer, which is what people install.
+          $inside = Join-Path $env:RUNNER_TEMP 'installed'
+          New-Item -ItemType Directory -Force $inside | Out-Null
+          foreach ($msi in Get-ChildItem dist/*.msi) {
+            $to = Join-Path $inside $msi.BaseName
+            Start-Process msiexec -Wait -ArgumentList '/a', "`"$($msi.FullName)`"", '/qn', "TARGETDIR=`"$to`""
+          }
+          foreach ($setup in Get-ChildItem dist/*-setup.exe) {
+            7z x -y -bso0 "-o$(Join-Path $inside $setup.BaseName)" $setup.FullName | Out-Null
+          }
+          $apps = @(Get-ChildItem -Recurse $inside -Filter deskvncviewer.exe)
+          if ($apps.Count -lt 2) { Write-Host "::error::the app exe was not found inside both installers"; exit 1 }
+          $files = @(Get-ChildItem dist/*.exe, dist/*.msi) + $apps +
+                   @(Get-Item src-tauri/binaries/dvv-x86_64-pc-windows-msvc.exe,
+                              target/x86_64-pc-windows-msvc/release/boundary.exe)
+          $bad = 0
+          foreach ($f in $files) {
+            & $env:SIGNTOOL verify /pa /q $f.FullName
+            if ($LASTEXITCODE -ne 0) { Write-Host "::error::not signed: $($f.FullName)"; $bad = 1 }
+            else { Write-Host "signed: $($f.FullName)" }
+          }
+          if ($bad) { exit 1 }
+
+      - name: Log out of Certum SimplySign
+        if: always() && steps.certum.outcome != 'skipped'
+        uses: jay0lee/certum-cloud-code-sign/teardown@a3324503499c49090869856eeeecfe95fb613d87
+
+      - name: Checksums
+        shell: bash
+        run: |
+          cd dist
+          if command -v sha256sum >/dev/null; then sha256sum ./*; else shasum -a 256 ./*; fi \
+            | tee "SHA256SUMS-${{ matrix.artifact }}.txt"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: deskvncviewer-${{ matrix.artifact }}
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 14
+
+  # tauri-action creates the release as a draft, and a draft is visible only to
+  # accounts with push access. Every earlier tag stopped there, which is why
+  # v0.27.3 sat with a support app nobody outside the repo could download.
+  #
+  # The support app for Linux: one x86_64 binary in a tarball. Its own job,
+  # on Ubuntu 24.04, because its Wayland screen capture binds PipeWire 1.0 and
+  # the viewer stays on 22.04 for the older glibc its installers promise.
+  support-linux:
+    name: Linux (DeskVNC Support)
+    needs: draft
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux system dependencies
+        run: |
+          sudo apt-get update
+          # xcb for X11 capture, PipeWire for Wayland capture through the
+          # desktop portal, EGL and GBM for the GL window and Wayland buffers,
+          # xkbcommon for input, and clang because pipewire-sys generates its
+          # bindings at build time.
+          sudo apt-get install -y             libssl-dev libdbus-1-dev pkg-config             libxcb1-dev libxcb-randr0-dev libxkbcommon-dev libxkbcommon-x11-dev             libwayland-dev libpipewire-0.3-dev libegl1-mesa-dev libgbm-dev             clang libclang-dev
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: support-linux
+
+      - name: Build and package the DeskVNC Support recipient app
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          cargo build --locked --release -p boundary
+          mkdir -p support
+          cp target/release/boundary support/deskvnc-support
+          tar -C support -czf DeskVNC-Support-Linux-x86_64.tar.gz deskvnc-support
+          sha256sum DeskVNC-Support-Linux-x86_64.tar.gz | tee SHA256SUMS-DeskVNC-Support-Linux.txt
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            gh release upload "${GITHUB_REF_NAME}" DeskVNC-Support-Linux-x86_64.tar.gz SHA256SUMS-DeskVNC-Support-Linux.txt --clobber
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: deskvnc-support-linux
+          path: |
+            DeskVNC-Support-Linux-x86_64.tar.gz
+            SHA256SUMS-DeskVNC-Support-Linux.txt
+          if-no-files-found: error
+          retention-days: 14
+
+  # Publishing is its own job so it waits for all three platforms. Flipping the
+  # draft from inside the matrix would race: the first job to finish would
+  # publish a release the other two were still uploading to.
+  publish:
+    name: Publish the release
+    needs: [build, support-linux]
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Publish once every platform has uploaded
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" \
+            --json assets --jq '.assets[].name' | tee /tmp/assets.txt
+
+          # Name the platforms rather than counting files, so a partial upload
+          # is caught here instead of by whoever downloads the gap.
+          missing=0
+          for want in 'DeskVNC-Support-macOS.zip' 'DeskVNC-Support-Windows.zip' 'DeskVNC-Support-Linux-x86_64.tar.gz' '.dmg' '.msi' '-setup.exe' '.deb' '.AppImage'; do
+            if ! grep -qF "$want" /tmp/assets.txt; then
+              echo "::error::release $TAG is missing an asset matching '$want'"
+              missing=1
+            fi
+          done
+          [ "$missing" = 0 ] || exit 1
+
+          gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest
+          echo "Published $TAG"

@@ -1,0 +1,280 @@
+//! Build script: runs tauri-build and declares every application command in
+//! the app ACL manifest so that `allow-<command>`/`deny-<command>` permissions
+//! are generated and the capability files under `capabilities/` can grant them
+//! per window (deny-by-default, PRD/01 §7).
+//!
+//! Also stamps the binary with its exact provenance (commit, tag, branch,
+//! dirty state, toolchain) so the About dialog can fingerprint any build a
+//! user reports from. Everything degrades to "unknown" when git or the
+//! repository is absent (release tarballs), never to a build failure.
+
+use std::process::Command;
+
+/// Run `git <args>` in the workspace and return trimmed stdout, or None.
+fn git(args: &[&str]) -> Option<String> {
+    let manifest = std::env::var("CARGO_MANIFEST_DIR").ok()?;
+    let out = Command::new("git")
+        .args(args)
+        .current_dir(manifest)
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    (!s.is_empty()).then_some(s)
+}
+
+/// "clean" / "dirty", or None when git could not tell us.
+///
+/// Deliberately not routed through `git()`: that treats empty output as
+/// failure, and `git status --porcelain` prints nothing precisely when the
+/// tree is CLEAN. Every clean checkout, which is to say every release build,
+/// therefore stamped "unknown" and the About dialog could not tell a pristine
+/// build from an unknowable one.
+fn git_dirty() -> Option<String> {
+    let manifest = std::env::var("CARGO_MANIFEST_DIR").ok()?;
+    let out = Command::new("git")
+        .args(["status", "--porcelain"])
+        .current_dir(manifest)
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let clean = out.stdout.iter().all(|b| b.is_ascii_whitespace());
+    Some(if clean { "clean" } else { "dirty" }.to_string())
+}
+
+fn stamp(key: &str, value: Option<String>) {
+    println!(
+        "cargo:rustc-env={key}={}",
+        value.unwrap_or_else(|| "unknown".into())
+    );
+}
+
+fn stamp_git_provenance() {
+    // Re-stamp whenever the checked-out commit or the index changes, so the
+    // hash and the dirty flag can never go stale in an incremental build.
+    if let Some(git_dir) = git(&["rev-parse", "--absolute-git-dir"]) {
+        println!("cargo:rerun-if-changed={git_dir}/HEAD");
+        println!("cargo:rerun-if-changed={git_dir}/index");
+    }
+
+    stamp("DESKVNC_GIT_HASH", git(&["rev-parse", "HEAD"]));
+    stamp(
+        "DESKVNC_GIT_HASH_SHORT",
+        git(&["rev-parse", "--short=9", "HEAD"]),
+    );
+    // The single most useful fingerprint: nearest tag, commits since it,
+    // short hash, and a -dirty suffix when the tree had local edits.
+    stamp(
+        "DESKVNC_GIT_DESCRIBE",
+        // `--abbrev=9` matches the `--short=9` hash above. Left at git's default
+        // (7 on this repo), an untagged commit's describe carried a 7 char hash
+        // that the about test could not find inside the 9 char one, so the
+        // check only ever passed on a tagged release commit.
+        git(&["describe", "--tags", "--always", "--dirty", "--abbrev=9"]),
+    );
+    stamp(
+        "DESKVNC_GIT_BRANCH",
+        git(&["rev-parse", "--abbrev-ref", "HEAD"]),
+    );
+    stamp(
+        "DESKVNC_GIT_COMMIT_DATE",
+        git(&["log", "-1", "--format=%cd", "--date=format:%Y-%m-%d"]),
+    );
+    stamp("DESKVNC_GIT_DIRTY", git_dirty());
+    stamp(
+        "DESKVNC_RUSTC_VERSION",
+        std::env::var("RUSTC")
+            .ok()
+            .and_then(|rustc| Command::new(rustc).arg("-V").output().ok())
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()),
+    );
+    stamp("DESKVNC_BUILD_PROFILE", std::env::var("PROFILE").ok());
+}
+
+fn main() {
+    println!("cargo:rerun-if-env-changed=DESKVNC_REQUIRE_CLEAN");
+    if std::env::var_os("DESKVNC_REQUIRE_CLEAN").is_some() {
+        assert_eq!(
+            git_dirty().as_deref(),
+            Some("clean"),
+            "release source must be a clean git checkout: {}",
+            git(&["status", "--short"]).unwrap_or_else(|| "git status unavailable".into())
+        );
+    }
+    stamp_git_provenance();
+    tauri_build::try_build(tauri_build::Attributes::new().app_manifest(
+        tauri_build::AppManifest::new().commands(&[
+            // hosts / library
+            "list_hosts",
+            "get_host",
+            "save_host",
+            "delete_host",
+            "touch_connected",
+            "list_groups",
+            "save_group",
+            "delete_group",
+            "list_tags",
+            "save_tag",
+            "delete_tag",
+            "set_host_tags",
+            // bulk counterparts, for a multi-selection dragged onto a group or
+            // a tag in the Library
+            "set_hosts_group",
+            "add_tag_to_hosts",
+            "remove_tag_from_hosts",
+            "list_history",
+            "get_thumbnail",
+            "get_app_setting",
+            "set_app_setting",
+            // build/system fingerprint for the About dialog and bug reports
+            "about_info",
+            // the native menu mirrors the session toolbar, so the webview has
+            // to push it the state that toolbar would have shown
+            "sync_session_menu",
+            // `.rdp` file import. The webview sends a PATH and the shell
+            // reads the file, so these are the only two new command names
+            // this work adds and each is a grant to review on its own.
+            "import_rdp_file",
+            "import_rdp_files",
+            // credentials (write/query only, passwords never flow back to JS)
+            "save_password",
+            "has_password",
+            "saved_user_names",
+            "delete_password",
+            "credential_backend",
+            "unlock_credentials",
+            // discovery
+            "start_discovery",
+            "stop_discovery",
+            "scan_network",
+            "deep_probe",
+            "local_subnets",
+            "wake_host",
+            // sessions
+            "connect_session",
+            "connect_boundary",
+            "boundary_permission",
+            "boundary_provider_start",
+            "boundary_provider_status",
+            "boundary_provider_cancel",
+            // Get help: sharing THIS computer. Granted to the main window
+            // only. A session window has no business approving a helper or
+            // switching on unattended access.
+            "support_state",
+            "support_refresh_displays",
+            "support_set_display",
+            "support_set_code_service",
+            "support_share",
+            "support_stop",
+            "support_full_invitation",
+            "support_answer",
+            "support_answer_ask",
+            "support_set_control",
+            "support_set_tools",
+            "support_pair",
+            "support_set_unattended",
+            "support_set_helper",
+            "support_remove_helper",
+            "support_set_password",
+            "support_set_autostart",
+            "support_end_unattended",
+            "support_stop_unattended_tools",
+            "support_request_screen_permission",
+            "support_open_input_settings",
+            "support_save_network",
+            "disconnect_session",
+            "send_input",
+            "trace_enabled",
+            "trace_marks",
+            "set_quality",
+            "request_resize",
+            "refresh_session",
+            "set_view_only",
+            "set_always_refresh",
+            "set_prefer_scancodes",
+            "send_clipboard",
+            // OS clipboard, natively. `navigator.clipboard` is gesture-gated in
+            // the webview, so remote → local text can never land through it.
+            "set_local_clipboard",
+            "read_local_clipboard",
+            "reconnect_now",
+            "release_all_keys",
+            "capture_thumbnail",
+            "trust_certificate",
+            "forget_certificate",
+            // interactive auth prompt (PRD/10 §3.4), JS → Rust only; the
+            // matching read direction deliberately does not exist.
+            "provide_credentials",
+            "cancel_credentials",
+            "pending_credential_request",
+            "open_session_window",
+            "release_session_claim",
+            "fullscreen_session",
+            "list_active_sessions",
+            // file transfer, SFTP sidecar (PRD/08). The fs plugin stays off;
+            // local reads/writes go through these narrow commands and the
+            // native dialog only.
+            "files_probe",
+            "files_connect",
+            "files_disconnect",
+            "files_status",
+            "files_home",
+            "files_list",
+            "files_mkdir",
+            "files_remove",
+            "files_rename",
+            "files_upload",
+            "files_download",
+            "files_cancel",
+            "files_local_home",
+            "files_local_list",
+            "files_local_mkdir",
+            "files_local_rename",
+            "files_local_remove",
+            // native keyboard capture, shortcut pass-through (PRD/06 §3
+            // Tier 2). `capture_request_permission` is the only one that can
+            // surface an OS prompt, so it stays a distinct, grantable command.
+            "capture_start",
+            "capture_stop",
+            "capture_status",
+            "capture_permission_granted",
+            "capture_request_permission",
+            // remote shell, a pty over the same SSH carrier as the sidecar.
+            // `ssh_send` carries keystrokes, so it is as sensitive as
+            // `send_input` and stays its own grantable command.
+            "ssh_probe",
+            // Reads the NAMES of the keys in `~/.ssh`, never their contents,
+            // so the host editor can offer a list to choose from.
+            "ssh_list_local_keys",
+            "ssh_list_wsl_distros",
+            "ssh_connect",
+            "ssh_send",
+            "ssh_resize",
+            "ssh_reconnect_now",
+            "ssh_disconnect",
+            // The agent plane, as a person sees it. Neither of these reaches
+            // the dvvp.v1 socket: `agent_status` reads what the shell already
+            // knows so a pane can seed its badge on mount, and
+            // `agent_take_the_wheel` is the revocation D5 promises needs no
+            // application code anywhere else. They are two grantable commands
+            // rather than one because reading who is driving and taking the
+            // machine off them are different acts.
+            "agent_status",
+            "agent_take_the_wheel",
+            // Registering the bundled `dvv` with Claude Code, which runs a
+            // program on the person's behalf. Its own grant for that reason:
+            // reading the plane's state and spawning a process are not the
+            // same act.
+            "agent_register_with_claude",
+            // Writing the dvv entry into the config of each coding agent this
+            // machine has, which is what the AI Agents panel's Set up button
+            // runs.
+            "agent_setup_agents",
+        ]),
+    ))
+    .expect("failed to run tauri-build");
+}

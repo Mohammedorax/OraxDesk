@@ -1,0 +1,25 @@
+{
+  "name": "orax-registry",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Orax Remote device registry and signal code API (Cloudflare Worker + D1).",
+  "scripts": {
+    "test": "npm run test:schema && npm run lint:openapi && npm run test:worker",
+    "test:schema": "node --test test/schema.test.mjs",
+    "test:worker": "vitest run",
+    "lint:openapi": "node scripts/lint-openapi.mjs",
+    "db:migrate:local": "wrangler d1 migrations apply oraxdesk-db --local",
+    "db:migrate:remote": "wrangler d1 migrations apply oraxdesk-db --remote",
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-plugin": "^1.4.4",
+    "@cloudflare/workers-types": "^5.20261006.1",
+    "typescript": "^5.7.0",
+    "vitest": "~4.1.0",
+    "wrangler": "^4.0.0",
+    "yaml": "^2.9.1"
+  }
+}

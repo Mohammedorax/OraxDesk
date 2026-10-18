@@ -1,0 +1,31 @@
+[package]
+name = "remote-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+# Protocol agnostic session contract. Depends on no protocol crate, no UI
+# framework, and no Tauri. Every protocol crate depends on this; this depends
+# on none of them. PRDRDP/02 §3.1.
+
+[dependencies]
+# Terminal output is handed straight to the shell without a copy per chunk.
+bytes = { workspace = true }
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+serde = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+# The backoff jitter, and nothing else (PRDRDP/06 §5.3).
+rand = { workspace = true }
+vnc-transport = { path = "../vnc-transport" }
+# `AgentIntent::grant` names `PartyId`, and arbitration is where that identity
+# is defined (PRDAgentPlug/08 §5). No cycle: `agent-lease` depends on serde and
+# thiserror and on no crate in this workspace, which is the same property that
+# let `limb-core` name it before the intent vocabulary moved here (00 R47a).
+agent-lease = { path = "../agent-lease" }
+
+[dev-dependencies]
+serde_json = { workspace = true }
+tokio = { version = "1", features = ["full", "test-util"] }

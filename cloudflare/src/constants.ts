@@ -1,0 +1,15 @@
+export const MAX_BODY_BYTES = 16 * 1024;
+export const MAX_INVITATION_CHARS = 8 * 1024;
+export const MAX_CIPHERTEXT_BYTES = 4096;
+export const CODE_TTL_MIN = 30;
+export const CODE_TTL_MAX = 600;
+export const CODE_TTL_DEFAULT = 600;
+export const INVITATION_MAX_FUTURE = 660;
+export const AUTH_MAX_SKEW_SECONDS = 120;
+export const NONCE_TTL_SECONDS = 600;
+export const MAX_LABEL_CHARS = 64;
+export const MAX_CLIENT_VERSION_CHARS = 32;
+export const MAX_CODES_PER_HOUR = 20;
+export const CODE_DIGITS = 12;
+export const REVOKE_TOKEN_BYTES = 32;
+export const AES_KEY_BYTES = 32;

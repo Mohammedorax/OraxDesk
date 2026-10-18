@@ -1,0 +1,180 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/boundary-driver",
+    "crates/boundary-session",
+    "crates/boundary-codes",
+    "crates/boundary-platform",
+    "crates/boundary-provision",
+    "crates/boundary-app",
+    # Protocol-neutral layers. Every protocol crate depends on these; these
+    # depend on no protocol crate (PRDRDP/01 §2.2, PRDRDP/02 §3).
+    "crates/remote-core",
+    "crates/remote-pixel",
+    # The SSH carrier and everything that rides it. `ssh-transport` depends on
+    # no feature crate; `vnc-files` and `ssh-core` both sit on top of it.
+    "crates/ssh-transport",
+    "crates/ssh-core",
+    # The RDP set (AGENT_BRIEF D12, PRDRDP/12 §2).
+    "crates/rdp-pdu",
+    "crates/rdp-codecs",
+    "crates/rdp-auth",
+    "crates/rdp-core",
+    "crates/vnc-core",
+    "crates/vnc-transport",
+    "crates/vnc-discovery",
+    "crates/vnc-store",
+    "crates/vnc-files",
+    "crates/vnc-input-capture",
+    # The agent plane (PRDAgentPlug/01 §3, /02, /08 §5). Deliberately two
+    # crates rather than one: `agent-lease` is arbitration and knows nothing
+    # about limbs, protocols or tokio channels, so it can be reasoned about and
+    # tested on its own, and `limb-core` is the contract a limb implements and
+    # depends only on `remote-core`. Neither depends on tauri, so the plane is
+    # reachable from a headless binary (PRDAgentPlug/03 §1).
+    "crates/agent-lease",
+    "crates/limb-core",
+    "crates/agent-perception",
+    "crates/agent-plane",
+    # The named pipe both listeners use on Windows, with its owner only ACL.
+    "crates/local-pipe",
+    "crates/dvv",
+    # Orax Remote registry client (Cloudflare Worker + D1 API), no Tauri dependency.
+    "crates/orax-registry",
+    "src-tauri",
+]
+
+# Fuzz targets live in their own workspaces so `libfuzzer-sys` and `arbitrary`
+# stay out of the main dependency tree (AGENT_BRIEF D11, PRDRDP/11 §3.3).
+exclude = [
+    "crates/rdp-pdu/fuzz",
+    "crates/rdp-codecs/fuzz",
+    "crates/rdp-auth/fuzz",
+]
+
+[workspace.package]
+version = "0.30.0"
+edition = "2021"
+rust-version = "1.95"
+license = "MIT OR Apache-2.0"
+authors = ["Godwin Sam Josh"]
+repository = "https://github.com/psmux/DeskVNC"
+
+[workspace.dependencies]
+# async runtime
+tokio = { version = "1", features = ["rt-multi-thread", "net", "io-util", "sync", "time", "macros"] }
+tokio-util = { version = "0.7", features = ["rt"] }
+futures = "0.3"
+
+# errors / logging
+thiserror = "2"
+anyhow = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# codecs
+# zlib-rs backend (PRD/01 §4): ~90% of the zlib/Tight/ZRLE decode path is
+# inflate, and zlib-rs is materially faster than the default miniz_oxide while
+# staying pure Rust (no C toolchain on any of the three platforms).
+flate2 = { version = "1", default-features = false, features = ["zlib-rs"] }
+zune-jpeg = "0.5"
+
+# crypto
+des = "0.8"
+cbc = "0.1"
+ecb = "0.1"
+cipher = "0.4"
+aes = "0.8"
+eax = "0.5"
+sha1 = "0.10"
+md4 = "0.10"
+hmac = "0.12"
+rc4 = "0.1"
+subtle = "2"
+# Kerberos only, behind rdp-auth's `kerberos` feature and nothing else.
+# `cts` is CBC with ciphertext stealing (RFC 3962 §5). Read the module comment
+# on crates/rdp-auth/src/kerberos/crypto.rs before touching how it is called:
+# its single block case is wrong, and wrong in a way that round trips against
+# itself, so the length dispatch around it is load bearing.
+cts = "0.6.0"
+pbkdf2 = { version = "0.12.2", default-features = false, features = ["hmac"] }
+sha2 = "0.10"
+md-5 = "0.10"
+rsa = "0.10.0-rc.18"
+num-bigint-dig = "0.8"
+rand = "0.10"
+zeroize = { version = "1", features = ["derive"] }
+argon2 = "0.5"
+chacha20poly1305 = "0.10"
+
+# tls / ssh
+russh = "0.62"
+russh-sftp = "2.3"
+rustls = "0.23"
+# Legacy TLS backend, optional and off by default (AGENT_BRIEF V3-B, PRDRDP/10
+# P0.6). Only vnc-transport may name these, which crates/rdp-pdu/tests/
+# workspace_rules.rs enforces. `=300.5.5` is openssl-src's newest build of
+# OpenSSL 3.5, the LTS branch supported to 2030-04-08; the default `vendored`
+# resolution picks the 3.6 branch, which goes end of life on 2026-11-01. Moving
+# this pin is an advisory policy decision, never a `cargo update`.
+openssl = { version = "0.10.81", features = ["vendored"] }
+openssl-src = "=300.5.5"
+tokio-openssl = "0.6"
+tokio-rustls = "0.26"
+rustls-pki-types = "1"
+webpki-roots = "1"
+
+# discovery
+mdns-sd = "0.20"
+netdev = "0.45"
+mac_address = "1"
+
+# storage
+rusqlite = { version = "0.40", features = ["bundled"] }
+keyring = "4"
+directories = "6"
+
+# images
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+xcap = "0.9.8"
+enigo = "0.6.1"
+eframe = { version = "0.36.2", default-features = false, features = ["accesskit", "default_fonts", "glow", "x11", "wayland"] }
+async-trait = "0.1"
+tempfile = "3"
+if-addrs = "0.15"
+open = "5"
+
+boundary-session = { path = "crates/boundary-session" }
+boundary-codes = { path = "crates/boundary-codes" }
+boundary-platform = { path = "crates/boundary-platform" }
+boundary-provision = { path = "crates/boundary-provision" }
+iroh = "1.2"
+getrandom = "0.3"
+axum = "0.8"
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls"] }
+fast_image_resize = "6"
+
+# misc
+socket2 = { version = "0.5", features = ["all"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+bytes = "1"
+byteorder = "1"
+hex = "0.4"
+base64 = "0.22"
+parking_lot = "0.12"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = true
+
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3

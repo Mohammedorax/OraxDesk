@@ -1,0 +1,60 @@
+[package]
+name = "rdp-codecs"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+# RDP bitmap decoders: pure functions over slices into caller owned buffers.
+#
+# MUST NOT depend on tokio, on any I/O, or on any third party RDP crate (D3).
+# The only workspace dependency is remote-pixel (PRDRDP/00 R37). In particular
+# NOT rdp-pdu: the codec payload boundary (PRDRDP/12 §2.2.2) is the reason.
+# Enforced by crates/rdp-pdu/tests/workspace_rules.rs (PRDRDP/12 §2.5).
+
+[dependencies]
+# Pixel format conversion and the integer bilinear resampler, generalised out
+# of vnc-core/src/pixel/convert.rs for stride and row order (PRDRDP/00 R37,
+# PRDRDP/04 §4.2). A leaf crate with no dependencies at all, shared with
+# vnc-core so there is one conversion rather than two that drift.
+remote-pixel = { path = "../remote-pixel" }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
+hex = { workspace = true }
+# Self dev-dependency so the benches and the integration tests see the
+# reference encoders of `encode`, which PRDRDP/04 §11.4 requires and gates off
+# the shipped build. Cargo builds the lib once with the union of the features,
+# so this costs a feature flag rather than a second compilation.
+# `default-features = false` matters more than it looks. Without it this line
+# pulls `default` back in, so `--no-default-features` resolved to
+# `default,encode,progressive` and tested nothing: the flag looked like a check
+# for years of waves and was not one. `cargo tree -p rdp-codecs
+# --no-default-features -f "{p} {f}"` is how to see it.
+rdp-codecs = { path = ".", default-features = false, features = ["encode"] }
+
+[features]
+# `progressive` is on by default. It used to be off, on the argument that a
+# phase 1 binary does not need a phase 3 codec and the fuzzer would have to
+# cover it anyway. docs/RDP_SPEC_NOTES.md §1.6 overtook that: progressive is
+# available from EGFX capability version 8, which is what we advertise, and
+# nothing declines it, so a server may send RDPGFX_CODECID_CAPROGRESSIVE and
+# a client without a decoder ends the session. A feature that is off cannot
+# save a session. Measured cost of turning it on: 17.9 KiB in a linked,
+# LTO'd release binary that calls both entry points, which is 4.5 percent,
+# and one more fuzz target out of ten.
+default = ["progressive"]
+# Progressive RemoteFX (MS-RDPEGFX 2.2.4.2, 3.3.7). Left as a feature so
+# `--no-default-features` gives back a binary without the tile store, for a
+# build that has other reasons to refuse the codec.
+progressive = []
+# Minimal reference encoders, one legal form of each construct, used to build
+# bench fixtures and round trip tests (PRDRDP/04 §11.4). Never shipped: the
+# spec vectors in the unit tests are what stops "our encoder agrees with our
+# decoder" from being the only evidence.
+encode = []
+
+[[bench]]
+name = "decode"
+harness = false

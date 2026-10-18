@@ -1,0 +1,23 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "orax-registry",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-01",
+  "observability": {
+    "enabled": true
+  },
+  "vars": {
+    "API_VERSION": "v1"
+  },
+  "triggers": {
+    "crons": ["*/15 * * * *"]
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "oraxdesk-db",
+      "database_id": "c44215ca-e847-4656-afff-446859a586a5",
+      "migrations_dir": "migrations"
+    }
+  ]
+}

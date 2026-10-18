@@ -1,0 +1,21 @@
+[package]
+name = "orax-registry"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Client for the Orax Remote device registry and signal code API"
+
+[dependencies]
+base64.workspace = true
+getrandom.workspace = true
+hex.workspace = true
+iroh.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+# The live test drives the async client, so it needs a runtime of its own.
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }

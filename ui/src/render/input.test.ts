@@ -1,0 +1,697 @@
+/**
+ * Pointer-input behaviour that is easy to break and impossible to notice.
+ *
+ * These drive the real `SessionInput` against a stub renderer and decode the
+ * binary packets it produces, so they assert what actually reaches the wire
+ * rather than that a method was called.
+ */
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { encodeTerminalInput, encodeTerminalResize, SessionInput } from "./input";
+import type { WebGLRenderer } from "./WebGLRenderer";
+
+const KIND_POINTER = 0;
+const POINTER_LEN = 7;
+const RIGHT = 1 << 2;
+
+interface Pointer {
+  x: number;
+  y: number;
+  mask: number;
+}
+
+/** Decode every pointer event out of the packets that were sent. */
+function pointers(packets: Uint8Array[]): Pointer[] {
+  const out: Pointer[] = [];
+  for (const packet of packets) {
+    const view = new DataView(packet.buffer, packet.byteOffset, packet.byteLength);
+    let at = 0;
+    while (at + POINTER_LEN <= packet.byteLength && view.getUint8(at) === KIND_POINTER) {
+      out.push({
+        x: view.getUint16(at + 1, true),
+        y: view.getUint16(at + 3, true),
+        mask: view.getUint16(at + 5, true),
+      });
+      at += POINTER_LEN;
+    }
+  }
+  return out;
+}
+
+function setup() {
+  const canvas = document.createElement("canvas");
+  // jsdom implements neither of these, and the real handler captures the
+  // pointer so a drag that leaves the canvas keeps reporting.
+  canvas.setPointerCapture = () => {};
+  canvas.releasePointerCapture = () => {};
+  document.body.appendChild(canvas);
+  const sent: Uint8Array[] = [];
+  // The coalescing key each packet was handed over with, index-aligned with
+  // `sent`. Only pure pointer motion is allowed to carry one; anything else
+  // has to be undefined or the transport is free to drop it.
+  const keys: (string | undefined)[] = [];
+  // The renderer is only asked to map CSS points and park the cursor sprite.
+  const renderer = {
+    cssPointToFramebuffer: (x: number, y: number) => ({ x: Math.round(x), y: Math.round(y) }),
+    setCursorPosition: () => {},
+    getZoom: () => 1,
+    setZoom: () => {},
+    setScalingMode: () => {},
+    panRoom: () => panRoom,
+    panBy: (dx: number, dy: number) => panned.push([dx, dy]),
+  } as unknown as WebGLRenderer;
+
+  const zoomed: number[] = [];
+  const panned: [number, number][] = [];
+  // Room to scroll in every direction unless a test says otherwise.
+  const panRoom = { left: 500, right: 500, up: 500, down: 500 };
+
+  const input = new SessionInput(canvas, {
+    renderer,
+    // Copy: the class reuses its scratch buffers between events.
+    send: (packet, coalesceKey) => {
+      sent.push(packet.slice());
+      keys.push(coalesceKey);
+    },
+    releaseAllKeys: () => {},
+    onAppHotkey: () => false,
+    onZoomGesture: (z) => zoomed.push(z),
+  });
+  input.attach();
+  return { canvas, input, sent, keys, zoomed, panned, panRoom };
+}
+
+describe("terminal input/resize encoding", () => {
+  // Byte-exact contract: src-tauri/FRAME_FORMAT.md "Input events, continued",
+  // decoded by `framing::decode_input` kinds 3 and 4.
+
+  it("encodes terminal input as kind 3 with a u32 little-endian length prefix", () => {
+    const payload = new TextEncoder().encode("echo hi\n");
+    const packet = encodeTerminalInput(payload);
+    const view = new DataView(packet.buffer, packet.byteOffset, packet.byteLength);
+
+    expect(packet.byteLength).toBe(5 + payload.byteLength);
+    expect(view.getUint8(0)).toBe(3);
+    expect(view.getUint32(1, true)).toBe(payload.byteLength);
+    expect(Array.from(packet.slice(5))).toEqual(Array.from(payload));
+  });
+
+  it("splits a payload over the 64 KiB cap into several concatenated kind-3 events", () => {
+    // `framing::decode_input` rejects the WHOLE body if one event's `len`
+    // exceeds MAX_TERMINAL_INPUT_LEN, so a large paste has to be pre-split
+    // into events the decoder accepts individually.
+    const big = new Uint8Array(64 * 1024 + 10).fill(65);
+    const packet = encodeTerminalInput(big);
+    const view = new DataView(packet.buffer, packet.byteOffset, packet.byteLength);
+
+    let at = 0;
+    let recovered = 0;
+    while (at < packet.byteLength) {
+      expect(view.getUint8(at)).toBe(3);
+      const len = view.getUint32(at + 1, true);
+      expect(len).toBeLessThanOrEqual(64 * 1024);
+      recovered += len;
+      at += 5 + len;
+    }
+    expect(at).toBe(packet.byteLength);
+    expect(recovered).toBe(big.byteLength);
+  });
+
+  it("encodes terminal resize as kind 4 with little-endian cols/rows", () => {
+    const packet = encodeTerminalResize(80, 24);
+    const view = new DataView(packet.buffer, packet.byteOffset, packet.byteLength);
+
+    expect(packet.byteLength).toBe(5);
+    expect(view.getUint8(0)).toBe(4);
+    expect(view.getUint16(1, true)).toBe(80);
+    expect(view.getUint16(3, true)).toBe(24);
+  });
+});
+
+describe("context-menu gestures", () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  it("sends a right click for a two-finger tap, which arrives as contextmenu alone", () => {
+    // The macOS trackpad "secondary click" gesture reaches the page as a
+    // contextmenu event with no button-2 pointerdown/pointerup pair, so
+    // without synthesising one the remote desktop never sees a right click.
+    const { canvas, sent } = setup();
+    canvas.dispatchEvent(
+      new MouseEvent("contextmenu", { clientX: 120, clientY: 80, bubbles: true }),
+    );
+    vi.advanceTimersByTime(100);
+
+    expect(pointers(sent)).toEqual([
+      { x: 120, y: 80, mask: RIGHT },
+      { x: 120, y: 80, mask: 0 },
+    ]);
+  });
+
+  it("sends the press and release as one packet, so they cannot arrive reversed", () => {
+    // Two invokes are two independent IPC requests with no ordering
+    // guarantee between them. Reversed, the remote is left holding the right
+    // button and the click does nothing until a later event happens to carry
+    // a mask without that bit, which is the "nothing happened, then ages
+    // later it did" this gesture was reported with.
+    const { canvas, sent } = setup();
+    canvas.dispatchEvent(
+      new MouseEvent("contextmenu", { clientX: 120, clientY: 80, bubbles: true }),
+    );
+    vi.advanceTimersByTime(100);
+
+    expect(sent).toHaveLength(1);
+    expect(pointers(sent)).toEqual([
+      { x: 120, y: 80, mask: RIGHT },
+      { x: 120, y: 80, mask: 0 },
+    ]);
+  });
+
+  it("does not double up when a real right button already covered the gesture", () => {
+    // A physical right button fires pointerdown and then contextmenu for one
+    // gesture; synthesising on top of that would right-click twice.
+    const { canvas, sent } = setup();
+    canvas.dispatchEvent(
+      new PointerEvent("pointerdown", { button: 2, clientX: 10, clientY: 10, bubbles: true }),
+    );
+    canvas.dispatchEvent(
+      new MouseEvent("contextmenu", { clientX: 10, clientY: 10, bubbles: true }),
+    );
+    vi.advanceTimersByTime(100);
+
+    // Just the real press; the release follows from the real pointerup.
+    expect(pointers(sent)).toEqual([{ x: 10, y: 10, mask: RIGHT }]);
+  });
+
+  it("stays silent in view-only mode", () => {
+    const { canvas, input, sent } = setup();
+    input.setViewOnly(true);
+    canvas.dispatchEvent(
+      new MouseEvent("contextmenu", { clientX: 5, clientY: 5, bubbles: true }),
+    );
+    vi.advanceTimersByTime(100);
+    expect(pointers(sent)).toEqual([]);
+  });
+});
+
+describe("pinch to zoom", () => {
+  it("zooms the view and sends nothing to the remote", () => {
+    // A trackpad pinch arrives as a ctrl+wheel event.
+    const { canvas, sent, zoomed } = setup();
+    canvas.dispatchEvent(
+      new WheelEvent("wheel", { deltaY: -120, ctrlKey: true, clientX: 1, clientY: 1, bubbles: true }),
+    );
+    expect(zoomed.length).toBe(1);
+    expect(pointers(sent)).toEqual([]);
+  });
+
+  it("does nothing at all once zoom is locked", () => {
+    // The gesture is easy to trigger by accident mid-scroll, so locked it
+    // must neither rescale the view nor fall through to the remote as
+    // scroll-wheel clicks.
+    const { canvas, input, sent, zoomed } = setup();
+    input.setZoomLocked(true);
+    canvas.dispatchEvent(
+      new WheelEvent("wheel", { deltaY: -120, ctrlKey: true, clientX: 1, clientY: 1, bubbles: true }),
+    );
+    expect(zoomed).toEqual([]);
+    expect(pointers(sent)).toEqual([]);
+  });
+
+  it("leaves ordinary scrolling alone while locked", () => {
+    const { canvas, input, sent } = setup();
+    input.setZoomLocked(true);
+    canvas.dispatchEvent(
+      new WheelEvent("wheel", { deltaY: 40, clientX: 1, clientY: 1, bubbles: true }),
+    );
+    // One wheel-down click (WHEEL_STEP px): press then release of bit 4.
+    expect(pointers(sent).map((p) => p.mask)).toEqual([1 << 4, 0]);
+  });
+});
+
+describe("which way the wheel goes", () => {
+  // These assert against the setting a session actually runs with. The older
+  // scrolling test above passed while every real session scrolled backwards,
+  // because it never touched the preference and the class default disagreed
+  // with the preference default (issue #1).
+  const WHEEL_UP = 1 << 3;
+  const WHEEL_DOWN = 1 << 4;
+
+  function wheel(canvas: HTMLCanvasElement, deltaY: number): void {
+    canvas.dispatchEvent(new WheelEvent("wheel", { deltaY, clientX: 1, clientY: 1, bubbles: true }));
+  }
+
+  it("sends the remote the direction the OS already resolved", () => {
+    const { canvas, input, sent } = setup();
+    // What a session sets from the preference, whose default is on.
+    input.setNaturalScroll(true);
+
+    wheel(canvas, 40);
+    expect(pointers(sent).map((p) => p.mask)).toEqual([WHEEL_DOWN, 0]);
+
+    sent.length = 0;
+    wheel(canvas, -40);
+    expect(pointers(sent).map((p) => p.mask)).toEqual([WHEEL_UP, 0]);
+  });
+
+  it("scrolls the same way when nobody has set the preference", () => {
+    // A fresh install reads no stored value, so the class default has to land
+    // in the same place the preference default does.
+    const { canvas, sent } = setup();
+    wheel(canvas, 40);
+    expect(pointers(sent).map((p) => p.mask)).toEqual([WHEEL_DOWN, 0]);
+  });
+
+  it("reverses the remote only when the preference is turned off", () => {
+    const { canvas, input, sent } = setup();
+    input.setNaturalScroll(false);
+    wheel(canvas, 40);
+    expect(pointers(sent).map((p) => p.mask)).toEqual([WHEEL_UP, 0]);
+  });
+});
+
+describe("edge auto-scroll", () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  // jsdom gives every element a zero-size rect, so the canvas has to claim a
+  // real one for the edge bands to mean anything.
+  function sized(canvas: HTMLCanvasElement, w = 800, h = 600) {
+    canvas.getBoundingClientRect = () =>
+      ({ left: 0, top: 0, right: w, bottom: h, width: w, height: h, x: 0, y: 0 }) as DOMRect;
+    Object.defineProperty(canvas, "width", { value: w, configurable: true });
+    Object.defineProperty(canvas, "height", { value: h, configurable: true });
+  }
+
+  it("scrolls toward the edge the pointer is held against", () => {
+    // Issue #1: at 1:1 on a desktop larger than the window, everything past
+    // the edge was unreachable; panning existed only as an undiscoverable
+    // space-drag.
+    const { canvas, panned } = setup();
+    sized(canvas);
+    canvas.dispatchEvent(
+      new PointerEvent("pointermove", { clientX: 2, clientY: 300, bubbles: true }),
+    );
+    vi.advanceTimersToNextFrame();
+    expect(panned.length).toBeGreaterThan(0);
+    // `panBy` moves the VIEW, so looking further left is negative. This
+    // assertion had the sign backwards and happily confirmed a bug that sent
+    // every edge scrolling the wrong way.
+    expect(panned[0][0]).toBeLessThan(0);
+  });
+
+  it("scrolls right at the right edge, and down at the bottom", () => {
+    const { canvas, panned } = setup();
+    sized(canvas);
+    canvas.dispatchEvent(
+      new PointerEvent("pointermove", { clientX: 798, clientY: 598, bubbles: true }),
+    );
+    vi.advanceTimersToNextFrame();
+    expect(panned[0][0]).toBeGreaterThan(0);
+    expect(panned[0][1]).toBeGreaterThan(0);
+  });
+
+  it("scrolls up at the top edge", () => {
+    const { canvas, panned } = setup();
+    sized(canvas);
+    canvas.dispatchEvent(
+      new PointerEvent("pointermove", { clientX: 400, clientY: 2, bubbles: true }),
+    );
+    vi.advanceTimersToNextFrame();
+    expect(panned[0][1]).toBeLessThan(0);
+  });
+
+  it("stays still in the middle of the view", () => {
+    const { canvas, panned } = setup();
+    sized(canvas);
+    canvas.dispatchEvent(
+      new PointerEvent("pointermove", { clientX: 400, clientY: 300, bubbles: true }),
+    );
+    vi.advanceTimersToNextFrame();
+    expect(panned).toEqual([]);
+  });
+
+  it("stays still once the user turns it off", () => {
+    const { canvas, input, panned } = setup();
+    sized(canvas);
+    input.setEdgePan(false);
+    canvas.dispatchEvent(
+      new PointerEvent("pointermove", { clientX: 2, clientY: 300, bubbles: true }),
+    );
+    vi.advanceTimersToNextFrame();
+    expect(panned).toEqual([]);
+  });
+
+  it("stays still when the desktop already fits", () => {
+    const { canvas, panned, panRoom } = setup();
+    sized(canvas);
+    panRoom.left = 0;
+    panRoom.right = 0;
+    panRoom.up = 0;
+    panRoom.down = 0;
+    canvas.dispatchEvent(
+      new PointerEvent("pointermove", { clientX: 2, clientY: 300, bubbles: true }),
+    );
+    vi.advanceTimersToNextFrame();
+    expect(panned).toEqual([]);
+  });
+});
+
+describe("a button that is never let go of", () => {
+  // `PointerEvent.button` is -1 on pointercancel and on lostpointercapture,
+  // which matches no button we forward, so the release path used to take its
+  // "not a button we care about" early return and the bit stayed set for the
+  // rest of the session.
+  //
+  // A stuck right button is not a small thing. The next right press ORs a bit
+  // that is already set, so the mask does not change and the backend computes
+  // no transition: the click does nothing. The release that follows clears it
+  // and arrives on its own, long after the gesture. And in between, a left
+  // press goes out as left AND right together, so the desktop opens a context
+  // menu when the user left-clicked.
+
+  it("releases the button when the pointer is cancelled", () => {
+    const { canvas, sent } = setup();
+    canvas.dispatchEvent(
+      new PointerEvent("pointerdown", { button: 2, buttons: 2, clientX: 5, clientY: 5 }),
+    );
+    // pointercancel carries button -1 and buttons 0.
+    canvas.dispatchEvent(
+      new PointerEvent("pointercancel", { button: -1, buttons: 0, clientX: 5, clientY: 5 }),
+    );
+
+    expect(pointers(sent)).toEqual([
+      { x: 5, y: 5, mask: RIGHT },
+      { x: 5, y: 5, mask: 0 },
+    ]);
+  });
+
+  it("releases the button when pointer capture is taken away", () => {
+    const { canvas, sent } = setup();
+    canvas.dispatchEvent(
+      new PointerEvent("pointerdown", { button: 2, buttons: 2, clientX: 5, clientY: 5 }),
+    );
+    canvas.dispatchEvent(
+      new PointerEvent("lostpointercapture", { button: -1, buttons: 0, clientX: 5, clientY: 5 }),
+    );
+
+    expect(pointers(sent).at(-1)).toEqual({ x: 5, y: 5, mask: 0 });
+  });
+
+  it("corrects a mask that drifted, on the next move", () => {
+    // The backstop for a release that happens where we get no event at all,
+    // such as outside the window. `buttons` is a live set carried on every
+    // event, so the very next move puts it right.
+    const { canvas, sent } = setup();
+    canvas.dispatchEvent(
+      new PointerEvent("pointerdown", { button: 2, buttons: 2, clientX: 5, clientY: 5 }),
+    );
+    sent.length = 0;
+    canvas.dispatchEvent(
+      new PointerEvent("pointermove", { buttons: 0, clientX: 40, clientY: 40 }),
+    );
+
+    expect(pointers(sent)[0]).toEqual({ x: 40, y: 40, mask: 0 });
+  });
+
+  it("does not turn a left click into a right click after a cancel", () => {
+    // The reported symptom, end to end.
+    const { canvas, sent } = setup();
+    canvas.dispatchEvent(
+      new PointerEvent("pointerdown", { button: 2, buttons: 2, clientX: 5, clientY: 5 }),
+    );
+    canvas.dispatchEvent(
+      new PointerEvent("pointercancel", { button: -1, buttons: 0, clientX: 5, clientY: 5 }),
+    );
+    sent.length = 0;
+
+    canvas.dispatchEvent(
+      new PointerEvent("pointerdown", { button: 0, buttons: 1, clientX: 5, clientY: 5 }),
+    );
+    canvas.dispatchEvent(
+      new PointerEvent("pointerup", { button: 0, buttons: 0, clientX: 5, clientY: 5 }),
+    );
+
+    expect(pointers(sent)).toEqual([
+      { x: 5, y: 5, mask: 1 },
+      { x: 5, y: 5, mask: 0 },
+    ]);
+  });
+
+  it("does not send a second release at the corner when capture ends after a click", () => {
+    // WebKit builds `lostpointercapture` from the mouseup that ended the
+    // implicit capture, so it arrives with button 0 (not the -1 the spec
+    // suggests), buttons 0, and clientX/clientY of 0. Treated as a pointerup
+    // that was a left button release at the top-left corner: one extra packet
+    // per click, and the remote pointer jumped to (0,0) after every click.
+    const { canvas, sent } = setup();
+    canvas.dispatchEvent(
+      new PointerEvent("pointerdown", { button: 0, buttons: 1, clientX: 564, clientY: 636 }),
+    );
+    canvas.dispatchEvent(
+      new PointerEvent("pointerup", { button: 0, buttons: 0, clientX: 564, clientY: 636 }),
+    );
+    canvas.dispatchEvent(
+      new PointerEvent("lostpointercapture", { button: 0, buttons: 0, clientX: 0, clientY: 0 }),
+    );
+
+    expect(pointers(sent)).toEqual([
+      { x: 564, y: 636, mask: 1 },
+      { x: 564, y: 636, mask: 0 },
+    ]);
+
+    // And the tracked position survived, so the next press is where the
+    // mouse is, not at the corner the event claimed.
+    sent.length = 0;
+    canvas.dispatchEvent(
+      new PointerEvent("pointerdown", { button: 0, buttons: 1, clientX: 564, clientY: 636 }),
+    );
+    expect(pointers(sent)).toEqual([{ x: 564, y: 636, mask: 1 }]);
+  });
+
+  it("releases a button lost with capture where the drag was, not at the corner", () => {
+    // Capture stolen mid-drag: the button has to be released, and released
+    // at the last place the pointer was seen. The event's own (0,0) is not a
+    // position the mouse ever visited.
+    const { canvas, sent } = setup();
+    canvas.dispatchEvent(
+      new PointerEvent("pointerdown", { button: 0, buttons: 1, clientX: 100, clientY: 100 }),
+    );
+    canvas.dispatchEvent(
+      new PointerEvent("lostpointercapture", { button: 0, buttons: 0, clientX: 0, clientY: 0 }),
+    );
+
+    expect(pointers(sent)).toEqual([
+      { x: 100, y: 100, mask: 1 },
+      { x: 100, y: 100, mask: 0 },
+    ]);
+  });
+
+  it("does not wedge pointer input when a pan is cancelled", () => {
+    // onPointerUp only ended a pan for `e.button === panButton`, and no pan
+    // button is -1, so a cancelled pan left `panning` set. Every later press
+    // then took the pan early return and nothing reached the remote at all.
+    const { canvas, sent } = setup();
+    canvas.dispatchEvent(
+      new PointerEvent("pointerdown", {
+        button: 1,
+        buttons: 4,
+        altKey: true,
+        clientX: 5,
+        clientY: 5,
+      }),
+    );
+    canvas.dispatchEvent(
+      new PointerEvent("pointercancel", { button: -1, buttons: 0, clientX: 5, clientY: 5 }),
+    );
+    sent.length = 0;
+
+    canvas.dispatchEvent(
+      new PointerEvent("pointerdown", { button: 0, buttons: 1, clientX: 9, clientY: 9 }),
+    );
+    expect(pointers(sent)).toEqual([{ x: 9, y: 9, mask: 1 }]);
+  });
+});
+
+describe("what may be coalesced on the way to the wire", () => {
+  // Pointer motion is produced once per animation frame and drains one IPC
+  // round trip at a time. While the remote screen is busy that round trip
+  // grows past the frame interval and the queue grows with it, so the remote
+  // pointer walks the scenic route through positions the user left seconds ago
+  // and every keystroke queued behind it waits out the same backlog. Motion
+  // packets carry a key so a newer one replaces the one still waiting.
+  //
+  // Nothing else may. A pointer packet carries absolute x and y, so a dropped
+  // position costs only itself, but a dropped press or release leaves the
+  // remote holding a button the user let go of.
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  it("hands pure pointer motion over with a coalescing key", () => {
+    const { canvas, sent, keys } = setup();
+    canvas.dispatchEvent(
+      new PointerEvent("pointermove", { buttons: 0, clientX: 30, clientY: 40 }),
+    );
+    vi.advanceTimersToNextFrame();
+
+    expect(pointers(sent)).toEqual([{ x: 30, y: 40, mask: 0 }]);
+    expect(keys).toEqual(["pointer-motion"]);
+  });
+
+  it("keys motion during a drag as well, where only the position moved", () => {
+    // Holding a button does not make the position any less replaceable. The
+    // mask is the same in both packets, so the older one is worthless.
+    const { canvas, keys } = setup();
+    canvas.dispatchEvent(
+      new PointerEvent("pointerdown", { button: 0, buttons: 1, clientX: 5, clientY: 5 }),
+    );
+    canvas.dispatchEvent(
+      new PointerEvent("pointermove", { buttons: 1, clientX: 60, clientY: 60 }),
+    );
+    vi.advanceTimersToNextFrame();
+
+    expect(keys).toEqual([undefined, "pointer-motion"]);
+  });
+
+  it("sends a button press and its release with no key at all", () => {
+    const { canvas, sent, keys } = setup();
+    canvas.dispatchEvent(
+      new PointerEvent("pointerdown", { button: 0, buttons: 1, clientX: 5, clientY: 5 }),
+    );
+    canvas.dispatchEvent(
+      new PointerEvent("pointerup", { button: 0, buttons: 0, clientX: 5, clientY: 5 }),
+    );
+
+    expect(pointers(sent)).toEqual([
+      { x: 5, y: 5, mask: 1 },
+      { x: 5, y: 5, mask: 0 },
+    ]);
+    expect(keys).toEqual([undefined, undefined]);
+  });
+
+  it("sends the mask correction on a drifted move with no key", () => {
+    // This one is a release the remote has not heard about yet. Coalescing it
+    // away is the stuck-button bug, arrived at from the other direction.
+    const { canvas, keys } = setup();
+    canvas.dispatchEvent(
+      new PointerEvent("pointerdown", { button: 2, buttons: 2, clientX: 5, clientY: 5 }),
+    );
+    canvas.dispatchEvent(
+      new PointerEvent("pointermove", { buttons: 0, clientX: 40, clientY: 40 }),
+    );
+
+    // The press, then the correction. Both unkeyed; the motion frame that
+    // follows has not run yet.
+    expect(keys).toEqual([undefined, undefined]);
+  });
+
+  it("sends a wheel click with no key, so neither half can be dropped", () => {
+    const { canvas, sent, keys } = setup();
+    canvas.dispatchEvent(
+      new WheelEvent("wheel", { deltaY: 40, clientX: 1, clientY: 1, bubbles: true }),
+    );
+
+    expect(sent).toHaveLength(1);
+    expect(keys).toEqual([undefined]);
+  });
+
+  it("sends the synthesised right click with no key", () => {
+    const { canvas, sent, keys } = setup();
+    canvas.dispatchEvent(
+      new MouseEvent("contextmenu", { clientX: 120, clientY: 80, bubbles: true }),
+    );
+    vi.advanceTimersByTime(100);
+
+    expect(sent).toHaveLength(1);
+    expect(keys).toEqual([undefined]);
+  });
+
+  it("sends key packets with no key, down and up alike", () => {
+    const { input, sent, keys } = setup();
+    input.sendKeyCombo([{ keysym: 0xff08, keycode: 22 }]);
+
+    expect(sent).toHaveLength(2);
+    expect(keys).toEqual([undefined, undefined]);
+  });
+});
+
+const KIND_KEY = 1;
+const KEY_LEN = 10;
+const RETURN = 0xff0d;
+
+/** Decode every key event out of the packets that were sent: [keysym, down]. */
+function keyEvents(packets: Uint8Array[]): [number, boolean][] {
+  const out: [number, boolean][] = [];
+  for (const packet of packets) {
+    const view = new DataView(packet.buffer, packet.byteOffset, packet.byteLength);
+    let at = 0;
+    while (at + KEY_LEN <= packet.byteLength && view.getUint8(at) === KIND_KEY) {
+      out.push([view.getUint32(at + 2, true), view.getUint8(at + 1) === 1]);
+      at += KEY_LEN;
+    }
+  }
+  return out;
+}
+
+/** Fire a paste at the capture element the way the OS does when a Cmd+V the
+ *  session left alone is answered through Edit ▸ Paste. jsdom has no
+ *  ClipboardEvent, so the clipboard payload is grafted onto a plain event. */
+function pasteInto(text: string): Event {
+  // The newest one: earlier suites leave their own capture elements behind.
+  const all = document.querySelectorAll<HTMLTextAreaElement>("[data-remote-capture]");
+  const el = all[all.length - 1];
+  if (!el) throw new Error("no capture element");
+  const ev = new Event("paste", { bubbles: true, cancelable: true });
+  Object.defineProperty(ev, "clipboardData", { value: { getData: () => text } });
+  el.dispatchEvent(ev);
+  return ev;
+}
+
+describe("a paste the session did not forward as a chord", () => {
+  afterEach(() => {
+    document.body.innerHTML = "";
+  });
+
+  it("is typed on the remote, with line breaks as Return", () => {
+    // Wispr Flow and its relatives deliver a transcript by writing the
+    // clipboard and posting Cmd+V; with pass-through off that chord is the
+    // OS's, and the paste it produces lands on the capture element.
+    const { sent } = setup();
+    const ev = pasteInto("hi\r\nx\n");
+    expect(ev.defaultPrevented).toBe(true);
+    expect(keyEvents(sent)).toEqual([
+      [0x68, true],
+      [0x68, false],
+      [0x69, true],
+      [0x69, false],
+      [RETURN, true],
+      [RETURN, false],
+      [0x78, true],
+      [0x78, false],
+      [RETURN, true],
+      [RETURN, false],
+    ]);
+  });
+
+  it("types nothing for an empty clipboard or a view-only session", () => {
+    const { input, sent } = setup();
+    pasteInto("");
+    expect(sent).toHaveLength(0);
+    input.setViewOnly(true);
+    pasteInto("abc");
+    expect(sent).toHaveLength(0);
+  });
+
+  it("is cancelled and sends nothing with the preference off", () => {
+    const { input, sent } = setup();
+    input.setTypeLocalPaste(false);
+    const ev = pasteInto("abc");
+    expect(ev.defaultPrevented).toBe(true);
+    expect(sent).toHaveLength(0);
+    input.setTypeLocalPaste(true);
+    pasteInto("a");
+    expect(keyEvents(sent)).toEqual([
+      [0x61, true],
+      [0x61, false],
+    ]);
+  });
+});

@@ -1,0 +1,73 @@
+# cargo-audit configuration.
+#
+# Every entry below is an advisory we have looked at and consciously accepted,
+# with the reason recorded. Nothing is ignored to make CI quiet. If an entry
+# gains an upstream fix, remove it here and take the upgrade.
+#
+# Check the true state (this file is honoured by default, and `-n` only skips
+# the database fetch, it does not disable these ignores):
+#
+#     mv .cargo/audit.toml /tmp/ && cargo audit ; mv /tmp/audit.toml .cargo/
+
+[advisories]
+ignore = [
+    # --- Accepted vulnerabilities --------------------------------------------
+
+    # Marvin timing side-channel in `rsa`. There is still no fixed release:
+    # the advisory lists `patched = []`, and 0.10.0-rc carries it too, so
+    # taking the newest published version does not clear this.
+    #
+    # We are on rsa 0.10.0-rc.18, a RELEASE CANDIDATE, chosen deliberately: it
+    # is the only version whose rand_core generation matches rand 0.10, and it
+    # collapses what was previously two rsa copies in the tree (0.9 for RA2,
+    # 0.10-rc via ssh-key) down to one. Weigh that against running a release
+    # candidate in a security path when deciding whether to pin back to 0.9.
+    #
+    # Exposure is unchanged: RA2 performs a single private-key decryption per
+    # connection with no attacker-controlled retry, so the repeated-measurement
+    # oracle a Marvin attack needs cannot practically be built. The ssh-key
+    # path signs during publickey auth, which is more exposed in principle but
+    # still needs a hostile server and very many attempts.
+    # See the module comment in crates/vnc-core/src/security/ra2.rs.
+    "RUSTSEC-2023-0071",
+
+    # --- Unmaintained transitive dependencies --------------------------------
+    # None of these are selected by this project.
+
+    # Tauri's Linux webview stack (GTK3). These disappear when Tauri moves to
+    # GTK4 or a different webview.
+    "RUSTSEC-2024-0411", # gdkwayland-sys
+    "RUSTSEC-2024-0412", # gdk
+    "RUSTSEC-2024-0413", # atk
+    "RUSTSEC-2024-0414", # gdkx11-sys
+    "RUSTSEC-2024-0415", # gtk
+    "RUSTSEC-2024-0416", # atk-sys
+    "RUSTSEC-2024-0417", # gdkx11
+    "RUSTSEC-2024-0418", # gdk-sys
+    "RUSTSEC-2024-0419", # gtk3-macros
+    "RUSTSEC-2024-0420", # gtk-sys
+    "RUSTSEC-2024-0429", # glib: unsound Iterator impls, not reachable from our code
+
+    # Build-time proc-macro helpers.
+    "RUSTSEC-2024-0436", # paste
+    "RUSTSEC-2024-0370", # proc-macro-error
+
+    # Unicode tables reached through the russh 0.62 dependency chain.
+    "RUSTSEC-2025-0075", # unic-char-range
+    "RUSTSEC-2025-0080", # unic-common
+    "RUSTSEC-2025-0081", # unic-char-property
+    "RUSTSEC-2025-0098", # unic-ucd-version
+    "RUSTSEC-2025-0100", # unic-ucd-ident
+]
+
+# Resolved and deliberately NOT ignored, so a regression fails the build:
+#
+#   RUSTSEC-2026-0153  russh-cryptovec  unchecked CryptoVec allocation
+#   RUSTSEC-2026-0154  russh            unbounded 32-bit allocation
+#
+# Both were fixed by upgrading russh 0.49 -> 0.62 (patched in >= 0.60.3).
+
+# Note: rand 0.10 and rsa 0.10-rc must move together. rand 0.9+ implements the
+# rand_core 0.9/0.10 traits while rsa 0.9 requires rand_core 0.6, and the RA2
+# handshake passes an RNG straight into key generation and encryption. Pinning
+# either one back means pinning both.

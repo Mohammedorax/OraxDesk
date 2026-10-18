@@ -1,0 +1,294 @@
+openapi: 3.1.0
+info:
+  title: Orax Remote Registry API
+  version: 1.0.0
+  description: >-
+    Device registry and short-lived signal codes for Orax Remote. The API never
+    carries screen, input or clipboard data; the only session material it holds
+    is an opaque `boundary1:` invitation, stored sealed with AES-256-GCM.
+servers:
+  - url: https://orax-registry.example.workers.dev
+    description: Deployed registry (replace with your own Worker URL)
+tags:
+  - name: devices
+  - name: signals
+  - name: ops
+paths:
+  /healthz:
+    get:
+      tags: [ops]
+      summary: Readiness plus configuration status
+      responses:
+        "200":
+          description: Database reachable and INVITATION_KEY valid
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status, api, db, invitation_key]
+                properties:
+                  status: { type: string, enum: [ok] }
+                  api: { type: string, const: v1 }
+                  db: { type: string, enum: [ok] }
+                  invitation_key: { type: string, enum: [ok] }
+        "503":
+          description: Database unreachable or key missing/invalid
+  /v1/devices:
+    post:
+      tags: [devices]
+      summary: Register a device, or refresh an existing registration
+      description: >-
+        Signed by the key being registered. The device id is derived from that
+        key (`EndpointId`, 64 lower-case hex characters); the client cannot
+        choose it.
+      parameters:
+        - $ref: "#/components/parameters/Device"
+        - $ref: "#/components/parameters/Timestamp"
+        - $ref: "#/components/parameters/Nonce"
+        - $ref: "#/components/parameters/Signature"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [public_key]
+              properties:
+                public_key: { type: string, description: base64url of 32 bytes }
+                label: { type: string, maxLength: 64 }
+                client_version: { type: string, maxLength: 32 }
+                protocol_version: { type: integer, minimum: 1, maximum: 255 }
+      responses:
+        "201":
+          description: Newly registered
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Device" }
+        "200":
+          description: Already registered; metadata refreshed
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Device" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "413": { $ref: "#/components/responses/TooLarge" }
+        "415": { $ref: "#/components/responses/UnsupportedMedia" }
+  /v1/devices/{id}:
+    get:
+      tags: [devices]
+      summary: Public device record
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, pattern: "^[0-9a-f]{64}$" }
+      responses:
+        "200":
+          description: Public fields only; no address, label or secret
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Device" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /v1/devices/{id}/revoke:
+    post:
+      tags: [devices]
+      summary: Revoke this device (signed by that device only)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, pattern: "^[0-9a-f]{64}$" }
+        - $ref: "#/components/parameters/Device"
+        - $ref: "#/components/parameters/Timestamp"
+        - $ref: "#/components/parameters/Nonce"
+        - $ref: "#/components/parameters/Signature"
+      responses:
+        "204": { description: Revoked; pending codes deleted }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /v1/signals:
+    post:
+      tags: [signals]
+      summary: Publish an invitation under a 12 digit code
+      description: >-
+        The auth nonce is the idempotency key: retrying the same request returns
+        the same code instead of minting a second one. At most 20 codes an hour
+        per device.
+      parameters:
+        - $ref: "#/components/parameters/Device"
+        - $ref: "#/components/parameters/Timestamp"
+        - $ref: "#/components/parameters/Nonce"
+        - $ref: "#/components/parameters/Signature"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [invitation]
+              properties:
+                invitation: { type: string, description: "`boundary1:` payload" }
+                ttl_seconds: { type: integer, minimum: 30, maximum: 600, default: 600 }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SignalCode" }
+        "200":
+          description: Retry of an existing create; same code, no revoke token
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SignalCode" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "413": { $ref: "#/components/responses/TooLarge" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+  /v1/signals/resolve:
+    post:
+      tags: [signals]
+      summary: Consume a code (single use)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [code]
+              properties:
+                code: { type: string, description: 12 digits; spaces ignored }
+      responses:
+        "200":
+          description: The invitation the host published
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [invitation]
+                properties:
+                  invitation: { type: string }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+  /v1/signals/revoke:
+    post:
+      tags: [signals]
+      summary: Revoke a code before it is used (idempotent)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [revoke_token]
+              properties:
+                revoke_token: { type: string, pattern: "^[0-9a-f]{64}$" }
+      responses:
+        "204": { description: Revoked or already gone }
+        "400": { $ref: "#/components/responses/BadRequest" }
+components:
+  securitySchemes: {}
+  parameters:
+    Device:
+      name: X-Orax-Device
+      in: header
+      required: true
+      schema: { type: string, pattern: "^[0-9a-f]{64}$" }
+    Timestamp:
+      name: X-Orax-Timestamp
+      in: header
+      required: true
+      description: Unix seconds; must be within 120 seconds of the server
+      schema: { type: string }
+    Nonce:
+      name: X-Orax-Nonce
+      in: header
+      required: true
+      description: 16 random bytes, base64url
+      schema: { type: string, minLength: 22, maxLength: 22 }
+    Signature:
+      name: X-Orax-Signature
+      in: header
+      required: true
+      description: >-
+        ed25519 over `orax-device-auth-v1\nMETHOD\nPATH\nsha256hex(body)\ntimestamp\nnonce`
+      schema: { type: string }
+  schemas:
+    Device:
+      type: object
+      required: [id, fingerprint, protocol_version, created_at, revoked_at]
+      properties:
+        id: { type: string, pattern: "^[0-9a-f]{64}$" }
+        fingerprint: { type: string, pattern: "^[0-9a-f]{64}$" }
+        protocol_version: { type: integer }
+        client_version: { type: [string, "null"] }
+        created_at: { type: integer }
+        revoked_at: { type: [integer, "null"] }
+    SignalCode:
+      type: object
+      required: [code, expires_at]
+      properties:
+        code: { type: string, pattern: "^[0-9]{12}$" }
+        expires_at: { type: integer }
+        revoke_token:
+          type: [string, "null"]
+          description: Only on the first create response
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code: { type: string }
+            message: { type: string }
+  responses:
+    BadRequest:
+      description: Invalid input
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Unauthorized:
+      description: Missing/invalid signature, stale timestamp, replayed nonce, or unknown device
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Forbidden:
+      description: Device revoked, or acting on another device
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    NotFound:
+      description: Unknown device, or a code that is invalid, expired or already used
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Conflict:
+      description: Device header does not match the public key
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    TooLarge:
+      description: Body over 16 KiB
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    UnsupportedMedia:
+      description: Content-Type is not application/json
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    RateLimited:
+      description: Too many requests; see Retry-After
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }

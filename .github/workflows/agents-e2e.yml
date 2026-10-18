@@ -1,0 +1,174 @@
+name: Agents end to end
+
+# Installs the app the way a person does, with OpenCode and Pi installed
+# through nvm, and checks that an agent can drive a machine with nothing set
+# up by hand: the app wires the agents at launch, and dvv starts the app when
+# an agent needs it. The machine is the repository's mock VNC server.
+#
+# Windows is covered by hand on a real PC (see docs/AGENTS.md); this covers
+# macOS and Linux, where the paths, the socket and the GUI launch environment
+# all differ.
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "crates/dvv/**"
+      - "crates/agent-*/**"
+      - "crates/local-pipe/**"
+      - "src-tauri/src/agent/**"
+      - "src-tauri/src/commands/agent.rs"
+      - "skills/**"
+      - "scripts/agent-e2e.sh"
+      - "scripts/agent_e2e_mcp.py"
+      - ".github/workflows/agents-e2e.yml"
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  e2e:
+    name: ${{ matrix.label }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            label: Linux (deb)
+            bundle: deb
+          - os: ubuntu-22.04
+            label: Linux (AppImage)
+            bundle: appimage
+          - os: macos-latest
+            label: macOS (app)
+            bundle: app
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux system dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf \
+            libssl-dev libdbus-1-dev pkg-config xvfb sqlite3 libfuse2
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: agents-e2e
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+
+      - name: Install frontend dependencies
+        run: npm ci
+        working-directory: ui
+
+      - name: Build dvv and the mock VNC server
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo build -p dvv
+          cargo build -p vnc-core --example mock_vnc_server
+          triple=$(rustc -vV | sed -n 's/^host: //p')
+          mkdir -p src-tauri/binaries
+          cp target/debug/dvv "src-tauri/binaries/dvv-$triple"
+
+      - name: Build the app bundle
+        shell: bash
+        run: npx --yes @tauri-apps/cli@^2 build --debug --bundles ${{ matrix.bundle }} --config src-tauri/tauri.release.conf.json
+
+      - name: Install the app
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${{ matrix.bundle }}" = "appimage" ]; then
+            # Where a person keeps a downloaded AppImage.
+            mkdir -p "$HOME/Applications"
+            cp target/debug/bundle/appimage/*.AppImage "$HOME/Applications/DeskVNCViewer.AppImage"
+            chmod +x "$HOME/Applications/DeskVNCViewer.AppImage"
+            echo "APPIMAGE_FILE=$HOME/Applications/DeskVNCViewer.AppImage" >> "$GITHUB_ENV"
+            echo "CHECK_DVV=$PWD/target/debug/dvv" >> "$GITHUB_ENV"
+          elif [ "$RUNNER_OS" = "Linux" ]; then
+            sudo apt-get install -y ./target/debug/bundle/deb/*.deb
+            ls -l /usr/bin/dvv /usr/bin/deskvncviewer
+          else
+            cp -R target/debug/bundle/macos/DeskVNCViewer.app /Applications/
+            ls -l /Applications/DeskVNCViewer.app/Contents/MacOS/
+          fi
+
+      - name: Install Node, OpenCode and Pi through nvm, as many people have them
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | PROFILE="$HOME/.bashrc" bash
+          export NVM_DIR="$HOME/.nvm"
+          . "$NVM_DIR/nvm.sh"
+          nvm install 22
+          npm install -g opencode-ai @mariozechner/pi-coding-agent
+          ls -l "$(dirname "$(command -v pi)")"
+
+      - name: Start the mock machine
+        shell: bash
+        run: |
+          set -euo pipefail
+          nohup target/debug/examples/mock_vnc_server 0 > mock.log 2>&1 &
+          for _ in $(seq 1 30); do grep -q listening mock.log && break; sleep 1; done
+          cat mock.log
+          port=$(sed -n 's/.*listening on [^:]*:\([0-9]*\).*/\1/p' mock.log | head -1)
+          echo "MOCK_PORT=$port" >> "$GITHUB_ENV"
+
+      - name: Run the scenario
+        shell: bash
+        run: |
+          set -euo pipefail
+          # The runner's own PATH has setup-node's node on it, which a person
+          # does not. Take it away so only what nvm installed is found.
+          export PATH=$(echo "$PATH" | tr ':' '\n' | grep -v hostedtoolcache | paste -sd: -)
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            Xvfb :99 -screen 0 1280x800x24 >/dev/null 2>&1 &
+            export DISPLAY=:99
+          fi
+          OUT="$PWD/agent-e2e" bash scripts/agent-e2e.sh
+
+      # A real model, not a script, driving the machine through OpenCode with
+      # the app closed. OpenCode's free models need no account. Kept apart
+      # and allowed to fail, because a free model being busy or renamed says
+      # nothing about DeskVNC; the answer is checked for the four colours the
+      # mock machine shows when it does run.
+      - name: A free model drives it through OpenCode
+        continue-on-error: true
+        timeout-minutes: 15
+        shell: bash
+        run: |
+          set -uo pipefail
+          export NVM_DIR="$HOME/.nvm"; . "$NVM_DIR/nvm.sh"; nvm use 22 >/dev/null
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            pgrep Xvfb >/dev/null || (Xvfb :99 -screen 0 1280x800x24 >/dev/null 2>&1 &)
+            export DISPLAY=:99
+          fi
+          cd "$(mktemp -d)"
+          opencode run -m opencode/muse-spark-1.3-contributor-free             "On my computer called mock, use the deskvnc tools: open it, look at the screen, and tell me the colour of each quarter of the screen. Then close it."             2>&1 | tee "$GITHUB_WORKSPACE/agent-e2e/model-answer.txt"
+          answer=$(tr 'A-Z' 'a-z' < "$GITHUB_WORKSPACE/agent-e2e/model-answer.txt")
+          for colour in red green blue yellow; do
+            echo "$answer" | grep -q "$colour" || { echo "the answer does not name $colour"; exit 1; }
+          done
+          echo "PASS: a free model on OpenCode saw all four colours"
+
+      - name: Keep what the run saw
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent-e2e-${{ matrix.os }}-${{ matrix.bundle }}
+          path: |
+            agent-e2e/
+            mock.log
+            ~/.config/opencode/
+          if-no-files-found: ignore

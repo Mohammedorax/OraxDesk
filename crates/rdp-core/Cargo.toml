@@ -1,0 +1,66 @@
+[package]
+name = "rdp-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+# UI-agnostic RDP protocol core. MUST NOT depend on tauri.
+# The only crate in the RDP set that owns a socket or a tokio task.
+
+[dependencies]
+# The contract. Everything this crate exposes is spelled in these types.
+remote-core = { path = "../remote-core" }
+vnc-transport = { path = "../vnc-transport" }
+
+# The RDP set (PRDRDP/12 §2.1).
+rdp-pdu = { path = "../rdp-pdu" }
+# `progressive` is asked for outright rather than left to rdp-codecs' own
+# defaults, because `channels::egfx::decode` routes
+# `RDPGFX_CODECID_CAPROGRESSIVE` unconditionally: a build of this crate
+# without the decoder would not compile, and the feature being on by default
+# elsewhere is not the same promise as this crate needing it.
+rdp-codecs = { path = "../rdp-codecs", features = ["progressive"] }
+rdp-auth = { path = "../rdp-auth" }
+
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+futures = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+serde = { workspace = true }
+bytes = { workspace = true }
+parking_lot = { workspace = true }
+zeroize = { workspace = true }
+
+# The auto reconnect cookie's security verifier is HMAC-MD5 over the server's
+# ArcRandomBits (MS-RDPBCGR 5.5 step 4). Both are library calls: AGENT_BRIEF
+# V3-A and PRDRDP/00 R54 forbid writing any cryptographic operation here, down
+# to one this small. Both crates are already in Cargo.lock for the RFB
+# security code, so the package count does not change.
+hmac = { workspace = true }
+md-5 = { workspace = true }
+
+[features]
+default = []
+# Kerberos, forwarded to rdp-auth. Off in phase 1 and 2: NTLMv2 covers local
+# and domain accounts on every Windows host that will do NLA at all (D6).
+kerberos = ["rdp-auth/kerberos"]
+# Progressive RemoteFX. The name is kept so a profile that still lists it
+# resolves, but the codec is no longer optional here: nothing in MS-RDPEGFX
+# declines it at the capability sets we advertise, so a session without a
+# decoder ends on a frame a server was entitled to send
+# (docs/RDP_SPEC_NOTES.md §1.6). The dependency above asks for it outright.
+progressive = ["rdp-codecs/progressive"]
+# MS-RDPEA audio playback. Phase 2 (D10).
+audio = []
+
+[dev-dependencies]
+tokio = { version = "1", features = ["full", "test-util"] }
+hex = { workspace = true }
+# The interop probe example prints the diagnostic frame dumps, which is the
+# whole reason to run it against a real server.
+tracing-subscriber = { workspace = true }
+# The interop probe writes the frame it decoded to a PNG, because the only way
+# to know a decoder is right is to look at what it produced.
+image = { workspace = true }

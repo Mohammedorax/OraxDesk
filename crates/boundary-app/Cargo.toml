@@ -1,0 +1,27 @@
+[package]
+name = "boundary"
+version.workspace = true
+edition = "2024"
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+boundary-session.workspace = true
+boundary-platform.workspace = true
+tokio = { workspace = true, features = ["process"] }
+serde.workspace = true
+serde_json.workspace = true
+eframe = { version = "0.36.2", default-features = false, features = ["accesskit", "default_fonts", "glow", "wgpu", "x11", "wayland"] }
+
+boundary-provision = { path = "../boundary-provision" }
+
+zeroize = "1"
+tempfile = "3"
+
+boundary-codes = { path = "../boundary-codes" }
+
+[target.'cfg(any(target_os = "macos", windows))'.dependencies]
+tray-icon = "0.24"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+winit = "0.30"
