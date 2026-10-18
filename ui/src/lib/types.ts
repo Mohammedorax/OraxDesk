@@ -31,7 +31,9 @@ export const PROTOCOLS: readonly ProtocolKind[] = ["vnc", "rdp", "ssh"];
  * types into the quick connect bar, but it is saved and reopened like any
  * other computer.
  */
-export const HOST_PROTOCOLS: readonly ProtocolKind[] = [...PROTOCOLS, "boundary"];
+// Boundary (remote support) first: it is the one path a normal person needs.
+// VNC, RDP and SSH remain available for the technical cases.
+export const HOST_PROTOCOLS: readonly ProtocolKind[] = ["boundary", ...PROTOCOLS];
 
 /**
  * Is this a protocol this build knows? A profile written by a newer version
