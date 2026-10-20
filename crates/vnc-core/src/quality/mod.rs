@@ -258,6 +258,24 @@ const DUTY_BUDGET: f32 = 0.70;
 /// session that genuinely recovered releases rather than sitting capped.
 const DUTY_RELEASE: f32 = 0.50;
 
+/// The floor the duty AVERAGE must be over before a single saturated tick
+/// counts on its own, and the level that saturated tick has to reach.
+///
+/// The average is an exponential moving average with a three second time
+/// constant, and it is sampled once a second, so it needs about six seconds
+/// of steady saturation to cross [`DUTY_BUDGET`] from an idle baseline. A
+/// person watching a picture that has stopped moving waits all of them, and
+/// the whole brake exists for that case.
+///
+/// The floor is what keeps this from firing on a healthy session: the first
+/// tick of every session carries the initial full-framebuffer transfer and
+/// its duty is close to 1.0 on a perfectly good connection. The average is
+/// still near zero then, so a single saturated tick on top of an average
+/// that already says the session is loaded is a real stall, and the connect
+/// spike is not.
+const DUTY_FAST_FLOOR: f32 = 0.45;
+const DUTY_FAST_TRIGGER: f32 = 0.95;
+
 /// How long the duty cap holds after the reading that provoked it.
 ///
 /// Exactly the limit cycle [`LATENCY_PENALTY`] describes, in the rate domain:
@@ -1045,12 +1063,22 @@ impl AutoTuner {
         // exists for. Nothing here moves the ladder on its own, it only
         // decides how good a tier the ladder is allowed to pick.
         let link_fast_enough = windowed > DUTY_MIN_CAPACITY_BPS;
+        // A session that is ALREADY loaded, and whose latest tick was
+        // saturated, is stalled now rather than about to be. The average
+        // needs several seconds to cross the budget on its own, and those
+        // seconds are the picture not moving.
+        //
+        // The floor is what makes this safe: the average has to already say
+        // the session is loaded, which it does not on a healthy connection
+        // whose first tick carries the full framebuffer.
+        let stalled_now = self.duty > DUTY_FAST_FLOOR && duty_cycle > DUTY_FAST_TRIGGER;
         let flooded = link_fast_enough
-            && if sh.duty_capped {
-                self.duty > DUTY_RELEASE
-            } else {
-                self.duty > DUTY_BUDGET
-            };
+            && (stalled_now
+                || if sh.duty_capped {
+                    self.duty > DUTY_RELEASE
+                } else {
+                    self.duty > DUTY_BUDGET
+                });
         // Arm the penalty on EVERY rising edge, which is where this diverges
         // from the latency cap. That one only arms when the running tier was
         // better than the cap allows, because its remedy is the cap itself and

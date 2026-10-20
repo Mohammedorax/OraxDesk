@@ -109,6 +109,12 @@ async fn ask(
         %fingerprint,
         "asking the user to approve an unpinned rdp server key"
     );
+    // The budget is paused while the person decides, exactly as it is for the
+    // credentials prompt: they are looking at a fingerprint and a subject
+    // name, and that is not the connect stalling.
+    prompt
+        .waiting
+        .store(true, std::sync::atomic::Ordering::Relaxed);
     remote_core::emit(
         events,
         SessionEvent::CertificatePrompt {
@@ -122,7 +128,10 @@ async fn ask(
     .await?;
 
     let Prompt {
-        commands, cancel, ..
+        commands,
+        cancel,
+        waiting,
+        ..
     } = prompt;
     loop {
         let cmd = tokio::select! {
@@ -138,11 +147,15 @@ async fn ask(
                 fingerprint: answered,
                 scheme,
                 permanent,
-            }) => return decide(fingerprint, &answered, scheme, permanent),
+            }) => {
+                waiting.store(false, std::sync::atomic::Ordering::Relaxed);
+                return decide(fingerprint, &answered, scheme, permanent);
+            }
             // The dialog's cancel button, and the disconnect that a user who
             // closes the window instead produces. Both mean the same thing:
             // the key was not approved, so nothing more may be sent.
             Some(ClientCommand::CancelCredentials) | Some(ClientCommand::Disconnect) => {
+                waiting.store(false, std::sync::atomic::Ordering::Relaxed);
                 return Err(RdpError::CertificateUntrusted(format!(
                     "{fingerprint} was not approved"
                 )));

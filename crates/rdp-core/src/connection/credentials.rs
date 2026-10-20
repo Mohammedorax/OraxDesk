@@ -81,9 +81,8 @@ pub struct Ask {
     /// Prompts raised so far, which is what
     /// [`CredentialRequest::attempt`] counts.
     raised: u32,
-    /// Why the last answer was refused, when it was, and the flag that makes
-    /// the next [`ensure`] ask even though the credentials on hand look
-    /// usable.
+    /// Why the last answer was refused, when it was, and the flag that makes the
+    /// next [`ensure`] ask even though the credentials on hand look usable.
     refused: Option<String>,
 }
 
@@ -239,10 +238,17 @@ async fn raise(
         attempt = request.attempt,
         "asking the user for rdp credentials"
     );
+    // The connect budget is paused while the person is at the prompt.
+    prompt
+        .waiting
+        .store(true, std::sync::atomic::Ordering::Relaxed);
     remote_core::emit(events, SessionEvent::CredentialsRequired(request)).await?;
 
     let Prompt {
-        commands, cancel, ..
+        commands,
+        cancel,
+        waiting,
+        ..
     } = prompt;
     loop {
         let cmd = tokio::select! {
@@ -263,6 +269,7 @@ async fn raise(
             Some(ClientCommand::ProvideCredentials {
                 username, password, ..
             }) => {
+                waiting.store(false, std::sync::atomic::Ordering::Relaxed);
                 return Ok(Credentials {
                     username: username.filter(|u| !u.trim().is_empty()),
                     password: Some(password),

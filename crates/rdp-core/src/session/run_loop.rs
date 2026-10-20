@@ -251,7 +251,7 @@ impl<R: AsyncRead + Unpin> RunLoop<R> {
     ) -> Result<RunOutcome> {
         for framed in pending {
             let signal = self.dispatch(&framed)?;
-            self.act(signal, events).await?;
+            self.act(signal, events, commands).await?;
         }
 
         // A desktop taller than the connection request could carry was asked
@@ -305,7 +305,7 @@ impl<R: AsyncRead + Unpin> RunLoop<R> {
                         Ok(signal) => signal,
                         Err(e) => return Err(self.explain(e)),
                     };
-                    if let Some(outcome) = self.act(signal, events).await? {
+                    if let Some(outcome) = self.act(signal, events, commands).await? {
                         return Ok(outcome);
                     }
                 }
@@ -331,6 +331,7 @@ impl<R: AsyncRead + Unpin> RunLoop<R> {
         &mut self,
         signal: SessionSignal,
         events: &mpsc::Sender<SessionEvent>,
+        commands: &mut mpsc::Receiver<ClientCommand>,
     ) -> Result<Option<RunOutcome>> {
         match signal {
             SessionSignal::Handled { reply } => {
@@ -350,7 +351,7 @@ impl<R: AsyncRead + Unpin> RunLoop<R> {
                 }
                 for event in produced {
                     self.count_frame(&event);
-                    remote_core::emit(events, event).await?;
+                    self.emit_serving_input(events, event, commands).await?;
                 }
             }
             SessionSignal::Channel {
@@ -367,7 +368,7 @@ impl<R: AsyncRead + Unpin> RunLoop<R> {
                 }
                 for event in produced {
                     self.count_frame(&event);
-                    remote_core::emit(events, event).await?;
+                    self.emit_serving_input(events, event, commands).await?;
                 }
             }
             SessionSignal::Ignored(why) => {
@@ -845,6 +846,65 @@ impl<R: AsyncRead + Unpin> RunLoop<R> {
     /// `events` is here for one arm: a refused agent intent has to be answered
     /// and the answer is a `SessionEvent` (PRDAgentPlug/00 R28). Nothing else
     /// in this match emits, which is why it was not a parameter before.
+    /// Send one event without letting a slow event consumer stall input.
+    ///
+    /// The events channel holds 256 and `emit` awaits room in it, so with the
+    /// renderer behind (which is what a video playing on the remote screen
+    /// does to it) that await parks the ENTIRE session: no pointer event, no
+    /// keystroke, nothing reaches the socket until the consumer catches up.
+    /// On this path the person clicks and nothing happens, which is worse
+    /// than a slow picture.
+    ///
+    /// The RFB loop has had this fixed for a long time (see
+    /// `crates/vnc-core/src/session/run_loop.rs`, `emit_serving_input`) and
+    /// the fix was never brought across.
+    ///
+    /// `reserve` rather than `send` inside the `select!`, and this is the
+    /// whole reason the shape is worth the lines: a `send` future dropped
+    /// because the other branch won has consumed the event, so the frame
+    /// would simply vanish. `reserve` only takes a slot; the event is still
+    /// ours until a permit exists, and then handing it over cannot fail.
+    async fn emit_serving_input(
+        &mut self,
+        events: &mpsc::Sender<SessionEvent>,
+        event: SessionEvent,
+        commands: &mut mpsc::Receiver<ClientCommand>,
+    ) -> Result<()> {
+        // A closed command channel returns None from `recv` immediately and
+        // forever, which would turn this into a spin loop, so that branch is
+        // disabled once it happens. The session is being torn down anyway;
+        // the event still has to reach the shell.
+        let mut commands_open = true;
+        loop {
+            tokio::select! {
+                biased;
+                permit = events.reserve() => {
+                    // The sink is gone: the shell went away, which unwinds
+                    // the session exactly as a cancellation does.
+                    let permit = permit.map_err(|_| RdpError::Cancelled)?;
+                    permit.send(event);
+                    return Ok(());
+                }
+                cmd = commands.recv(), if commands_open => {
+                    let Some(cmd) = cmd else {
+                        commands_open = false;
+                        continue;
+                    };
+                    // Every command is served here, and the input ones are
+                    // the point of it: while the event channel is full, a
+                    // keystroke still reaches the socket.
+                    if let Some(outcome) = self.handle_command(cmd, events).await? {
+                        // The session ended. The event is dropped on purpose:
+                        // the socket is about to close and a frame nobody will
+                        // render is worth nothing.
+                        let _ = outcome;
+                        return Ok(());
+                    }
+                }
+            }
+        }
+    }
+
     async fn handle_command(
         &mut self,
         cmd: ClientCommand,

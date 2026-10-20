@@ -85,6 +85,13 @@ pub enum ConnectStage {
     ConnectionFinalization,
     /// The sequence is complete and the pump is running.
     Connected,
+    /// The WHOLE connect ran out of time, rather than one stage of it.
+    ///
+    /// The stages have their own, longer budgets (thirty seconds for the
+    /// MCS exchange, ninety for the activation), so a connect that fails at
+    /// the last stage has already spent several times the time a person is
+    /// willing to wait. This is the budget for all of them together.
+    WholeConnect,
 }
 
 impl ConnectStage {
@@ -110,6 +117,7 @@ impl ConnectStage {
         ConnectStage::CapabilitiesExchange,
         ConnectStage::ConnectionFinalization,
         ConnectStage::Connected,
+        ConnectStage::WholeConnect,
     ];
 
     /// The stage's name, as it appears in a log line and in an error message.
@@ -134,6 +142,7 @@ impl ConnectStage {
             ConnectStage::CapabilitiesExchange => "capabilities-exchange",
             ConnectStage::ConnectionFinalization => "connection-finalization",
             ConnectStage::Connected => "connected",
+            ConnectStage::WholeConnect => "whole-connect",
         }
     }
 
@@ -159,6 +168,7 @@ impl ConnectStage {
             ConnectStage::CapabilitiesExchange => "MS-RDPBCGR 2.2.1.13",
             ConnectStage::ConnectionFinalization => "MS-RDPBCGR 2.2.1.14 to 2.2.1.22",
             ConnectStage::Connected => "MS-RDPBCGR 1.3.1.1",
+            ConnectStage::WholeConnect => "MS-RDPBCGR 1.3.1.1",
         }
     }
 
@@ -193,6 +203,9 @@ impl ConnectStage {
             | ConnectStage::CapabilitiesExchange
             | ConnectStage::ConnectionFinalization => SessionState::Negotiating,
             ConnectStage::Connected => SessionState::Connected,
+            // The budget for the whole connect is not a stage of it, so it
+            // shows as the connection still being made.
+            ConnectStage::WholeConnect => SessionState::Connecting,
         }
     }
 }

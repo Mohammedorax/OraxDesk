@@ -394,6 +394,19 @@ async fn establish_interactive(
         let result = {
             let attempt_fut = establish(options, settings, events, &source);
             tokio::pin!(attempt_fut);
+            // The budget for the WHOLE connect, not for one step of it.
+            //
+            // Every step but the security handshake had a timeout of its own,
+            // and the handshake had none at all: a server that accepted the
+            // TCP connection and then went quiet left the session waiting
+            // for ever. No error, no timeout, no reconnect attempt, and
+            // nothing on screen but the word "Authenticating".
+            //
+            // The budget is PAUSED while the person is typing a password.
+            // Their minute is not the connect stalling, and a connect that
+            // gave up on a slow typist would be the worst possible answer
+            // to a prompt that asked for one.
+            let mut deadline = tokio::time::Instant::now() + options.connect_deadline;
             loop {
                 tokio::select! {
                     biased;
@@ -402,7 +415,13 @@ async fn establish_interactive(
                     // The handshake is parked on the oneshot while we do this,
                     // so not polling `attempt_fut` here costs nothing.
                     Some(ask) = ask_rx.recv() => {
+                        let asked = tokio::time::Instant::now();
                         serve_credential_ask(ask, events, commands, cancel).await?;
+                        deadline += tokio::time::Instant::now() - asked;
+                    }
+                    _ = tokio::time::sleep_until(deadline) => {
+                        tracing::warn!("the connect ran out of time");
+                        break Err(VncError::Timeout);
                     }
                 }
             }

@@ -20,6 +20,9 @@
 //! ask, which is the bug this module was written to fix
 //! (`crates/rdp-core/src/connection/mod.rs:262`).
 
+use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
+
 use remote_core::ClientCommand;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
@@ -49,6 +52,16 @@ pub struct Prompt<'a> {
     /// TCP connection. `crate::session::connect::establish` owns it and reads
     /// it after an attempt fails.
     pub ask: &'a mut Ask,
+    /// Whether a prompt is on screen and unanswered.
+    ///
+    /// The connect budget is paused while this is true: the person typing a
+    /// password is not the connect stalling, and a connect that gave up on a
+    /// slow typist would be the worst possible answer to a prompt that asked
+    /// for one.
+    ///
+    /// Shared rather than kept in [`Ask`], because the attempt holds `ask`
+    /// mutably for as long as it runs and the budget is read from outside it.
+    pub waiting: Arc<AtomicBool>,
 }
 
 impl Prompt<'_> {
@@ -61,6 +74,7 @@ impl Prompt<'_> {
             commands: self.commands,
             cancel: self.cancel,
             ask: self.ask,
+            waiting: Arc::clone(&self.waiting),
         }
     }
 }

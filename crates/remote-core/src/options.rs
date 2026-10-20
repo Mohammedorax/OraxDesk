@@ -56,7 +56,22 @@ pub struct ConnectOptions {
     pub view_only: bool,
     /// Pinned SHA-256 SPKI fingerprints for TOFU (hex), one per scheme.
     pub cert_pins: CertPins,
+    /// The budget for ONE step of the connect: the DNS lookup, the TCP
+    /// connect, one read of the banner, and so on.
     pub connect_timeout: std::time::Duration,
+    /// The budget for the WHOLE connect, every step together.
+    ///
+    /// [`Self::connect_timeout`] is per step, and a connect is several
+    /// steps, so without this a connect that fails at the last step has
+    /// already spent several times the budget and the person waits for all
+    /// of it. Worse, the security handshake had no budget at all, so a
+    /// server that accepted the TCP connection and then went quiet left
+    /// the session waiting for ever: no error, no timeout, no reconnect
+    /// attempt, and nothing on screen but the word "Authenticating".
+    ///
+    /// This is the whole connect, so it is what the person is actually
+    /// waiting for, and it is what the interface counts down.
+    pub connect_deadline: std::time::Duration,
     /// Auto-reconnect policy (PRD/05 §6).
     pub reconnect: ReconnectPolicy,
     /// The protocol specific half. Its discriminant is the session's
@@ -97,6 +112,7 @@ impl ConnectOptions {
             view_only: false,
             cert_pins: CertPins::default(),
             connect_timeout: std::time::Duration::from_secs(15),
+            connect_deadline: std::time::Duration::from_secs(45),
             reconnect: ReconnectPolicy::default(),
             protocol,
         }

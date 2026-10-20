@@ -160,10 +160,17 @@ const H264_FRAME_TIMEOUT_MS = 500;
  * server repaints it. That trade only makes sense as a last resort, so the cap
  * sits well above any backlog normal operation produces: the pruning below
  * collapses video and animation on its own, and a queue that still grows past
- * sixteen updates means the machine cannot keep up at all, where seconds of
+ * this many updates means the machine cannot keep up at all, where seconds of
  * input lag is the worse failure.
+ *
+ * Sixty-four, not sixteen. The number was sixteen, and it was never applied
+ * at all: the only cap in the shipping path was the byte one, which at 4K is
+ * two full-screen frames, so the queue could be two updates deep or twenty
+ * thousand and nothing in between. Sixteen is also below the twenty-one a
+ * measured video session sits at, so applying it as written would have shed
+ * a normal video's pixels.
  */
-export const MAX_PENDING_UPDATES = 16;
+export const MAX_PENDING_UPDATES = 64;
 
 /**
  * The same cap expressed in payload bytes. Queued rects hold views into their
@@ -278,10 +285,81 @@ export interface DamageBox {
   h: number;
 }
 
+/**
+ * The region an update actually painted, as disjoint boxes.
+ *
+ * A damage box is the BOUNDING BOX of an update's rects, and the bounding box
+ * of two disjoint rects includes the gap between them. That makes it a lossy
+ * cover set, and the loss is permanent.
+ *
+ * Why it is permanent: an older rect is dropped because a newer update's box
+ * contains it, on the grounds that the newer one repainted that region. With
+ * a bounding box that is not true. The newer update painted two disjoint
+ * regions, and the older rect lies in the gap between them, so the gap still
+ * shows whatever was there before the older rect was ever applied. The server
+ * does not resend it, because to the server it was delivered. The region
+ * stays wrong for the rest of the session, on a static desktop, for good.
+ *
+ * So the cover set has to be the painted region rather than its bounding box.
+ * The union of an update's rects is computed once, here, and the boxes are
+ * disjoint, so "is this rect inside one of them" stays a cheap test.
+ */
+export interface PaintedRegion {
+  /** Disjoint boxes, each wholly painted by the update. */
+  boxes: Box[];
+  /**
+   * False when the union did not fit in the cap, so `boxes` is empty and the
+   * bounding box is the only cover available.
+   */
+  exact: boolean;
+}
+
+/**
+ * The painted region of an update.
+ *
+ * One rect is the common case and the box IS the region, so it costs
+ * nothing. Several rects are unioned, and the union is capped: a video
+ * arrives as hundreds of small shifting rects whose union is a long list, and
+ * that is the case the bounding box was invented for. It is marked
+ * approximate there, and the caller falls back to the bounding box, which is
+ * the old behaviour and which the moving picture repaints on the next frame
+ * anyway.
+ */
+export function paintedRegion(rects: readonly PruneRect[]): PaintedRegion {
+  if (rects.length === 0) return { boxes: [], exact: true };
+  if (rects.length === 1) {
+    const r = rects[0];
+    return { boxes: [{ x: r.x, y: r.y, w: r.w, h: r.h }], exact: true };
+  }
+  // An update with more rects than the cover set can hold is the video case,
+  // and the union of that many shifting rects is a list nobody could use. The
+  // bounding box is the fallback there, and the cost of finding that out has
+  // to be bounded too, which is what this early exit does: the union is not
+  // attempted at all past the cap, so the work per update stays inside the
+  // cap rather than growing with the rect count.
+  if (rects.length > MAX_COVER_RECTS) return { boxes: [], exact: false };
+  let boxes: Box[] = [];
+  for (const r of rects) {
+    const next: Box[] = [];
+    for (const b of boxes) subtractBox(b, r, next);
+    next.push({ x: r.x, y: r.y, w: r.w, h: r.h });
+    if (next.length > MAX_COVER_RECTS) return { boxes: [], exact: false };
+    boxes = next;
+  }
+  return { boxes, exact: true };
+}
+
 /** One update as `coalesceByDamage` sees it: its rects and its damage box. */
 export interface DamagedUpdate<T extends PruneRect> {
   rects: readonly T[];
   damage: DamageBox;
+  /**
+   * The region the update painted, exactly where it could be computed.
+   *
+   * Optional so that a caller without it keeps the old behaviour, and so the
+   * tests can drive the coalescer with plain rects.
+   */
+  painted?: PaintedRegion;
 }
 
 /** Is `r` wholly inside `b`? */
@@ -290,7 +368,7 @@ function within(r: PruneRect, b: DamageBox): boolean {
 }
 
 /**
- * Drop the rects a newer update's DAMAGE BOX already supersedes.
+ * Drop the rects a newer update has already superseded.
  *
  * This is the coarse partner to `pruneUpdates`, and it exists because that one
  * cannot collapse a real video. A video arrives as thousands of small dirty
@@ -300,13 +378,23 @@ function within(r: PruneRect, b: DamageBox): boolean {
  * real playing video, the renderer queue still sat ~29 updates deep because of
  * this, and a right-click menu waited behind all of them.
  *
- * A whole update carries one damage box, the union of its rects. There are as
- * many boxes as updates in the queue, tens, not thousands, so using THOSE as
- * the cover set is cheap. Walking newest to oldest, a droppable rect wholly
- * inside a newer update's damage box is stale: a newer frame has already
- * repainted that region, so drawing the old one would be overwritten at once.
- * Video frames share a damage box and collapse to the newest; a right-click
- * menu, whose damage box is elsewhere, is inside no video box and is kept.
+ * There are as many boxes as updates in the queue, tens, not thousands, so
+ * using THOSE as the cover set is cheap. Walking newest to oldest, a droppable
+ * rect wholly inside a newer update's cover is stale: a newer frame has
+ * already repainted that region, so drawing the old one would be overwritten
+ * at once. Video frames share a cover and collapse to the newest; a
+ * right-click menu, whose cover is elsewhere, is inside no video cover and is
+ * kept.
+ *
+ * THE COVER IS THE PAINTED REGION, NOT THE BOUNDING BOX. The bounding box of
+ * two disjoint rects includes the gap between them, and dropping an older rect
+ * because the gap is "covered" leaves the gap showing whatever was there
+ * before that rect was ever applied. The server does not resend it, because
+ * to the server it was delivered, so the region stays wrong for the rest of
+ * the session. Where the painted region could be computed exactly it is used;
+ * where it could not (a video, whose rects shift every frame) the bounding
+ * box is the fallback, which is the old behaviour, and a moving picture
+ * repaints the region on the next frame anyway.
  *
  * The barriers are `pruneUpdates`' barriers, for the same reasons: a CopyRect
  * reads the framebuffer and an H264 rect carries decoder state, so the walk
@@ -319,23 +407,49 @@ export function coalesceByDamage<T extends PruneRect>(
 ): { kept: T[][]; dropped: number } {
   const newest = updates.length - 1;
   const keep = updates.map((u) => u.rects.map(() => true));
-  const covers: DamageBox[] = [];
+  /**
+   * The painted regions of the newer updates, disjoint and exact.
+   *
+   * A rect inside one of them was repainted, so it is stale and can go.
+   */
+  const painted: Box[] = [];
+  /**
+   * The bounding boxes of the newer updates whose painted region could NOT be
+   * computed, which is the video case: hundreds of shifting rects whose union
+   * is a long list. The bounding box is the old, lossy cover, and it is
+   * confined to the case where a moving picture repaints the region on the
+   * next frame anyway.
+   */
+  const approximate: Box[] = [];
   let dropped = 0;
   scan: for (let u = newest; u >= 0; u--) {
     const rects = updates[u].rects;
     for (const r of rects) {
       if (r.format === RectFormat.CopyRect || r.format === RectFormat.H264) break scan;
     }
+    const region = updates[u].painted;
+    const exact = region !== undefined && region.exact && region.boxes.length > 0;
     for (let i = 0; i < rects.length; i++) {
       const r = rects[i];
       const droppable =
         (r.format === RectFormat.Rgba || r.format === RectFormat.Jpeg) && r.w > 0 && r.h > 0;
-      if (droppable && covers.some((b) => within(r, b))) {
+      if (!droppable) continue;
+      // Wholly inside a region a newer update painted: stale, and safe to go.
+      // Inside a newer update's BOUNDING BOX: stale only if the newer update
+      // really painted all of it, which the exact cover knows and the
+      // approximate one does not.
+      const covered =
+        painted.some((b) => contains(b, r)) || approximate.some((b) => within(r, b));
+      if (covered) {
         keep[u][i] = false;
         dropped++;
       }
     }
-    covers.push(updates[u].damage);
+    if (exact) {
+      for (const b of region!.boxes) addCover(painted, b);
+    } else {
+      addCover(approximate, updates[u].damage);
+    }
   }
   return {
     kept: updates.map((u, i) => u.rects.filter((_, j) => keep[i][j])),
@@ -419,6 +533,16 @@ interface PendingUpdate {
   rects: WireRect[];
   /** This update's damage box, used by `coalesceByDamage` to supersede it. */
   damage: DamageBox;
+  /**
+   * The region this update actually painted, computed once when it arrived.
+   *
+   * The damage box is a bounding box and therefore lossy, and the coalescer
+   * needs the painted region to know that a newer update really did repaint
+   * the area it is about to drop. Computing it here rather than inside the
+   * coalescer is what keeps it off the hot path: the drain walks the queue
+   * once per iteration, and this is once per update, ever.
+   */
+  painted: PaintedRegion;
   /** Renderer generation the message was parsed against (see `generation`). */
   generation: number;
   /**
@@ -689,6 +813,9 @@ export class WebGLRenderer {
     this.pending.push({
       rects: msg.rects,
       damage: { x: msg.damageX, y: msg.damageY, w: msg.damageW, h: msg.damageH },
+      // Computed once, here, and kept for the life of the update: the
+      // coalescer needs it and the drain walks the queue repeatedly.
+      painted: paintedRegion(msg.rects),
       generation: this.generation,
       bytes,
     });
@@ -731,10 +858,20 @@ export class WebGLRenderer {
         // pruner for the rest. Over the byte cap, the per-tile pass also
         // collapses to the newest update as a last resort.
         const coalesced = coalesceByDamage(
-          this.pending.map((u) => ({ rects: u.rects, damage: u.damage })),
+          this.pending.map((u) => ({ rects: u.rects, damage: u.damage, painted: u.painted })),
         );
         for (let i = 0; i < this.pending.length; i++) this.pending[i].rects = coalesced.kept[i];
-        const overCap = this.pendingBytes > MAX_PENDING_BYTES;
+        // Two caps, not one.
+        //
+        // The byte cap alone is a poor bound: a full-screen RGBA frame is
+        // 8 MiB at 1080p and 33 MiB at 4K, so 64 MiB is eight frames at
+        // 1080p and TWO at 4K, and the documentation above it says
+        // otherwise. And a backlog of two hundred small updates is two
+        // frames' worth of bytes but two hundred updates' worth of queue
+        // walking, which is the cost that lands on the main thread and
+        // therefore on the latency of the next keystroke.
+        const overCap =
+          this.pendingBytes > MAX_PENDING_BYTES || this.pending.length > MAX_PENDING_UPDATES;
         const pruned = pruneUpdates(
           this.pending.map((u) => u.rects),
           overCap,

@@ -8,6 +8,7 @@
 //! (PRDRDP/00 R12).
 
 use std::sync::atomic::AtomicU64;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use remote_core::{ClientCommand, ConnectOptions, SessionEvent, SessionState};
@@ -15,7 +16,7 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 use crate::connection;
-use crate::error::{RdpError, Result};
+use crate::error::{ConnectStage, RdpError, Result};
 use crate::options::ResolvedOptions;
 use crate::session::run_loop::{Attempt, RunLoop};
 use crate::session::settings::RdpSessionSettings;
@@ -194,6 +195,19 @@ async fn establish(
         // receiver is lent down here rather than being read only by the pump
         // (`crate::connection::prompt`). Nothing else reads it while the
         // sequence runs.
+        //
+        // The budget is for the WHOLE connect, not for one stage of it. The
+        // stages have their own, longer budgets (thirty seconds for the MCS
+        // exchange, ninety for the activation), so a connect that fails at the
+        // last stage has already spent several times the time a person is
+        // willing to wait, and the wait before the error arrives is the part
+        // they notice.
+        //
+        // The budget is PAUSED while the person is typing a password. Their
+        // minute is not the connect stalling, and a connect that gave up on a
+        // slow typist would be the worst possible answer to a prompt that
+        // asked for one.
+        let waiting = Arc::new(AtomicBool::new(false));
         let result = {
             let connect = connection::connect(
                 stream,
@@ -206,12 +220,28 @@ async fn establish(
                     commands,
                     cancel,
                     ask: &mut ask,
+                    waiting: Arc::clone(&waiting),
                 }),
             );
-            tokio::select! {
-                biased;
-                () = cancel.cancelled() => return Err(RdpError::Cancelled),
-                result = connect => result,
+            tokio::pin!(connect);
+            let mut deadline = tokio::time::Instant::now() + options.connect_deadline;
+            loop {
+                tokio::select! {
+                    biased;
+                    () = cancel.cancelled() => return Err(RdpError::Cancelled),
+                    result = &mut connect => break result,
+                    _ = tokio::time::sleep_until(deadline) => {
+                        if waiting.load(Ordering::Relaxed) {
+                            // The person is typing. Give them the budget back.
+                            deadline = tokio::time::Instant::now() + options.connect_deadline;
+                            continue;
+                        }
+                        tracing::warn!("the connect ran out of time");
+                        break Err(RdpError::Timeout {
+                            stage: ConnectStage::WholeConnect,
+                        });
+                    }
+                }
             }
         };
 
