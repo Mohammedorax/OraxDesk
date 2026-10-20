@@ -12,6 +12,7 @@ import {
   forgetSession,
   holderLabel,
   intentLine,
+  intentPhraseKey,
   noticeFresh,
   parseActivityEvent,
   mergePlaneStatus,
@@ -23,6 +24,17 @@ import {
   wallEntries,
   type AgentState,
 } from "./agentActivity";
+import { translatorFor } from "./i18n";
+
+/**
+ * The English sentence, from the real catalogue.
+ *
+ * The status line is translated now, so a test that expects
+ * "2 agents driving 5" is only proving something if it is looking at the
+ * English the app actually shows. The translator is the app's own, so the two
+ * cannot drift apart.
+ */
+const t = translatorFor("en");
 
 /** A whole event, ready to have one field spoiled per test. */
 function event(over: Record<string, unknown> = {}): Record<string, unknown> {
@@ -367,6 +379,39 @@ describe("labels", () => {
     const bare = parseActivityEvent(event({ intent: { id: "i", kind: "screen.read" } }))!;
     expect(intentLine(bare.intent)).toBe("screen.read");
   });
+
+  it("says what an intent is in words, whichever spelling it arrives in", () => {
+    // The token is the protocol's vocabulary, and a person looking at a strip
+    // of machines has no reason to know it. The verb is matched on the LAST
+    // segment, so the dotted and the bare form are the same act.
+    //
+    // The function answers with a KEY, not a sentence, because the sentence
+    // is a word for a person and the app's default language is Arabic. What
+    // is worth testing here is the mapping: the same act must reach the same
+    // key in every spelling, or two people read one action differently.
+    expect(intentPhraseKey("pointer.click")).toBe("act.click");
+    expect(intentPhraseKey("click")).toBe("act.click");
+    expect(intentPhraseKey("keyboard.type")).toBe("act.type");
+    expect(intentPhraseKey("type")).toBe("act.type");
+    expect(intentPhraseKey("read_screen")).toBe("act.readScreen");
+    expect(intentPhraseKey("screen.read")).toBe("act.readScreen");
+    expect(intentPhraseKey("clipboard.get")).toBe("act.readClipboard");
+    expect(intentPhraseKey("exec")).toBe("act.exec");
+  });
+
+  it("never guesses at an intent it does not know", () => {
+    // The rule the rest of this file follows for a holder and an outcome: an
+    // unknown thing is shown as what it is, never guessed at, because both
+    // available guesses are wrong in a way somebody would act on.
+    expect(intentPhraseKey("teleport.please")).toBeNull();
+    expect(intentPhraseKey("")).toBeNull();
+    expect(intentPhraseKey("   ")).toBeNull();
+    // "get" alone could be the clipboard or something else, so it says
+    // nothing rather than claiming to be the clipboard.
+    expect(intentPhraseKey("get")).toBeNull();
+    expect(intentPhraseKey("read")).toBeNull();
+    expect(intentPhraseKey("file.get")).toBeNull();
+  });
 });
 
 describe("reading the plane's own state", () => {
@@ -462,23 +507,23 @@ describe("the status line", () => {
     planeView(parsePlaneStatus(status(over)), state);
 
   it("reads three numbers as one sentence", () => {
-    expect(planeStatusLine(view())).toBe("2 agents driving 5 of 11");
-    expect(planeStatusLine(view({ agents: 1, driving: 1, sessions: 3 })))
+    expect(planeStatusLine(view(), t)).toBe("2 agents driving 5 of 11");
+    expect(planeStatusLine(view({ agents: 1, driving: 1, sessions: 3 }), t))
       .toBe("1 agent driving 1 of 3");
   });
 
   it("does not call an attached agent a driving one", () => {
     // The distinction the whole line exists for: a lease, not an attachment.
-    expect(planeStatusLine(view({ agents: 2, driving: 0 })))
+    expect(planeStatusLine(view({ agents: 2, driving: 0 }), t))
       .toBe("2 agents connected, none driving");
-    expect(planeStatusLine(view({ agents: 1, driving: 0 })))
+    expect(planeStatusLine(view({ agents: 1, driving: 0 }), t))
       .toBe("1 agent connected, none driving");
-    expect(planeStatusLine(view({ agents: 0, driving: 0 }))).toBe("No agent connected");
+    expect(planeStatusLine(view({ agents: 0, driving: 0 }), t)).toBe("No agent connected");
   });
 
   it("says nothing at all with the plane off", () => {
-    expect(planeStatusLine(view({ enabled: false, agents: 0, driving: 0 }))).toBe("");
-    expect(planeStatusDetail(view({ enabled: false, agents: 0, driving: 0 }))).toBe("");
+    expect(planeStatusLine(view({ enabled: false, agents: 0, driving: 0 }), t)).toBe("");
+    expect(planeStatusDetail(view({ enabled: false, agents: 0, driving: 0 }), t)).toBe("");
     expect(planeView(null, EMPTY_AGENT_STATE).on).toBe(false);
   });
 
@@ -488,13 +533,13 @@ describe("the status line", () => {
       EMPTY_AGENT_STATE,
     );
     expect(partial.sessions).toBe(0);
-    expect(planeStatusLine(partial)).toBe("2 agents driving 5");
+    expect(planeStatusLine(partial, t)).toBe("2 agents driving 5");
   });
 
   it("never reports driving more machines than there are", () => {
     const v = view({ driving: 5, sessions: 3 });
     expect(v.sessions).toBe(5);
-    expect(planeStatusLine(v)).toBe("2 agents driving 5 of 5");
+    expect(planeStatusLine(v, t)).toBe("2 agents driving 5 of 5");
   });
 
   it("falls back to the leases this window can see, which is a floor", () => {
@@ -503,7 +548,7 @@ describe("the status line", () => {
     const v = planeView(parsePlaneStatus({ enabled: true, socket: "/tmp/s" }), state);
     expect(v.driving).toBe(2);
     expect(v.agents).toBe(2);
-    expect(planeStatusLine(v)).toBe("2 agents driving 2");
+    expect(planeStatusLine(v, t)).toBe("2 agents driving 2");
   });
 
   it("believes a held lease over a stale enabled flag", () => {
@@ -520,11 +565,11 @@ describe("the status line", () => {
       EMPTY_AGENT_STATE,
     );
     expect(v.agents).toBe(1);
-    expect(planeStatusLine(v)).toBe("1 agent driving 3 of 9");
+    expect(planeStatusLine(v, t)).toBe("1 agent driving 3 of 9");
   });
 
   it("spells the lease out in the long form", () => {
-    const detail = planeStatusDetail(view());
+    const detail = planeStatusDetail(view(), t);
     expect(detail).toContain("2 agents attached");
     expect(detail).toContain("5 machines are being driven");
     expect(detail).toContain("11 sessions are live");

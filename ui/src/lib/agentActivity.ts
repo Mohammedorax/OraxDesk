@@ -27,6 +27,11 @@
  * component cannot mistake it for a string we wrote.
  */
 
+// The translator, as a type only. This file is plain logic with no React in
+// it, and the runner only collects `src/**` without a renderer, so the
+// translation is done by the caller and handed in.
+import type { MessageKey, Translate } from "./i18n";
+
 // ---------------------------------------------------------------- contracts
 
 /**
@@ -619,6 +624,102 @@ export function intentLine(intent: AgentIntent | null): string {
   return intent.summary ? `${intent.kind} ${intent.summary}` : intent.kind;
 }
 
+/**
+ * What an agent is doing, in words.
+ *
+ * The plane reports the intent as a token: `pointer.click`, `keyboard.type`,
+ * `read_screen`. That is the vocabulary of the protocol, and a person looking
+ * at a strip of machines has no reason to know it.
+ *
+ * Two spellings are in use and they do not line up: the dotted form is
+ * `noun.verb` (`pointer.click`, `screen.read`) and the underscore form is
+ * `verb_noun` (`read_screen`, `clipboard_get`). So the dotted tokens are
+ * listed in full, and the bare verbs are listed on their own.
+ *
+ * The bare list holds only verbs that are unambiguous alone. `get`, `set` and
+ * `read` are NOT in it, because "reading the clipboard" and "reading the
+ * screen" are different things and a bare `read` could be either. An intent
+ * this build cannot place says nothing at all rather than guessing, which is
+ * the same rule the rest of this file follows for a holder and an outcome: an
+ * unknown thing is shown as what it is, never guessed at, because both
+ * available guesses are wrong in a way somebody would act on.
+ *
+ * The tables hold MESSAGE KEYS, not sentences. The sentence is a word for a
+ * person to read, and the app's default language is Arabic, so the wording
+ * belongs to the catalogue and this file belongs to the mapping. The mapping
+ * is the part worth testing: the same token must mean the same act in every
+ * language, and a phrase that drifts between two builds is a phrase two
+ * people read differently.
+ */
+const INTENT_PHRASES: Record<string, MessageKey> = {
+  click: "act.click",
+  move: "act.move",
+  drag: "act.drag",
+  scroll: "act.scroll",
+  press: "act.press",
+  type: "act.type",
+  scancode: "act.press",
+  wait: "act.wait",
+  capture: "act.capture",
+  exec: "act.exec",
+  pty_run: "act.exec",
+  declare: "act.declare",
+  send_bytes: "act.sendBytes",
+  tune: "act.tune",
+  cancel: "act.cancel",
+  // The underscore spelling of the same acts.
+  read_screen: "act.readScreen",
+  clipboard_get: "act.readClipboard",
+  clipboard_set: "act.writeClipboard",
+};
+
+/** The dotted `noun.verb` forms, listed whole because the noun matters. */
+const DOTTED_INTENT_PHRASES: Record<string, MessageKey> = {
+  "pointer.click": "act.click",
+  "pointer.move": "act.move",
+  "pointer.drag": "act.drag",
+  "pointer.scroll": "act.scroll",
+  "pointer.scroll_wheel": "act.scroll",
+  "keyboard.press": "act.press",
+  "keyboard.type": "act.type",
+  "keyboard.scancode": "act.press",
+  "clipboard.get": "act.readClipboard",
+  "clipboard.read": "act.readClipboard",
+  "clipboard.set": "act.writeClipboard",
+  "clipboard.write": "act.writeClipboard",
+  "screen.read": "act.readScreen",
+  "screen.capture": "act.capture",
+  "shell.exec": "act.exec",
+  "shell.run": "act.exec",
+  "file.read": "act.readFile",
+  "file.write": "act.writeFile",
+};
+
+/**
+ * The key of the plain phrase for an intent token, or null when this build
+ * does not know the act.
+ *
+ * Null means "say nothing better than the token", and the caller shows the
+ * token itself rather than inventing a description for it.
+ */
+export function intentPhraseKey(kind: string): MessageKey | null {
+  const trimmed = kind.trim().toLowerCase();
+  if (trimmed === "") return null;
+  const dotted = DOTTED_INTENT_PHRASES[trimmed];
+  if (dotted) return dotted;
+  const bare = INTENT_PHRASES[trimmed];
+  if (bare) return bare;
+  // A dotted form this build has never seen: the verb after the dot is
+  // unambiguous for most acts, and the ambiguous ones are deliberately not in
+  // the bare list, so "file.get" says nothing rather than claiming to be the
+  // clipboard.
+  if (trimmed.includes(".")) {
+    const verb = trimmed.slice(trimmed.lastIndexOf(".") + 1);
+    return INTENT_PHRASES[verb] ?? null;
+  }
+  return null;
+}
+
 /** How a remote excerpt is introduced, so its origin is never in doubt. */
 export function remoteLabel(remote: RemoteText): string {
   return remote.source === "terminal" ? "remote terminal" : "remote screen";
@@ -870,8 +971,6 @@ export function planeView(reported: PlaneStatus | null, state: AgentState): Plan
   };
 }
 
-const agentWord = (n: number): string => (n === 1 ? "1 agent" : `${n} agents`);
-
 /**
  * The status line: agents, what they are driving, and out of how much.
  *
@@ -879,28 +978,51 @@ const agentWord = (n: number): string => (n === 1 ? "1 agent" : `${n} agents`);
  * agent that is attached and idle is counted in the first number and in
  * neither of the others. That distinction is the whole reason this line is
  * three numbers rather than one.
+ *
+ * The sentence is translated, because this line is the app's headline for the
+ * agent plane and the app's default language is Arabic. The count is
+ * substituted rather than concatenated, because Arabic puts the count before
+ * the noun in one place and after it in another, and a string that was built
+ * by concatenation cannot be reordered by the reader's system.
  */
-export function planeStatusLine(plane: PlaneView): string {
+export function planeStatusLine(plane: PlaneView, t: Translate): string {
   if (!plane.on) return "";
-  if (plane.agents === 0) return "No agent connected";
-  if (plane.driving === 0) return `${agentWord(plane.agents)} connected, none driving`;
+  if (plane.agents === 0) return t("wall.planeNone");
+  if (plane.driving === 0) {
+    return plane.agents === 1
+      ? t("wall.planeIdleOne")
+      : t("wall.planeIdleMany", { agents: plane.agents });
+  }
   const of = plane.sessions > 0 ? ` of ${plane.sessions}` : "";
-  return `${agentWord(plane.agents)} driving ${plane.driving}${of}`;
+  const driving = t(
+    plane.agents === 1 ? "wall.planeDrivingOne" : "wall.planeDrivingMany",
+    { agents: plane.agents, driving: plane.driving },
+  );
+  return `${driving}${of}`;
 }
 
 /** The same thing at length, for the tooltip and the screen reader. */
-export function planeStatusDetail(plane: PlaneView): string {
+export function planeStatusDetail(plane: PlaneView, t: Translate): string {
   if (!plane.on) return "";
   const total =
     plane.sessions > 0
-      ? ` ${plane.sessions === 1 ? "1 session is" : `${plane.sessions} sessions are`} live in all.`
+      ? ` ${t(
+          plane.sessions === 1 ? "wall.detailSessionsOne" : "wall.detailSessionsMany",
+          { sessions: plane.sessions },
+        )}`
       : "";
   if (plane.agents === 0) {
-    return `No agent is attached to this computer.${total}`;
+    return `${t("wall.detailNone")}${total}`;
   }
   const held =
     plane.driving === 0
-      ? "None of them holds a lease, so nothing is being driven"
-      : `${plane.driving === 1 ? "1 machine is" : `${plane.driving} machines are`} being driven`;
-  return `${agentWord(plane.agents)} attached. ${held}.${total} Driving means an agent holds the lease; an attached agent that holds none is driving nothing.`;
+      ? t("wall.detailHeldNone")
+      : t(plane.driving === 1 ? "wall.detailHeldOne" : "wall.detailHeldMany", {
+          machines: plane.driving,
+        });
+  const attached = t(
+    plane.agents === 1 ? "wall.detailAttachedOne" : "wall.detailAttachedMany",
+    { agents: plane.agents },
+  );
+  return `${attached} ${held}.${total} ${t("wall.detailTail")}`;
 }

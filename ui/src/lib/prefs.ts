@@ -86,6 +86,16 @@ export const PREF_HIDE_TOOLBAR = "hideToolbar";
 export const PREF_HIDE_AGENT_STATUS = "hideAgentStatus";
 
 /**
+ * Whether the agent wall has already explained itself.
+ *
+ * The wall appears out of nowhere the moment an agent holds a lease, and it is
+ * the only surface in the app that talks about agents. A person who has not
+ * asked for one has no idea what they are looking at, so it says what it is
+ * once. The flag is here so that "once" survives a restart.
+ */
+export const PREF_AGENT_WALL_EXPLAINED = "agentWallExplained";
+
+/**
  * Fired on `window` when a boolean preference is written in THIS window.
  *
  * Preferences and the shell chrome share a window here, so a switch flipped in

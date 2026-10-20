@@ -40,6 +40,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { classNames } from "../lib/util";
 import {
   holderLabel,
+  intentPhraseKey,
   planeStatusDetail,
   planeStatusLine,
   remoteLabel,
@@ -49,13 +50,16 @@ import {
   type RemoteText,
 } from "../lib/agentActivity";
 import {
+  PREF_AGENT_WALL_EXPLAINED,
   PREF_CHANGED_EVENT,
   PREF_HIDE_AGENT_STATUS,
   readBoolPref,
+  writeBoolPref,
   type PrefChanged,
 } from "../lib/prefs";
 import { useAgentActivity } from "../state/AgentActivityContext";
-import { IconMonitor, IconStop, IconTerminal } from "./icons";
+import { useT, type MessageKey } from "../lib/i18n";
+import { IconMonitor, IconStop, IconTerminal, IconX } from "./icons";
 
 /**
  * A clock local to this component.
@@ -107,20 +111,26 @@ function age(from: number, now: number): string {
   return `${Math.floor(m / 60)}h ${m % 60}m`;
 }
 
-function outcomeStyle(outcome: IntentOutcome): { className: string; label: string } {
+/** The subset of the translator the wall needs. */
+type Translate = (key: MessageKey, vars?: Record<string, string | number>) => string;
+
+function outcomeStyle(outcome: IntentOutcome, t: Translate): { className: string; label: string } {
   switch (outcome) {
     case "in-flight":
-      return { className: "bg-accent/15 text-accent", label: "in flight" };
+      return { className: "bg-accent/15 text-accent", label: t("wall.doing") };
     case "accepted":
-      return { className: "bg-success-subtle text-success", label: "accepted" };
+      // "Accepted" means the plane TOOK the intent, not that it worked: the
+      // far side can still refuse it, and a person reading "accepted" as
+      // "it worked" would be wrong. "Sent" is what actually happened.
+      return { className: "bg-success-subtle text-success", label: t("wall.sent") };
     case "refused":
-      return { className: "bg-warning-subtle text-warning", label: "refused" };
+      return { className: "bg-warning-subtle text-warning", label: t("wall.refused") };
     case "failed":
-      return { className: "bg-danger-subtle text-danger", label: "failed" };
+      return { className: "bg-danger-subtle text-danger", label: t("wall.failed") };
     default:
       // The plane said something we do not read. Say so, rather than picking
       // whichever of the four would look tidiest.
-      return { className: "bg-inset text-tertiary", label: "unread" };
+      return { className: "bg-inset text-tertiary", label: t("wall.unread") };
   }
 }
 
@@ -167,11 +177,21 @@ function RemoteQuote({ remote }: { remote: RemoteText }): ReactNode {
 }
 
 /** The intent line, and what became of it. */
-function IntentRow({ intent }: { intent: AgentIntent | null }): ReactNode {
+function IntentRow({ intent, t }: { intent: AgentIntent | null; t: Translate }): ReactNode {
   if (!intent) {
-    return <p className="truncate text-2xs text-tertiary">Holding the lease, nothing in flight</p>;
+    return <p className="truncate text-2xs text-tertiary">{t("wall.idle")}</p>;
   }
-  const outcome = outcomeStyle(intent.outcome);
+  const outcome = outcomeStyle(intent.outcome, t);
+  // The plain phrase when this build knows the act, the token when it does
+  // not.
+  //
+  // `pointer.click` is the protocol's vocabulary, and a person watching a
+  // strip of machines has no reason to know it. The token is kept in the
+  // tooltip either way, and an act this build has never seen keeps the token
+  // rather than being guessed at: both available guesses would be wrong in a
+  // way somebody would act on.
+  const phraseKey = intentPhraseKey(intent.kind);
+  const phrase = phraseKey ? t(phraseKey) : null;
   return (
     <div className="flex min-w-0 items-center gap-1.5">
       <span
@@ -182,14 +202,20 @@ function IntentRow({ intent }: { intent: AgentIntent | null }): ReactNode {
       >
         {outcome.label}
       </span>
-      <span className="mono shrink-0 truncate text-2xs text-primary" title={intent.kind}>
-        {intent.kind}
-      </span>
+      {phrase ? (
+        <span className="min-w-0 flex-1 truncate text-2xs text-primary" title={intent.kind}>
+          {phrase}
+        </span>
+      ) : (
+        <span className="mono min-w-0 flex-1 truncate text-2xs text-primary" title={intent.kind}>
+          {intent.kind}
+        </span>
+      )}
       {intent.summary ? (
         // The summary gives way first. What was asked for matters more than the
         // arguments it was asked with, and a line reading "pointer.cl… (612,
         // 448)" has kept the half nobody needed.
-        <span className="mono min-w-0 flex-1 truncate text-right text-2xs text-tertiary">
+        <span className="mono min-w-0 max-w-[45%] truncate text-end text-2xs text-tertiary">
           {intent.summary}
         </span>
       ) : null}
@@ -202,11 +228,13 @@ function Card({
   now,
   onGo,
   onStop,
+  t,
 }: {
   entry: AgentActivity;
   now: number;
   onGo: () => void;
   onStop: () => void;
+  t: Translate;
 }): ReactNode {
   const holder = entry.holder;
   const driven = holder?.kind === "agent";
@@ -287,7 +315,7 @@ function Card({
         {driven
           ? holderLabel(holder)
           : entry.preempted
-            ? `You took the wheel from ${entry.preempted.agent}`
+            ? t("wall.tookWheel", { agent: entry.preempted.agent })
             : holderLabel(holder)}
       </p>
 
@@ -295,11 +323,11 @@ function Card({
         // Keyed by the intent so each new one fades in. A card that changed
         // silently would be a card nobody notices changing.
         <div key={entry.intent?.id ?? "idle"} className="fade-in flex min-w-0 flex-col gap-1">
-          <IntentRow intent={entry.intent} />
+          <IntentRow intent={entry.intent} t={t} />
           {entry.intent?.remote ? <RemoteQuote remote={entry.intent.remote} /> : null}
         </div>
       ) : (
-        <p className="truncate text-2xs text-tertiary">Input is yours, the agent was stopped</p>
+        <p className="truncate text-2xs text-tertiary">{t("wall.yoursNow")}</p>
       )}
     </div>
   );
@@ -315,6 +343,29 @@ export function AgentWall({
   const now = useSecondsTick(wall.length > 0);
   const scroller = useRef<HTMLDivElement>(null);
   const hidden = useStatusHidden();
+  const t = useT();
+  /** "Stop all" asks first: it takes the lease back from every agent at once. */
+  const [confirmingStopAll, setConfirmingStopAll] = useState(false);
+
+  /**
+   * The strip explains itself, once.
+   *
+   * It appears out of nowhere the moment an agent holds a lease, and it is the
+   * only surface in the app that talks about agents at all. A person who has
+   * not asked for one has no idea what they are looking at, so the first time
+   * it shows there is one line saying what it is and what the buttons do. It
+   * is said once and then never again, because an explanation that repeats
+   * itself is noise.
+   */
+  const [explained, setExplained] = useState(() => readBoolPref(PREF_AGENT_WALL_EXPLAINED, false));
+  const [showExplanation, setShowExplanation] = useState(false);
+  useEffect(() => {
+    if (explained) return;
+    if (wall.length === 0) return;
+    setShowExplanation(true);
+    setExplained(true);
+    writeBoolPref(PREF_AGENT_WALL_EXPLAINED, true);
+  }, [explained, wall.length]);
 
   /**
    * The counts live HERE rather than in a second surface of their own.
@@ -332,8 +383,8 @@ export function AgentWall({
    */
   const showStatus = plane.on && !hidden;
   const headline = useMemo(
-    () => (showStatus ? planeStatusLine(plane) : "Agent activity"),
-    [showStatus, plane],
+    () => (showStatus ? planeStatusLine(plane, t) : t("wall.title")),
+    [showStatus, plane, t],
   );
 
   // Nothing at all with the plane off, and nothing when a person has put the
@@ -348,7 +399,7 @@ export function AgentWall({
       // Announced, but not interrupting: a person watching this is looking at
       // it, and a person who is not should not have their work read over.
       role="region"
-      aria-label="Agent activity"
+      aria-label={t("wall.title")}
     >
       <div className="flex items-center gap-2 px-0.5">
         <span
@@ -368,7 +419,7 @@ export function AgentWall({
         <h2
           className="text-2xs font-medium tabular-nums text-secondary"
           aria-live="polite"
-          title={showStatus ? planeStatusDetail(plane) : undefined}
+          title={showStatus ? planeStatusDetail(plane, t) : undefined}
         >
           {headline}
         </h2>
@@ -376,16 +427,72 @@ export function AgentWall({
         {count > 0 ? (
           <button
             type="button"
-            onClick={stopAll}
+            onClick={() => setConfirmingStopAll(true)}
             className="shrink-0 rounded-sm px-1.5 py-0.5 text-2xs font-medium text-warning hover:bg-danger-subtle hover:text-danger"
             // Says what it does to all of them, because a person reaching for
             // this on a wall of twelve is not reading carefully.
-            title="Take every lease back from every agent, at once"
+            title={t("wall.stopAllTitle")}
           >
-            Stop all
+            {t("wall.stopAll")}
           </button>
         ) : null}
       </div>
+
+      {/*
+        "Stop all" takes the lease back from every agent on every machine, at
+        once, and nothing about it can be undone from here: the agents have to
+        ask again. It used to be one click with only a tooltip saying so, and
+        a person reaching for it on a wall of twelve is not reading carefully.
+      */}
+      {confirmingStopAll ? (
+        <div
+          className="flex flex-wrap items-center gap-2 rounded-sm border border-danger/40 bg-danger-subtle px-2 py-1.5"
+          role="alertdialog"
+          aria-label={t("wall.stopAllDialog")}
+        >
+          <span className="text-2xs text-primary">
+            {count === 1
+              ? t("wall.stopAllAskOne")
+              : t("wall.stopAllAskMany", { count })}
+          </span>
+          <span className="flex-1" />
+          <button
+            type="button"
+            className="rounded-sm px-1.5 py-0.5 text-2xs text-secondary hover:text-primary"
+            onClick={() => setConfirmingStopAll(false)}
+          >
+            {t("wall.cancel")}
+          </button>
+          <button
+            type="button"
+            className="rounded-sm bg-danger px-2 py-0.5 text-2xs font-medium text-white"
+            onClick={() => {
+              setConfirmingStopAll(false);
+              stopAll();
+            }}
+          >
+            {t("wall.stopAllConfirm")}
+          </button>
+        </div>
+      ) : null}
+
+      {/*
+        The one-time explanation. It sits under the headline and above the
+        cards, so it is read once and then the wall is just the wall.
+      */}
+      {showExplanation ? (
+        <p className="flex items-start gap-2 px-0.5 text-2xs text-secondary">
+          <span>{t("wall.explain")}</span>
+          <button
+            type="button"
+            className="shrink-0 rounded-sm px-1 text-tertiary hover:text-primary"
+            onClick={() => setShowExplanation(false)}
+            aria-label={t("wall.explainHide")}
+          >
+            <IconX size={11} />
+          </button>
+        </p>
+      ) : null}
 
       {/*
         No cards, no row: with the plane on and nothing being driven the strip
@@ -407,6 +514,7 @@ export function AgentWall({
               now={now}
               onGo={() => onShowSession(entry.sessionId)}
               onStop={() => stopAgent(entry.sessionId)}
+              t={t}
             />
           ))}
         </div>

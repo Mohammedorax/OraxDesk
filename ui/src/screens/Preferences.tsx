@@ -21,6 +21,7 @@ import {
 } from "../lib/prefs";
 import { useAgentActivity } from "../state/AgentActivityContext";
 import { planeStatusLine } from "../lib/agentActivity";
+import { useT } from "../lib/i18n";
 import { readViewDefaults, writeViewDefaults, type ViewPrefs } from "../lib/viewPrefs";
 import type { QualityPreset, ScalingMode } from "../lib/types";
 import type { RdpResolution } from "../lib/rdp";
@@ -188,6 +189,7 @@ export function Preferences({ onClose }: { onClose: () => void }): ReactNode {
   // The plane, read for two things only: whether the Agents tab exists at all,
   // and the live line the toggle below is about.
   const { plane } = useAgentActivity();
+  const t = useT();
   const tabs = tabsFor(plane.on);
 
   useEffect(() => {
@@ -643,7 +645,7 @@ export function Preferences({ onClose }: { onClose: () => void }): ReactNode {
                     A person deciding whether to hide something should be able
                     to see what they are hiding.
                   */}
-                  <p className="mono mt-0.5 text-xs text-secondary">{planeStatusLine(plane)}</p>
+                  <p className="mono mt-0.5 text-xs text-secondary">{planeStatusLine(plane, t)}</p>
                   <p className="mt-1.5 text-xs text-tertiary">
                     Driving means an agent holds the lease on that machine. An agent that is
                     connected but holds nothing is driving nothing, and is counted only in the
