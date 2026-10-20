@@ -60,6 +60,15 @@ const SCALING_MODES: ScalingMode[] = ["fit", "aspect-fit", "actual", "custom", "
 const QUALITY_PRESETS: QualityPreset[] = ["auto", "high", "medium", "low", "bw"];
 const GRAY_LEVELS = [256, 16, 8, 4, 2, 1];
 
+/**
+ * The scaling modes this build understands, for a caller that has a string
+ * from somewhere else (the host profile) and has to decide whether to act on
+ * it. Exported so the check lives in one place.
+ */
+export function isScalingMode(value: unknown): value is ScalingMode {
+  return typeof value === "string" && SCALING_MODES.includes(value as ScalingMode);
+}
+
 function read<T>(key: string): Partial<T> | null {
   try {
     const raw = localStorage.getItem(key);

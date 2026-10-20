@@ -483,12 +483,23 @@ pub fn agent_take_the_wheel(
     app: AppHandle,
     state: State<'_, AppState>,
     session_id: String,
+    reason: Option<String>,
 ) -> Result<(), String> {
     crate::windows::validate_session_id(&session_id)?;
+    // WHY the wheel was taken: a person pressing "take the wheel" and the
+    // Stop button are the same revocation with different reasons, and
+    // anything reading the plane's record of it wants to know which. The
+    // reason used to be sent by the interface and dropped here, so the
+    // record said "revoked" and never why.
+    let reason = match reason.as_deref() {
+        Some("took-the-wheel") => "took-the-wheel",
+        Some("stopped") => "stopped",
+        _ => "took-the-wheel",
+    };
     match state.agent.revoke(&session_id) {
         Some(event) => {
             let _ = app.emit(agent::AGENT_EVENT, event);
-            tracing::info!(session = %session_id, "a person took the wheel from an agent");
+            tracing::info!(session = %session_id, reason = %reason, "a person took the wheel from an agent");
             Ok(())
         }
         // Not an error: a person pressing "take the wheel" on a machine no

@@ -33,6 +33,7 @@ import {
   type LocalEntry,
   type RemoteEntry,
 } from "../lib/tauri";
+import { describeError } from "../lib/util";
 
 export type SortKey = "name" | "size" | "date";
 export type Pane = "local" | "remote";
@@ -552,7 +553,5 @@ export function applyEvent(prev: Transfer[], ev: FilesEventPayload): Transfer[] 
 }
 
 function describe(err: unknown): string {
-  if (typeof err === "string") return err;
-  if (err instanceof Error) return err.message;
-  return String(err);
+  return describeError(err);
 }

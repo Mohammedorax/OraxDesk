@@ -17,6 +17,7 @@ import {
   hostProtocol,
   parseSshTunnel,
   protocolName,
+  protocolShortName,
 } from "../lib/types";
 import type { RdpResolution, RdpSettings } from "../lib/rdp";
 import { rdpDefaults } from "../lib/rdpDefaults";
@@ -47,6 +48,14 @@ import { classNames } from "../lib/util";
 
 export interface HostDraft {
   id?: string;
+  /**
+   * Whether this host does not exist yet.
+   *
+   * The id alone cannot say that any more: a new host is given its id when
+   * the draft is made, so that two saves of the same draft write the same row
+   * instead of two rows. This flag is what says "new" now.
+   */
+  isNew?: boolean;
   friendlyName: string;
   protocol: ProtocolKind;
   address: string;
@@ -123,7 +132,13 @@ export interface HostDraft {
 export function draftFromHost(h: HostProfile | null, prefill?: Partial<HostDraft>): HostDraft {
   const protocol: ProtocolKind = h ? hostProtocol(h) : (prefill?.protocol ?? "vnc");
   return {
-    id: h?.id,
+    // A new host is given its id HERE, when the draft is made, rather than
+    // when it is saved. The id doubles as the keyring account key on the
+    // Rust side, and a second save of the same draft (a double click on Save)
+    // used to mint a second id, which is a second identical row in the
+    // library rather than an update of the first.
+    id: h?.id ?? prefill?.id ?? crypto.randomUUID(),
+    isNew: h === null && prefill?.id === undefined,
     friendlyName: h?.friendlyName ?? prefill?.friendlyName ?? "",
     protocol,
     address: h?.address ?? prefill?.address ?? "",
@@ -238,10 +253,18 @@ export function HostDialog({
   draft: HostDraft;
   groups: HostGroup[];
   tags: HostTag[];
-  onSave: (draft: HostDraft) => void;
+  onSave: (draft: HostDraft) => void | Promise<void>;
   onClose: () => void;
 }): ReactNode {
   const [d, setD] = useState<HostDraft>(initial);
+  /**
+   * A save is in flight.
+   *
+   * The button used to stay live while the write was running, so a second
+   * click sent a second `save_host`. For a new host that was two different
+   * ids, and therefore two identical rows in the library.
+   */
+  const [saving, setSaving] = useState(false);
   // Open Advanced when the dialog arrives with a MAC the user never typed, // discovery filled it in, and a value silently folded away is one the user
   // can neither check nor correct. An enabled SSH tunnel opens it too: it
   // changes how every connection is made and should not be editable only for
@@ -336,21 +359,86 @@ export function HostDialog({
 
   const addressError = touched && !parsed.ok ? parsed.error : null;
 
-  const canSave = parsed.ok;
+  /**
+   * The port has to be a number the backend can hold. It is a `u16` there,
+   * so a value outside 1..65535 is refused at the boundary and the whole
+   * save fails with a message that says nothing about the port.
+   */
+  const portError =
+    !isBoundary && (!Number.isInteger(d.port) || d.port < 1 || d.port > 65535)
+      ? "The port must be between 1 and 65535"
+      : null;
+
+  /**
+   * The SSH session name and the WSL distribution name are refused by the
+   * Rust side, which is what `sessionNameError` and `distroNameError` mirror.
+   *
+   * The error used to be a hint under the field and nothing more: the host
+   * was saved with a name the backend refuses, and every SSH connection to
+   * that profile then failed at connect time with a message about the
+   * session rather than about the field the person had typed it in.
+   *
+   * Only a value the person CHANGED is refused. A profile stored with a name
+   * this build no longer accepts can still be edited in every other way.
+   */
+  const sshNameChanged = isSsh && ssh.sessionName !== (initial.ssh?.sessionName ?? "");
+  const sshDistroChanged =
+    isSsh && (ssh.wslDistro ?? "") !== (initial.ssh?.wslDistro ?? "");
+  const sshError = !isSsh
+    ? null
+    : sshNameChanged
+      ? sessionNameError(ssh.sessionName)
+      : sshDistroChanged
+        ? distroNameError(ssh.wslDistro ?? "")
+        : null;
+
+  /**
+   * The MAC address, checked where it is typed rather than when the person
+   * finally presses "Wake" on an evening they needed the machine awake.
+   */
+  const macError = macAddressError(d.wolMac);
+
+  /**
+   * Everything that would refuse the save, in one place.
+   *
+   * The Save button used to be disabled for all of these at once, which meant
+   * a grey button and no reason: the address error only appeared after the
+   * field lost focus, and the SSH errors live inside a disclosure that is
+   * closed by default. The button is now only disabled while a save is
+   * running, and pressing it says what is wrong.
+   */
+  const blockers: string[] = [];
+  // The address error is already under the address field, so it is only
+  // repeated in the summary once that field has been left or the save has
+  // been attempted. Before that, an empty address is not a mistake, it is
+  // just an empty form.
+  if (touched && !parsed.ok) blockers.push(parsed.error);
+  if (portError) blockers.push(portError);
+  if (sshError) blockers.push(sshError);
+  if (macError) blockers.push(macError);
 
   const submit = (): void => {
+    if (saving) return;
     setTouched(true);
     if (!parsed.ok) return;
+    // The other checks too, not only the address. The button is no longer
+    // disabled for them (that is what made the reason invisible), so this is
+    // the one place that refuses the save.
+    if (portError || sshError || macError) return;
     // Saving straight from the keyboard skips the blur that normalizes the
     // address, so it is normalized here too rather than only on the way out
     // of the field.
     const address = parsed.target.address;
     const name = d.friendlyName.trim() || address;
-    onSave({ ...d, address, friendlyName: name });
+    const result = onSave({ ...d, address, friendlyName: name });
+    if (result instanceof Promise) {
+      setSaving(true);
+      void result.finally(() => setSaving(false));
+    }
   };
 
   return (
-    <Dialog title={d.id ? "Edit Host" : "New Host"} onClose={onClose} width={540}>
+    <Dialog title={d.isNew ? "New Host" : "Edit Host"} onClose={onClose} width={540}>
       <form
         className="space-y-4"
         onSubmit={(e) => {
@@ -358,9 +446,12 @@ export function HostDialog({
           submit();
         }}
       >
-        <Field label="Friendly name" hint="How this computer appears in your library">
+        <Field
+          label="Name"
+          optional
+          hint="How this computer appears in your library. Leave blank to use its address."
+        >
           <input
-            data-autofocus
             className="field"
             value={d.friendlyName}
             placeholder="Living Room Mac"
@@ -384,6 +475,7 @@ export function HostDialog({
                 type="button"
                 role="radio"
                 aria-checked={d.protocol === p}
+                title={protocolName(p)}
                 className={classNames(
                   "flex-1 rounded-sm px-3 py-1.5 text-sm",
                   d.protocol === p
@@ -392,7 +484,7 @@ export function HostDialog({
                 )}
                 onClick={() => changeProtocol(p)}
               >
-                {protocolName(p)}
+                {protocolShortName(p)}
               </button>
             ))}
           </div>
@@ -400,19 +492,22 @@ export function HostDialog({
 
         <div className={isBoundary ? "grid grid-cols-1 gap-3" : "grid grid-cols-[1fr_120px] gap-3"}>
           <Field
-            label={isBoundary ? "Machine ID" : "Address"}
+            label={isBoundary ? "Computer ID" : "Address"}
+            required
             error={addressError}
             hint={
               isBoundary
-                ? "Shown under Unattended access in DeskVNC Support on that computer. If you are not paired, the person there approves you, or you use the unattended password below."
-                : undefined
+                ? "Shown under Unattended access in DeskVNC Support on that computer. If you are not paired, the person there approves you, or you use the password below."
+                : "192.168.1.42, or a name like office. A number after the colon under 100 is a screen number, so :1 is screen 1 on port 5901; 100 and above is a port."
             }
           >
             <input
               className="field mono"
               value={d.address}
-              placeholder={isBoundary ? "64 character machine ID" : "192.168.1.42 or hostname"}
+              placeholder={isBoundary ? "64 character computer ID" : "192.168.1.42 or hostname"}
               spellCheck={false}
+              dir="ltr"
+              aria-invalid={addressError !== null}
               onBlur={() => {
                 setTouched(true);
                 // Store what would actually be dialled, not what was typed:
@@ -444,19 +539,29 @@ export function HostDialog({
             />
           </Field>
           {isBoundary ? null : (
-            <Field label="Port">
+            <Field label="Port" error={portError}>
               <input
                 className="field mono"
                 type="number"
                 min={1}
                 max={65535}
                 value={d.port}
-                onChange={(e) =>
+                onChange={(e) => {
+                  // The port is a `u16` on the Rust side, so anything outside
+                  // 1..65535 is refused by the deserializer and the save
+                  // fails with "invalid args". The `min` and `max` attributes
+                  // only produce a browser bubble on submit, so the value is
+                  // clamped here and the problem is said out loud.
+                  const typed = Number.parseInt(e.target.value, 10);
+                  if (Number.isNaN(typed)) {
+                    set({ port: DEFAULT_PORT[d.protocol], portTouched: true });
+                    return;
+                  }
                   set({
-                    port: parseInt(e.target.value, 10) || DEFAULT_PORT[d.protocol],
+                    port: Math.min(65535, Math.max(1, typed)),
                     portTouched: true,
-                  })
-                }
+                  });
+                }}
               />
             </Field>
           )}
@@ -621,7 +726,7 @@ export function HostDialog({
               isSsh && ssh.auth === "key-file"
                 ? "Key passphrase"
                 : isBoundary
-                  ? "Unattended password"
+                  ? "Password"
                   : "Password"
             }
             hint={
@@ -629,7 +734,9 @@ export function HostDialog({
                 ? "A secret is saved in your system keychain. Leave blank to keep it."
                 : isSsh && ssh.auth === "key-file"
                   ? "Only needed if the key itself is protected. Stored in your system keychain, never in a file."
-                  : "Stored in your system keychain, never in a file"
+                  : isBoundary
+                    ? "The password you use to reach this computer when nobody is there to approve you. It is the one set on that computer under Unattended access. Stored in your system keychain, never in a file."
+                    : "Stored in your system keychain, never in a file"
             }
           >
             <input
@@ -747,17 +854,24 @@ export function HostDialog({
                       hint={
                         isRdp
                           ? "Auto adapts to network conditions. Lower settings turn off wallpaper and effects on the remote desktop."
-                          : "Auto adapts to network conditions"
+                          : "How sharp the picture is against how quickly the screen answers you."
                       }
                     >
                       <Select
                         value={d.qualityPref}
                         onChange={(e) => set({ qualityPref: e.target.value as QualityPreset })}
                       >
+                        {/*
+                          The same words the toolbar uses for the same
+                          setting. They used to be "High / Medium / Low" here
+                          and "Sharp / Balanced / Responsive" there, so a
+                          person who set one and later opened the other could
+                          not tell it was the same choice.
+                        */}
                         <option value="auto">Auto</option>
-                        <option value="high">High</option>
-                        <option value="medium">Medium</option>
-                        <option value="low">Low</option>
+                        <option value="high">Sharp</option>
+                        <option value="medium">Balanced</option>
+                        <option value="low">Responsive</option>
                         {/*
                           Black and White is a shader in this app, not a wire
                           setting, so the toolbar keeps offering it live for
@@ -771,7 +885,10 @@ export function HostDialog({
                     </Field>
                   </div>
                   <div className="grid grid-cols-2 gap-3">
-                    <Field label="Scaling" hint="How the remote screen fits the window">
+                    <Field
+                      label="Scaling"
+                      hint="How the remote screen fits the window. This is the starting point; the toolbar can change it during a session."
+                    >
                       <Select
                         value={d.scalingMode}
                         onChange={(e) => set({ scalingMode: e.target.value as ScalingMode })}
@@ -782,27 +899,28 @@ export function HostDialog({
                         <option value="remote-resize">Remote resize</option>
                       </Select>
                     </Field>
-                    <Field label="Keyboard mode" hint="How keystrokes are translated">
-                      <Select
-                        value={d.keyboardMode}
-                        onChange={(e) => set({ keyboardMode: e.target.value })}
-                      >
-                        <option value="auto">Auto</option>
-                        {/* RDP has no concept of a keysym. */}
-                        {isRdp ? null : <option value="keysym">Keysym</option>}
-                        <option value="unicode">Unicode</option>
-                        <option value="scancode">Scancode</option>
-                      </Select>
-                    </Field>
+                    {/*
+                      "Keyboard mode" used to be here, offering Keysym,
+                      Unicode and Scancode. Nothing ever read it: the profile's
+                      `keyboard_mode` column is not read by the backend, and
+                      the session always sends keysyms. A control that looks
+                      like a setting and changes nothing is worse than no
+                      control, so it is gone until there is something behind
+                      it. The column stays in the store, untouched, so a
+                      profile written by a newer build is not damaged.
+                    */}
                   </div>
                 </>
               ) : null}
               <Field
                 label="MAC address (for Wake-on-LAN)"
+                error={macError}
                 hint={
-                  d.macFromDiscovery
-                    ? "Filled in automatically, this is the address we saw when we found this machine on your network. Lets you wake it from the library."
-                    : "Filled in automatically when the machine was discovered on your network. Lets you wake this computer from the library."
+                  macError
+                    ? undefined
+                    : d.macFromDiscovery
+                      ? "Filled in automatically, this is the address we saw when we found this machine on your network. Lets you wake it from the library."
+                      : "Filled in automatically when the machine was discovered on your network. Lets you wake this computer from the library."
                 }
               >
                 <input
@@ -810,7 +928,9 @@ export function HostDialog({
                   value={d.wolMac ?? ""}
                   placeholder="aa:bb:cc:dd:ee:ff"
                   spellCheck={false}
+                  dir="ltr"
                   aria-label="MAC address for Wake-on-LAN"
+                  aria-invalid={macError !== null}
                   onChange={(e) => set({ wolMac: e.target.value || null, macFromDiscovery: false })}
                 />
               </Field>
@@ -878,11 +998,22 @@ export function HostDialog({
         </div>
 
         <div className="flex justify-end gap-2.5 pt-1">
-          <button type="button" className="btn-secondary" onClick={onClose}>
+          {/*
+            What is wrong, in words, when there is something wrong. The
+            button used to be grey with no reason at all, and the reasons that
+            live inside the collapsed "Advanced" section could not be seen
+            without opening it.
+          */}
+          {blockers.length > 0 ? (
+            <p className="mr-auto self-center text-xs text-danger" role="alert">
+              {blockers.join(" · ")}
+            </p>
+          ) : null}
+          <button type="button" className="btn-secondary" onClick={onClose} disabled={saving}>
             Cancel
           </button>
-          <button type="submit" className="btn-primary" disabled={!canSave}>
-            {d.id ? "Save Changes" : "Add Host"}
+          <button type="submit" className="btn-primary" disabled={saving}>
+            {saving ? "Saving…" : d.isNew ? "Add Host" : "Save Changes"}
           </button>
         </div>
       </form>
@@ -1018,6 +1149,25 @@ function distroNameError(name: string): string | null {
   if (trimmed === "") return null;
   if (trimmed.length > 64) return "64 characters or fewer";
   if (!DISTRO_NAME_RE.test(trimmed)) return "Only letters, numbers, dot, underscore and hyphen";
+  return null;
+}
+
+/**
+ * `parse_mac` in `crates/vnc-discovery/src/wol.rs`, mirrored exactly: twelve
+ * hex digits, with `:` `-` `.` and spaces ignored between them.
+ *
+ * The Rust side refuses a bad address, but it does it when the person presses
+ * "Wake", long after the profile was saved. Mirroring the rule here means a
+ * typo is caught while it is being typed, rather than on the one evening the
+ * person needed the machine to be awake.
+ */
+function macAddressError(value: string | null): string | null {
+  const raw = (value ?? "").trim();
+  if (raw === "") return null;
+  const cleaned = raw.replace(/[:.\- ]/g, "");
+  if (cleaned.length !== 12 || !/^[0-9a-fA-F]{12}$/.test(cleaned)) {
+    return "A MAC address is twelve hex digits, like aa:bb:cc:dd:ee:ff";
+  }
   return null;
 }
 
@@ -1577,7 +1727,20 @@ function SshTunnelSection({
                 min={1}
                 max={65535}
                 value={t.port}
-                onChange={(e) => patch({ port: parseInt(e.target.value, 10) || 22 })}
+                onChange={(e) => {
+                  // Clamped, like the main port field and for the same
+                  // reason: this port is read as a `u16` out of the settings
+                  // blob, so a value above 65535 does not fail this field, it
+                  // fails the WHOLE blob, and the profile then refuses to
+                  // connect with a message about settings nobody remembers
+                  // changing. The browser's own `max` is a bubble, not a rule.
+                  const typed = Number.parseInt(e.target.value, 10);
+                  if (Number.isNaN(typed)) {
+                    patch({ port: 22 });
+                    return;
+                  }
+                  patch({ port: Math.min(65535, Math.max(1, typed)) });
+                }}
               />
             </Field>
           </div>
@@ -1665,6 +1828,12 @@ function ResolutionField({
   const custom = value.mode === "fixed" && !listed;
   // Held as a number so a half typed value does not snap; the profile is only
   // written when the dialog is saved, and the range is checked on read.
+  //
+  // The range is ALSO checked here, at the point of writing, and not only on
+  // read: these two numbers are a `u16` inside the settings blob, so a value
+  // outside the range does not fail this field, it fails the whole blob, and
+  // the profile then refuses to connect with a message about settings nobody
+  // remembers changing. The browser's own `max` is a bubble, not a rule.
   const dim = (n: number, set: (v: number) => void, label: string): ReactNode => (
     <input
       className="field"
@@ -1673,7 +1842,14 @@ function ResolutionField({
       max={RDP_MAX_DIM}
       value={n}
       aria-label={label}
-      onChange={(e) => set(Number(e.target.value) || 0)}
+      onChange={(e) => {
+        const typed = Number(e.target.value);
+        if (!Number.isFinite(typed)) {
+          set(0);
+          return;
+        }
+        set(Math.min(RDP_MAX_DIM, Math.max(RDP_MIN_DIM, Math.trunc(typed))));
+      }}
     />
   );
 
@@ -1712,16 +1888,26 @@ function Field({
   label,
   hint,
   error,
+  required,
+  optional,
   children,
 }: {
   label: string;
   hint?: string;
   error?: string | null;
+  /** Marks the field as one that has to be filled in. */
+  required?: boolean;
+  /** Marks the field as one that does not have to be filled in. */
+  optional?: boolean;
   children: ReactNode;
 }): ReactNode {
   return (
     <label className="block">
-      <span className="mb-1 block text-xs font-medium text-secondary">{label}</span>
+      <span className="mb-1 block text-xs font-medium text-secondary">
+        {label}
+        {required ? <span className="ms-1 text-danger">*</span> : null}
+        {optional ? <span className="ms-1 text-tertiary">(optional)</span> : null}
+      </span>
       {children}
       {error ? (
         <span className="mt-1 block text-xs text-danger" role="alert">

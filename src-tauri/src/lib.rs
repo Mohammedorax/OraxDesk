@@ -21,6 +21,31 @@ use tauri::{Manager, RunEvent};
 
 use state::AppState;
 
+/// Tear down everything a window owned: its sessions, its file transfers and
+/// its remote shells.
+///
+/// Keyed on what the window actually OWNS, not on its label. A session used
+/// to imply a window called `session-<id>`, but in tabbed view sessions live
+/// in `main` alongside the library, so `main` closing has to tear its
+/// sessions down exactly the way a session window does. Each call is a no-op
+/// for a window that owns nothing, which is what `main` is in the
+/// one-window-per-session mode.
+///
+/// Called on both `CloseRequested` and `Destroyed`: a window can be destroyed
+/// without ever asking to close, and `CloseRequested` never fires for one
+/// that was destroyed outright.
+fn shutdown_window(window: &tauri::Window) {
+    if let Some(state) = window.try_state::<AppState>() {
+        state.shutdown_sessions_for_window(window.label());
+    }
+    if let Some(files) = window.try_state::<commands::files::FilesState>() {
+        files.shutdown_for_window(window.label());
+    }
+    if let Some(ssh) = window.try_state::<commands::ssh::SshState>() {
+        ssh.shutdown_for_window(window.label());
+    }
+}
+
 pub fn run() {
     let filter = tracing_subscriber::EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info,deskvncviewer_lib=debug"));
@@ -107,7 +132,13 @@ pub fn run() {
             app.manage(Arc::new(commands::capture::CaptureState::new(app.handle())));
 
             menu::install(app.handle())?;
-            tray::install(app.handle())?;
+            // The tray is a convenience, not a requirement. A Linux desktop
+            // with no StatusNotifier, or a build with no icon, used to take
+            // the whole application down with it, because the failure was
+            // fatal. The app without a tray is still a perfectly good app.
+            if let Err(error) = tray::install(app.handle()) {
+                tracing::warn!(error = %error, "the tray could not be built; the app runs without one");
+            }
 
             // The agent plane, if a person has switched it on. With the
             // setting off this binds nothing, spawns nothing and creates no
@@ -150,17 +181,7 @@ pub fn run() {
                     // must not be left with a grab held by a window that is
                     // going away.
                     commands::capture::release_for_window(window.app_handle(), window.label());
-                    if let Some(state) = window.try_state::<AppState>() {
-                        state.shutdown_sessions_for_window(window.label());
-                    }
-                    // …and cancel any file transfers that window owned.
-                    if let Some(files) = window.try_state::<commands::files::FilesState>() {
-                        files.shutdown_for_window(window.label());
-                    }
-                    // …and end any remote shells it owned.
-                    if let Some(ssh) = window.try_state::<commands::ssh::SshState>() {
-                        ssh.shutdown_for_window(window.label());
-                    }
+                    shutdown_window(window);
                 }
                 // Capture is only ever held while the window that asked for it
                 // is focused (PRD/06 §3). Blur disarms; focus re-arms if the
@@ -179,8 +200,16 @@ pub fn run() {
                     }
                 }
                 // A destroyed window can never re-arm, so drop the intent too.
+                // The teardown runs here as well as on `CloseRequested`: a
+                // window can be destroyed without ever asking to close (the
+                // session view calls `destroy()` when `close()` fails), and
+                // `CloseRequested` never fires for a window that was destroyed
+                // outright. Without this, the file-transfer queue and the
+                // remote shell of a destroyed window stayed alive with no
+                // window left to show them.
                 tauri::WindowEvent::Destroyed => {
                     commands::capture::release_for_window(window.app_handle(), window.label());
+                    shutdown_window(window);
                 }
                 _ => {}
             }

@@ -126,6 +126,17 @@ export function AgentActivityProvider({ children }: { children: ReactNode }): Re
   const stateRef = useRef(state);
   stateRef.current = state;
 
+  /** The notice timers, so they can be cleared when this provider goes away. */
+  const timers = useRef(new Set<number>());
+
+  useEffect(() => {
+    const pending = timers.current;
+    return () => {
+      for (const timer of pending) window.clearTimeout(timer);
+      pending.clear();
+    };
+  }, []);
+
   // ------------------------------------------------------------ event intake
 
   useEffect(() => {
@@ -258,9 +269,15 @@ export function AgentActivityProvider({ children }: { children: ReactNode }): Re
     void safeInvoke(AGENT_REVOKE_COMMAND, { sessionId, reason }, null);
     // The notice retires on a schedule rather than against a ticking clock, so
     // watching an agent work costs no re-renders at all.
-    window.setTimeout(() => {
+    //
+    // The timer is kept so it can be cleared when the provider goes away: it
+    // used to outlive the window and fire a state update into a component
+    // that was no longer there.
+    const timer = window.setTimeout(() => {
+      timers.current.delete(timer);
       setState((prev) => clearNotice(prev, sessionId, Date.now()));
     }, PREEMPT_NOTICE_MS + 50);
+    timers.current.add(timer);
   }, []);
 
   const takeWheel = useCallback(

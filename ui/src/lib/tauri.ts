@@ -18,8 +18,31 @@ export function inTauri(): boolean {
 const missingCommands = new Set<string>();
 
 /**
+ * Whether the failure means the command does not exist in this build.
+ *
+ * A command that is registered but not granted by the ACL is a different
+ * thing entirely, and a much louder one: it is a packaging mistake that
+ * makes a whole feature dead. The two are told apart here so that a genuine
+ * refusal is reported every time it happens rather than being swallowed
+ * behind a "warned once" flag.
+ */
+function isAclRefusal(err: unknown): boolean {
+  return /not allowed by ACL|not allowed on origin/i.test(String(err));
+}
+
+function isMissingCommand(err: unknown): boolean {
+  return /not found|unknown command|does not exist/i.test(String(err));
+}
+
+/**
  * Invoke a backend command; on any failure (no Tauri, command not yet
  * implemented, runtime error) resolve with `fallback` instead of throwing.
+ *
+ * The failure is always reported. The old version kept a set of commands it
+ * had already complained about and stayed silent about every later failure of
+ * the same command, which is how a `save_host` that failed on the first click
+ * was invisible on the second, third and fourth: the first failure was a
+ * warning in the console nobody reads, and the rest were nothing at all.
  */
 export async function safeInvoke<T>(
   cmd: string,
@@ -30,21 +53,68 @@ export async function safeInvoke<T>(
   try {
     return (await invoke<T>(cmd, args)) as T;
   } catch (err) {
-    if (!missingCommands.has(cmd)) {
-      missingCommands.add(cmd);
-      console.warn(`[tauri] command "${cmd}" unavailable:`, err);
+    if (isAclRefusal(err)) {
+      // A grant is missing. This is never transient and never the user's
+      // fault, so it is always reported.
+      console.error(
+        `[tauri] command "${cmd}" was refused by the ACL: it is registered but no capability grants it.`,
+        err,
+      );
+    } else if (isMissingCommand(err)) {
+      if (!missingCommands.has(cmd)) {
+        missingCommands.add(cmd);
+        console.warn(`[tauri] command "${cmd}" is not available in this build:`, err);
+      }
+    } else {
+      console.error(`[tauri] command "${cmd}" failed:`, err);
     }
     return fallback;
   }
 }
 
-/** Invoke that propagates errors (for flows where the UI must react, e.g. connect). */
+/**
+ * Invoke that propagates errors (for flows where the UI must react, e.g. connect).
+ *
+ * A Tauri command that returns `Result<_, String>` rejects with that string,
+ * not with an `Error`, so it is normalised here. Call sites that wrote
+ * `err.message` were rendering "undefined" for a failure that had a message
+ * all along.
+ *
+ * `timeoutMs` is optional and off by default: a connect can legitimately take
+ * a long time, and a blanket timeout would break it. It is for the calls that
+ * open a side channel and can otherwise hang the window forever.
+ */
 export async function mustInvoke<T>(
   cmd: string,
   args?: Record<string, unknown>,
+  timeoutMs?: number,
 ): Promise<T> {
   if (!inTauri()) throw new Error("Backend not available (running outside Tauri)");
-  return invoke<T>(cmd, args);
+  const call: Promise<T> = invoke<T>(cmd, args).catch((err: unknown) => {
+    throw normalizeRejection(err);
+  });
+  if (timeoutMs === undefined) return call;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race<T>([
+      call,
+      new Promise<T>((_resolve, reject) => {
+        timer = setTimeout(
+          () => reject(new Error(`The command "${cmd}" did not answer in time`)),
+          timeoutMs,
+        );
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
+/** A Tauri command rejects with a plain string; make it an Error. */
+function normalizeRejection(err: unknown): Error {
+  if (err instanceof Error) return err;
+  const text = String(err);
+  return new Error(text === "" ? "The command failed" : text);
 }
 
 /** listen() that no-ops outside Tauri. */
@@ -201,11 +271,17 @@ export interface OpenSessionOptions {
  * one place: by default a machine that is already connected gets its existing
  * window restored and raised instead of a second session. `reused` says which
  * happened, so the caller can skip "connected again" bookkeeping.
+ *
+ * Deliberately NOT routed through `safeInvoke`. This used to resolve to
+ * `null` on any failure, and every caller read `null` as "nothing to do", so
+ * a connect that failed for any reason at all was a click that did nothing:
+ * no window, no tab, no message. The failure now propagates and the caller
+ * says so.
  */
 export function openSessionWindow(
   options: OpenSessionOptions,
 ): Promise<SessionWindowOutcome | null> {
-  return safeInvoke<SessionWindowOutcome | null>(
+  return mustInvoke<SessionWindowOutcome | null>(
     "open_session_window",
     {
       profileId: options.profileId ?? null,
@@ -216,7 +292,6 @@ export function openSessionWindow(
       asTab: options.asTab ?? false,
       background: options.background ?? false,
     },
-    null,
   );
 }
 

@@ -111,6 +111,11 @@ export function loadSettings(): Settings {
     if (merged.windowMode !== "windows" && merged.windowMode !== "tabs") {
       merged.windowMode = DEFAULTS.windowMode;
     }
+    // And an unknown theme sets a `data-theme` that matches no rule in the
+    // stylesheet, so the window comes up with no colours at all.
+    if (merged.theme !== "system" && merged.theme !== "light" && merged.theme !== "dark") {
+      merged.theme = DEFAULTS.theme;
+    }
     return merged;
   } catch {
     return DEFAULTS;
@@ -121,16 +126,21 @@ export function SettingsProvider({ children }: { children: ReactNode }): ReactNo
   const [settings, setSettings] = useState<Settings>(loadSettings);
 
   const update = useCallback((patch: Partial<Settings>) => {
-    setSettings((prev) => {
-      const next = { ...prev, ...patch };
-      try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
-      } catch {
-        /* storage unavailable */
-      }
-      return next;
-    });
+    // The write is a side effect, and a state updater is supposed to be
+    // pure: React may call it more than once, and StrictMode does exactly
+    // that. The merge happens in the updater, the write happens here.
+    setSettings((prev) => ({ ...prev, ...patch }));
   }, []);
+
+  // The one place the settings are written, so it happens once per change
+  // rather than once per render of the updater.
+  useEffect(() => {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
+    } catch {
+      /* storage unavailable: the setting lasts until the window closes */
+    }
+  }, [settings]);
 
   // Apply theme: Follow System removes the attribute so prefers-color-scheme rules.
   useEffect(() => {

@@ -4,12 +4,11 @@ import {
   useContext,
   useEffect,
   useMemo,
-  useRef,
   useState,
   type ReactNode,
 } from "react";
 import type { DiscoveredHost, DiscoveryEventPayload, ScanProgress } from "../lib/types";
-import { inTauri, safeInvoke, safeListen } from "../lib/tauri";
+import { inTauri, mustInvoke, safeListen } from "../lib/tauri";
 import { MOCK_DISCOVERED, useMockData } from "../lib/mock";
 
 interface DiscoveryContextValue {
@@ -24,16 +23,24 @@ export function DiscoveryProvider({ children }: { children: ReactNode }): ReactN
   const mock = useMockData();
   const [discovered, setDiscovered] = useState<DiscoveredHost[]>([]);
   const [scan, setScan] = useState<ScanProgress>({ running: false, done: 0, total: 0 });
-  const started = useRef(false);
 
   useEffect(() => {
     if (mock) {
       setDiscovered(MOCK_DISCOVERED);
       return;
     }
-    if (!inTauri() || started.current) return;
-    started.current = true;
+    if (!inTauri()) return;
+    // No "run once" latch.
+    //
+    // StrictMode runs an effect, cleans it up, and runs it again on the same
+    // component instance, so a ref used as a latch means "run, then be
+    // cleaned up, and never run again": discovery was started, immediately
+    // stopped, and never started again, and the listener leaked because the
+    // cleanup ran before the listen promise had resolved. The other three
+    // contexts already use the pattern below, where the cleanup and the
+    // second run cancel out correctly.
     let unlisten: (() => void) | undefined;
+    let cancelled = false;
     void safeListen<DiscoveryEventPayload>("discovery://event", (ev) => {
       if (!ev || typeof ev !== "object") return;
       switch (ev.type) {
@@ -62,12 +69,14 @@ export function DiscoveryProvider({ children }: { children: ReactNode }): ReactN
           break;
       }
     }).then((fn) => {
-      unlisten = fn;
+      if (cancelled) fn();
+      else unlisten = fn;
     });
-    void safeInvoke("start_discovery", undefined, null);
+    void mustInvoke("start_discovery").catch(() => undefined);
     return () => {
+      cancelled = true;
       unlisten?.();
-      void safeInvoke("stop_discovery", undefined, null);
+      void mustInvoke("stop_discovery").catch(() => undefined);
     };
   }, [mock]);
 
@@ -83,7 +92,15 @@ export function DiscoveryProvider({ children }: { children: ReactNode }): ReactN
       return;
     }
     setScan({ running: true, done: 0, total: 0 });
-    await safeInvoke("scan_network", undefined, null);
+    try {
+      await mustInvoke("scan_network");
+    } catch {
+      // The scan is driven entirely by `discovery://event`, so a command that
+      // fails leaves no events to finish it and the button would read
+      // "Scanning…" for the rest of the session. Say it failed and stop.
+      setScan({ running: false, done: 0, total: 0 });
+      throw new Error("The network scan could not be started");
+    }
   }, [mock]);
 
   const value = useMemo(

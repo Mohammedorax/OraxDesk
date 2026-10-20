@@ -12,6 +12,7 @@ import {
   DEFAULT_SSH_PORT,
   DEFAULT_VNC_PORT,
   formatTarget,
+  isDisplayNumber,
   parseConnectTarget,
   presetProtocol,
 } from "./address";
@@ -155,6 +156,21 @@ describe("what the parser must not guess", () => {
     });
   });
 
+  it("reads the port in user@host:port as a port, not a display number", () => {
+    // `alice@box:22` is the way an SSH target is written. It used to be read
+    // as VNC display 22, which is port 5922, so the connection went to the
+    // wrong place and the chip in front of the user said VNC.
+    expect(ok("alice@box:22")).toMatchObject({
+      protocol: null, address: "box", port: DEFAULT_SSH_PORT, username: "alice",
+    });
+    // A user name means the target is not an RFB one, so the display-number
+    // convention does not apply to it at all.
+    expect(ok("alice@box:1")).toMatchObject({ port: 1 });
+    expect(ok("alice@box:5901")).toMatchObject({ port: 5901 });
+    // A bare hostname keeps the convention: `box:1` is still display 1.
+    expect(ok("box:1")).toMatchObject({ port: 5901 });
+  });
+
   it("presets SSH for 22, RDP for 3389, and VNC for everything else", () => {
     expect(presetProtocol({ port: DEFAULT_SSH_PORT })).toBe("ssh");
     expect(presetProtocol({ port: DEFAULT_RDP_PORT })).toBe("rdp");
@@ -170,6 +186,37 @@ describe("what the parser must not guess", () => {
     expect(ok("box:1", "vnc")).toMatchObject({ port: 5901 });
     expect(ok("box", "rdp")).toMatchObject({ port: 3389 });
     expect(ok("box", "ssh")).toMatchObject({ port: 22 });
+  });
+});
+
+describe("the number after the colon", () => {
+  it("knows when the number was a display number rather than a port", () => {
+    // `box:22` is display 22 on port 5922, so the number the person typed is
+    // not the number that will be dialled. The chip says so.
+    expect(isDisplayNumber("box:22", 5922)).toBe(true);
+    expect(isDisplayNumber("box:1", 5901)).toBe(true);
+    // A literal port is not a display number.
+    expect(isDisplayNumber("box:5901", 5901)).toBe(false);
+    expect(isDisplayNumber("box:3389", 3389)).toBe(false);
+    // The explicit form is always a port.
+    expect(isDisplayNumber("box::42", 42)).toBe(false);
+    // A scheme means the protocol named itself, so there is no convention
+    // to apply.
+    expect(isDisplayNumber("ssh://box:22", 22)).toBe(false);
+    // A user name means the target is not an RFB one.
+    expect(isDisplayNumber("alice@box:22", 22)).toBe(false);
+  });
+
+  it("re-reads the number under a different protocol", () => {
+    // The chip's whole job. `box:22` reads as display 22 (port 5922) under
+    // VNC, and as the port 22 under SSH, because only RFB has display
+    // numbers. So one click on the chip takes a person who meant SSH from the
+    // wrong port to the right one.
+    expect(ok("box:22").port).toBe(5922);
+    expect(ok("box:22", "ssh").port).toBe(22);
+    expect(ok("box:22", "rdp").port).toBe(22);
+    // VNC keeps the convention.
+    expect(ok("box:22", "vnc").port).toBe(5922);
   });
 });
 

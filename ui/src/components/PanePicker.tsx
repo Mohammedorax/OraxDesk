@@ -18,10 +18,10 @@ import { usePaneVisible } from "./Pane";
 import { useHosts } from "../state/HostsContext";
 import { useTabs } from "../state/TabsContext";
 import { useToasts } from "../state/ToastContext";
-import { hostProtocol, type ProtocolKind } from "../lib/types";
+import { hostProtocol, protocolName, type ProtocolKind } from "../lib/types";
 import { inTauri, openSessionWindow, safeInvoke } from "../lib/tauri";
 import { parseConnectTarget, presetProtocol } from "../lib/address";
-import { classNames } from "../lib/util";
+import { classNames, describeError } from "../lib/util";
 import { IconMonitor, IconSearch, IconTerminal, IconX } from "./icons";
 
 /**
@@ -87,6 +87,27 @@ export function PanePicker({
   );
 
   /**
+   * What the typed text would connect to, said out loud.
+   *
+   * The picker used to resolve the protocol in silence: `box:3389` was
+   * connected as RDP with no chip, no row and no indication, which breaks the
+   * project's own rule that ambiguity never resolves silently to VNC against
+   * a known port. The line under the field says what Enter will do.
+   */
+  const resolvedLine: string | null = useMemo(() => {
+    const raw = query.trim();
+    if (raw === "") return null;
+    if (matchingHosts.length === 1 && matchingSessions.length === 0) {
+      const host = matchingHosts[0];
+      return `${host.friendlyName} — ${protocolName(hostProtocol(host))}, ${host.address}:${host.port}`;
+    }
+    const parsed = parseConnectTarget(raw);
+    if (!parsed.ok) return parsed.error;
+    const protocol = parsed.target.protocol ?? presetProtocol(parsed.target);
+    return `${parsed.target.address}:${parsed.target.port} — ${protocolName(protocol)}`;
+  }, [query, matchingHosts, matchingSessions.length]);
+
+  /**
    * Connect a saved host straight into this pane.
    *
    * The shell still decides everything that matters and we act on what it
@@ -121,6 +142,8 @@ export function PanePicker({
         );
         void safeInvoke("touch_connected", { hostId: profileId }, null);
       }
+    } catch (err) {
+      push("danger", `Could not connect to ${label}: ${describeError(err)}`);
     } finally {
       busy.current = false;
     }
@@ -162,6 +185,8 @@ export function PanePicker({
           { tabId, paneId },
         );
       }
+    } catch (err) {
+      push("danger", `Could not connect: ${describeError(err)}`);
     } finally {
       busy.current = false;
     }
@@ -243,6 +268,16 @@ export function PanePicker({
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto p-2">
+        {/*
+          What Enter will do, said out loud. The picker's own rule is that
+          ambiguity never resolves silently, and a second address bar that
+          keeps the answer to itself breaks it.
+        */}
+        {resolvedLine ? (
+          <p className="px-2 pb-2 text-xs text-tertiary" dir="ltr">
+            {resolvedLine}
+          </p>
+        ) : null}
         {matchingSessions.length > 0 ? (
           <Section title="Move a connected session here">
             {matchingSessions.map((s) => (

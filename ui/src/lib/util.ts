@@ -1,5 +1,25 @@
 /** Small shared utilities: color hashing, formatting, fuzzy matching, mnemonics. */
 
+/**
+ * A failure, as a sentence to show a person.
+ *
+ * A Tauri command that returns `Result<_, String>` rejects with that string
+ * rather than with an `Error`, so `err.message` is `undefined` for a failure
+ * that had a message all along. Every call site that wants to say what went
+ * wrong goes through here, which is also why it lives in one place instead of
+ * being copied into each component.
+ */
+export function describeError(err: unknown): string {
+  if (typeof err === "string") return err;
+  if (err instanceof Error) return err.message;
+  if (err === null || err === undefined) return "Something went wrong";
+  try {
+    return JSON.stringify(err);
+  } catch {
+    return String(err);
+  }
+}
+
 /** Deterministic pleasant hue from a host id, used for icon-placeholder tiles. */
 export function colorFromId(id: string): string {
   let h = 2166136261;

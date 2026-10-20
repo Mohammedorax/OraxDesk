@@ -174,6 +174,12 @@ export function parseConnectTarget(input: string, assume?: ProtocolKind): Target
   let raw = rest;
   let username: string | null = null;
   let protocol = named;
+  /**
+   * The input carried a user name. `user@host` is the way an SSH target is
+   * written, and a VNC target carries no user in its address at all, so this
+   * is also the signal that the port is a port and not a display number.
+   */
+  let hasUserinfo = false;
 
   if (url) {
     // A "connect" link off a wiki page or a chat message arrives as a URL, so
@@ -209,7 +215,10 @@ export function parseConnectTarget(input: string, assume?: ProtocolKind): Target
       // `presetProtocol`, once a port is known) to decide what to preset.
       const user = raw.slice(0, at);
       raw = raw.slice(at + 1);
-      if (user !== "") username = user;
+      if (user !== "") {
+        username = user;
+        hasUserinfo = true;
+      }
     }
   }
 
@@ -221,8 +230,14 @@ export function parseConnectTarget(input: string, assume?: ProtocolKind): Target
   // `rdp://box:1` is port 1 and not 3390, and `ssh://box:1` is port 1 and not
   // 5901. Absent any other information, "vnc" is the existing default this
   // falls back to, unchanged from before RDP or SSH existed.
+  //
+  // A target that carries a user name is not a VNC target: `user@host` is
+  // how an SSH target is written, and RFB carries no user in its address at
+  // all. So the number after the colon there is a PORT. Without this,
+  // `alice@box:22` was read as VNC display 22 and became port 5922, and the
+  // chip in front of the user said VNC while they had asked for SSH.
   const resolved = protocol ?? assume ?? "vnc";
-  const displayNumbers = resolved === "vnc";
+  const displayNumbers = resolved === "vnc" && !hasUserinfo;
   const fallbackPort = DEFAULT_PORT[resolved];
 
   const done = (result: AddressResult): TargetResult =>
@@ -358,4 +373,29 @@ export function formatEndpoint(address: string, port: number): string {
 export function presetProtocol(target: { port: number }): ProtocolKind {
   if (target.port === DEFAULT_SSH_PORT) return "ssh";
   return target.port === DEFAULT_RDP_PORT ? "rdp" : "vnc";
+}
+
+/**
+ * Was the number after the colon a DISPLAY number rather than a port?
+ *
+ * `office:22` is the VNC convention for display 22, which is port 5922. The
+ * number the person typed is not the number that will be dialled, and that
+ * difference is worth saying out loud: it is the whole reason a person who
+ * meant SSH can end up on the wrong port.
+ *
+ * Only the bare `host:number` form can be a display number. `host::number`
+ * is RealVNC's explicit-port form and always means a port, and a number
+ * inside brackets is always a port.
+ */
+export function isDisplayNumber(input: string, port: number): boolean {
+  const trimmed = input.trim();
+  // A scheme, a user name, brackets or the explicit `::` form all mean the
+  // number is a port.
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed)) return false;
+  if (trimmed.includes("@") || trimmed.includes("[")) return false;
+  if (trimmed.includes("::")) return false;
+  const match = /^(.+):(\d+)$/.exec(trimmed);
+  if (!match) return false;
+  const typed = Number(match[2]);
+  return typed < MAX_DISPLAY_NUMBER && port !== typed;
 }

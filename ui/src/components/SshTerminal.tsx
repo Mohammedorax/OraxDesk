@@ -33,7 +33,7 @@ import type { SshHostKeyPromptState } from "../hooks/useSession";
 import { SshHostKeyPrompt } from "./SshHostKeyPrompt";
 import { usePaneVisible } from "./Pane";
 import { useToasts } from "../state/ToastContext";
-import { classNames } from "../lib/util";
+import { classNames, describeError as describeErrorShared } from "../lib/util";
 import { IconAlert, IconX } from "./icons";
 
 export interface SshTerminalProps {
@@ -66,9 +66,7 @@ type Phase =
   | { kind: "shell"; state: SshTerminalState | null };
 
 function describeError(err: unknown): string {
-  if (typeof err === "string") return err;
-  if (err instanceof Error) return err.message;
-  return String(err);
+  return describeErrorShared(err);
 }
 
 // ------------------------------------------------------------------ theme

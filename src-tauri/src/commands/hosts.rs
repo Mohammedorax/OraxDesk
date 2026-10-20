@@ -44,7 +44,28 @@ pub async fn save_host(
 #[tauri::command]
 pub async fn delete_host(state: State<'_, AppState>, host_id: String) -> Result<(), String> {
     let store = state.store.clone();
-    super::blocking(move || store.delete_host(&host_id)).await
+    let credentials = state.credentials.clone();
+    super::blocking(move || {
+        store.delete_host(&host_id).map_err(|error| error.to_string())?;
+        // The stored credential goes with the host.
+        //
+        // `Store::delete_host` only removes the OS keychain entry, and only
+        // as a best effort. The encrypted-file fallback, which is what the
+        // app uses whenever the keychain is unavailable, kept the secret: the
+        // UI said "Saved passwords are gone", and the Undo button, which
+        // restores the host under the same id, brought the password back with
+        // it. A secret that outlives the host it belongs to is a secret the
+        // person never asked to keep.
+        //
+        // A locked vault is not a failure worth refusing the delete over:
+        // the host is gone either way, and the entry is unreachable until
+        // the vault is unlocked, at which point it can be removed.
+        if let Err(error) = credentials.delete(&host_id) {
+            tracing::warn!(host_id = %host_id, error = %error, "could not remove the stored credential");
+        }
+        Ok::<(), String>(())
+    })
+    .await
 }
 
 /// Bump `last_connected`/`connect_count` after a successful connect.
@@ -177,7 +198,10 @@ pub async fn get_app_setting(
     state: State<'_, AppState>,
     key: String,
 ) -> Result<Option<String>, String> {
-    state.store.get_setting(&key).map_err(|e| e.to_string())
+    // Off the runtime, like every other storage call in this file: the store
+    // is synchronous SQLite and takes a lock on the connection.
+    let store = state.store.clone();
+    super::blocking(move || store.get_setting(&key)).await
 }
 
 /// Write a global app setting.
@@ -195,10 +219,10 @@ pub async fn set_app_setting(
     key: String,
     value: String,
 ) -> Result<(), String> {
-    state
-        .store
-        .set_setting(&key, &value)
-        .map_err(|e| e.to_string())?;
+    let store = state.store.clone();
+    let written = key.clone();
+    let wanted = value.clone();
+    super::blocking(move || store.set_setting(&written, &wanted)).await?;
     if key == crate::agent::AGENT_PLANE_ENABLED_KEY {
         crate::commands::agent::apply(&app, crate::agent::plane_enabled(Some(&value)));
     }

@@ -246,6 +246,15 @@ function normalizeState(raw: unknown): SessionState | null {
         state: "disconnected",
         reason: text(s.reason, "The connection ended."),
         can_retry: s.can_retry !== false,
+        // The symbol is what the protocol calls the failure, and it is the
+        // only stable way to tell one failure from another: the reason is a
+        // sentence for a person to read and may be reworded at any time.
+        //
+        // It used to be dropped here, which meant every branch of
+        // `lib/diagnose.ts` that matches on a symbol was dead code, and the
+        // person was shown the raw sentence from the protocol instead of the
+        // explanation this file has for it.
+        symbol: typeof s.symbol === "string" && s.symbol !== "" ? s.symbol : undefined,
       };
     default:
       return null;

@@ -18,6 +18,15 @@ import type { SessionState } from "../lib/types";
 
 const STAGES = ["resolving", "connecting", "authenticating", "negotiating"] as const;
 
+/**
+ * How long the connecting panel waits before it says something more.
+ *
+ * Ten seconds is long enough that a normal handshake never sees the extra
+ * line, and short enough that a person whose machine is off is not left
+ * staring at "Connecting" with nothing to act on.
+ */
+const SLOW_CONNECT_MS = 10_000;
+
 function stageLabel(st: SessionState): string {
   switch (st.state) {
     case "resolving":
@@ -37,6 +46,19 @@ function stageLabel(st: SessionState): string {
 
 export function ConnectingOverlay({ state, name }: { state: SessionState; name: string }): ReactNode {
   const idx = STAGES.indexOf(state.state as (typeof STAGES)[number]);
+  /**
+   * How long the connection has been trying.
+   *
+   * The panel names the stage and stops there, so a person whose machine is
+   * off or asleep waits with nothing but "Connecting" and no idea whether the
+   * app is working. After a while it says so, and says what to check.
+   */
+  const [slow, setSlow] = useState(false);
+  useEffect(() => {
+    setSlow(false);
+    const timer = window.setTimeout(() => setSlow(true), SLOW_CONNECT_MS);
+    return () => window.clearTimeout(timer);
+  }, [state.state]);
   return (
     <div className="absolute inset-0 flex items-center justify-center bg-canvas" role="status" aria-live="polite">
       <div className="w-80 rounded-lg border border-subtle bg-surface p-5 shadow-(--shadow-pop)">
@@ -59,6 +81,12 @@ export function ConnectingOverlay({ state, name }: { state: SessionState; name: 
             </li>
           ))}
         </ol>
+        {slow ? (
+          <p className="mt-3 border-t border-subtle pt-3 text-xs text-secondary">
+            Still trying. If that computer is off, asleep, or on a different network, this
+            will keep failing. Check that it is awake, then reconnect.
+          </p>
+        ) : null}
       </div>
     </div>
   );
@@ -135,6 +163,7 @@ export function DisconnectedOverlay({
   name,
   reason,
   canRetry,
+  symbol,
   profileId,
   onEditSecurity,
   onReconnect,
@@ -143,6 +172,8 @@ export function DisconnectedOverlay({
   name: string;
   reason: string;
   canRetry: boolean;
+  /** The protocol''s own name for the failure, when it has one. */
+  symbol?: string;
   /** Null for an ad-hoc session: there is no profile to open in the editor. */
   profileId: string | null;
   onEditSecurity: (() => void) | null;
@@ -159,8 +190,8 @@ export function DisconnectedOverlay({
   }, []);
 
   const text = typeof reason === "string" ? reason : "";
-  const authFailure = isAuthFailure(text);
-  const securityFix = opensSecuritySettings(text);
+  const authFailure = isAuthFailure(text, symbol);
+  const securityFix = opensSecuritySettings(text, symbol);
   // A rejected password is ALWAYS retryable from the user's side, whatever the
   // core said: `can_retry: false` means "do not reconnect automatically", not
   // "there is nothing this person can do". Offering only a Close button after
@@ -193,7 +224,7 @@ export function DisconnectedOverlay({
           Disconnected from {name}
         </p>
         <p className="mt-2 text-sm break-words text-secondary" role="alert">
-          {diagnose(reason)}
+          {diagnose(reason, symbol)}
         </p>
         {authFailure ? (
           <p className="mt-1.5 text-xs text-tertiary">

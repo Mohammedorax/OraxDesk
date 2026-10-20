@@ -1493,6 +1493,11 @@ mod tests {
     /// counts, and none of them touches a file. The refusal is real rather
     /// than a panic so that a test which grew a file call by accident would
     /// read a sentence instead of losing the socket task.
+    ///
+    /// Unix only, because every test that uses it is unix only: the plane's
+    /// socket is a unix socket, so the tests that exercise it do not exist
+    /// on Windows, and without this the helper is dead code there.
+    #[cfg(unix)]
     fn no_sidecar() -> server::Filer {
         Arc::new(|_session, _ask, tell| {
             let _ = tell.send(Err(server::FileRefusal::unavailable(

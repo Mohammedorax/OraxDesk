@@ -61,6 +61,42 @@ describe("serializeRdpSettings", () => {
 });
 
 describe("the disconnect copy", () => {
+  it("reads the protocol's own symbol when it sends one", () => {
+    // The symbol is the stable name for the failure. The reason is a
+    // sentence for a person to read and may be reworded at any time, so a
+    // diagnosis that matches on prose alone breaks the day it is reworded.
+    expect(diagnose("the remote computer will not accept ntlm", "ntlm-refused-by-policy"))
+      .toContain("Restrict NTLM");
+    expect(diagnose("only TLS 1.0 is offered here", "legacy-tls-required"))
+      .toContain("Allow legacy TLS");
+    expect(diagnose("the server said no to that", "nla-refused"))
+      .toContain("without network level authentication");
+  });
+
+  it("does not report a policy refusal as a wrong password, by symbol either", () => {
+    expect(diagnose("anything at all", "ntlm-refused-by-policy")).not.toContain(
+      "Incorrect password",
+    );
+    expect(isAuthFailure("anything at all", "ntlm-refused-by-policy")).toBe(false);
+    expect(isAuthFailure("anything at all", "legacy-tls-unavailable")).toBe(false);
+    expect(isAuthFailure("anything at all", "nla-refused")).toBe(false);
+  });
+
+  it("does not send the person to a port that is very much open", () => {
+    // The server answered and refused the security methods. Reporting that
+    // as "nothing is listening on that port" sends the person to check a port
+    // that is open, and away from the thing that is actually wrong.
+    const text = diagnose("the server refused the requested security protocols: 0x2");
+    expect(text).not.toContain("nothing is listening");
+    expect(text).toContain("answered");
+  });
+
+  it("still calls a refused connection a refused connection", () => {
+    expect(diagnose("connection refused")).toBe(
+      "Connection refused, nothing is listening on that port.",
+    );
+  });
+
   it("names both Group Policy settings and says Kerberos comes later", () => {
     const text = diagnose("ntlm-refused-by-policy");
     expect(text).toContain("Restrict NTLM");

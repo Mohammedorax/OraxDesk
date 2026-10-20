@@ -177,13 +177,36 @@ export interface RegistryCode {
   revoke_token: string | null;
 }
 
+/** The public record of a device in the registry. */
+export interface RegistryDevice {
+  id: string;
+  fingerprint: string;
+  number: string | null;
+  protocol_version: number;
+  client_version: string | null;
+  created_at: number;
+  revoked_at: number | null;
+}
+
 export const registry = {
   health: (url: string) => mustInvoke<RegistryHealth>("registry_health", { url }),
-  registerDevice: (url: string) => mustInvoke<unknown>("registry_register_device", { url }),
+  /**
+   * Register this computer under its machine key.
+   *
+   * Idempotent, and the prerequisite for everything else: a device number is
+   * only in the registry once the device has registered, so a lookup of a
+   * number that was read off a screen answers "no such device" until this
+   * has run at least once.
+   */
+  registerDevice: (url: string) =>
+    mustInvoke<RegistryDevice>("registry_register_device", { url }),
   createCode: (url: string, invitation: string, ttlSeconds?: number) =>
     mustInvoke<RegistryCode>("registry_create_code", { url, invitation, ttlSeconds }),
   resolveCode: (url: string, code: string) =>
     mustInvoke<string>("registry_resolve_code", { url, code }),
+  /** The device a nine-digit number belongs to. */
+  lookupNumber: (url: string, number: string) =>
+    mustInvoke<RegistryDevice>("registry_lookup_number", { url, number }),
   revokeCode: (url: string, revokeToken: string) =>
     mustInvoke<void>("registry_revoke_code", { url, revokeToken }),
 };

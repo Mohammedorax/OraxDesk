@@ -17,6 +17,12 @@
  * than prose somebody may reword. Where the driver currently sends only its
  * English sentence, a distinctive fragment of that sentence is matched too,
  * so the copy works today and keeps working once the symbol is carried.
+ *
+ * The symbol is now carried: `SessionState::Disconnected` has one, the
+ * protocol fills it in, and it reaches here. It used to be dropped on the way
+ * out of the event decoder, which made every branch below that matches on a
+ * symbol dead code, and the person was shown the raw sentence from the
+ * protocol instead of the explanation written for it.
  */
 
 /**
@@ -27,7 +33,7 @@
  * refusal nothing the user types can fix walks them through typing a
  * password three times into an Active Directory lockout counter.
  */
-export function isAuthFailure(reason: string): boolean {
+export function isAuthFailure(reason: string, symbol?: string | null): boolean {
   const r = reason.toLowerCase();
   // Neither of these can be fixed by typing a different password, and both
   // contain words the generic tests below would otherwise catch: the policy
@@ -36,6 +42,10 @@ export function isAuthFailure(reason: string): boolean {
   // future symbol containing the word "auth" silently changes what the
   // button does and no test fails.
   if (
+    symbol === "ntlm-refused-by-policy" ||
+    symbol === "legacy-tls-required" ||
+    symbol === "legacy-tls-unavailable" ||
+    symbol === "nla-refused" ||
     r.includes("ntlm-refused-by-policy") ||
     r.includes("legacy-tls-required") ||
     r.includes("legacy-tls-unavailable") ||
@@ -48,7 +58,7 @@ export function isAuthFailure(reason: string): boolean {
   return r.includes("auth") || r.includes("password") || r.includes("credential");
 }
 
-export function diagnose(reason: unknown): string {
+export function diagnose(reason: unknown, symbol?: string | null): string {
   const text = typeof reason === "string" ? reason : "";
   const r = text.toLowerCase();
   // Ordered: "cancelled" must win over the generic auth match below, or
@@ -59,7 +69,7 @@ export function diagnose(reason: unknown): string {
   // is: a message that mentions authentication and a domain policy must not
   // be reported as a wrong password. The two deserve opposite advice, and
   // the wrong one wastes an afternoon.
-  if (r.includes("ntlm-refused-by-policy")) {
+  if (symbol === "ntlm-refused-by-policy" || r.includes("ntlm-refused-by-policy")) {
     return (
       "This computer's domain does not accept the sign-in method this version " +
       "uses. An administrator has set “Restrict NTLM: Incoming NTLM " +
@@ -71,6 +81,7 @@ export function diagnose(reason: unknown): string {
     );
   }
   if (
+    symbol === "nla-refused" ||
     r.includes("nla-refused") ||
     r.includes("would not accept network level authentication")
   ) {
@@ -83,7 +94,7 @@ export function diagnose(reason: unknown): string {
 
   // Ordered ABOVE the certificate/TLS arm below, which would otherwise
   // swallow both of these: the symbols contain the substring "tls".
-  if (r.includes("legacy-tls-required")) {
+  if (symbol === "legacy-tls-required" || r.includes("legacy-tls-required")) {
     return (
       "This computer only offers TLS 1.0 or 1.1 to encrypt the connection, " +
       "and this app does not use those versions unless you say so. That is " +
@@ -94,7 +105,7 @@ export function diagnose(reason: unknown): string {
       "reason it is off by default."
     );
   }
-  if (r.includes("legacy-tls-unavailable")) {
+  if (symbol === "legacy-tls-unavailable" || r.includes("legacy-tls-unavailable")) {
     return (
       "This computer only offers TLS 1.0 or 1.1, and this copy of the app was " +
       "built without support for them, so the setting you turned on cannot be " +
@@ -133,7 +144,22 @@ export function diagnose(reason: unknown): string {
 
   // The diagnosis is about the port, not about which server ought to be on
   // it, so it does not name a protocol.
-  if (r.includes("refused")) return "Connection refused, nothing is listening on that port.";
+  //
+  // "Refused" on its own is not enough. The RDP side says "the server
+  // refused the requested security protocols" when the machine is there and
+  // answered, but will not do security this client speaks, and a bare
+  // substring test reported that as "nothing is listening on that port",
+  // which sends the person to check a port that is very much open.
+  if (r.includes("refused the requested security protocols")) {
+    return (
+      "The computer answered, but it would not use a security method this " +
+      "version speaks. It may be an old server, or one whose policy forbids " +
+      "the sign-in this app offers."
+    );
+  }
+  if (r.includes("connection refused") || r === "refused" || r.endsWith(" refused")) {
+    return "Connection refused, nothing is listening on that port.";
+  }
   if (r.includes("timed out") || r.includes("timeout")) return "The computer didn't respond, it may be asleep, off, or unreachable from this network.";
   // Deliberately NOT a bare "auth" match. That caught every message merely
   // mentioning authentication, so a server offering none at all was reported
@@ -158,9 +184,11 @@ export function diagnose(reason: unknown): string {
  * and Security already expanded, which is the same "open it expanded" rule
  * the editor applies to a setting that is already on.
  */
-export function opensSecuritySettings(reason: string): boolean {
+export function opensSecuritySettings(reason: string, symbol?: string | null): boolean {
   const r = reason.toLowerCase();
   return (
+    symbol === "legacy-tls-required" ||
+    symbol === "nla-refused" ||
     r.includes("legacy-tls-required") ||
     r.includes("nla-refused") ||
     r.includes("would not accept network level authentication")

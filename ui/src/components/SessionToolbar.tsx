@@ -26,7 +26,7 @@ import type { CaptureStatus } from "../lib/tauri";
 import { classNames, formatBps, fullscreenHint, isMac, modKeyLabel } from "../lib/util";
 import { usePaneVisible } from "./Pane";
 import {
-  IconActivity, IconCamera, IconChevronDown, IconClipboard, IconDisconnect, IconEye,
+  IconActivity, IconCamera, IconChevronDown, IconClipboard, IconCommand, IconDisconnect, IconEye,
   IconFile, IconGripVertical, IconKeyboard, IconMaximize, IconMonitor, IconPin,
   IconCursor, IconRefresh, IconSearch, IconSplitDown, IconSplitRight, IconTerminal,
 } from "./icons";
@@ -46,6 +46,11 @@ interface ToolbarPos {
 const POS_KEY = "deskvnc.toolbar.pos";
 const PIN_KEY = "deskvnc.toolbar.pin";
 const IDLE_MS = 3000;
+/**
+ * How long the bar stays open after a session opens, before it is allowed to
+ * fade to a chevron on its own.
+ */
+const FRESH_MS = 9000;
 /** Gap kept between the toolbar and the edges of the window. */
 const MARGIN = 12;
 /** Drag within this many pixels of an edge and it docks there. */
@@ -119,6 +124,8 @@ export interface SessionToolbarProps {
   protocol: ProtocolKind;
   state: SessionState;
   stats: SessionStats | null;
+  /** The renderer's queue, so the shedding is visible. */
+  queueStats?: { depth: number; bytes: number; droppedRects: number; droppedUpdates: number } | null;
   scalingMode: ScalingMode;
   zoom: number;
   quality: QualityPreset;
@@ -219,6 +226,17 @@ export function SessionToolbar(props: SessionToolbarProps): ReactNode {
   const [openMenu, setOpenMenu] = useState<string | null>(null);
   const idleTimer = useRef(0);
   const dragging = useRef(false);
+  /**
+   * The first seconds after the session opens, the bar stays out.
+   *
+   * The bar fades to a chevron after three seconds of no interaction, which
+   * is right for a person who is working and wrong for a person who has just
+   * connected and is looking for the button that makes the screen fullscreen.
+   * A chevron nobody knows is a button is not a control.
+   */
+  const [fresh, setFresh] = useState(true);
+  const freshRef = useRef(true);
+  freshRef.current = fresh;
   /** Read inside callbacks that must not collapse an already-collapsed bar. */
   const collapsedRef = useRef(collapsed);
   collapsedRef.current = collapsed;
@@ -332,9 +350,23 @@ export function SessionToolbar(props: SessionToolbarProps): ReactNode {
   const armIdle = useCallback((): void => {
     window.clearTimeout(idleTimer.current);
     idleTimer.current = window.setTimeout(() => {
+      // Still in the grace period after the session opened: leave the bar
+      // where it is. The pointer moving re-arms this, and so does the timer
+      // below when the grace period ends.
+      if (freshRef.current) return;
       if (!pinned && !dragging.current && !hovering.current) collapse();
     }, IDLE_MS);
   }, [pinned, collapse]);
+
+  // The grace period ends on its own, and the bar starts behaving normally
+  // from there whether the person has touched anything or not.
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setFresh(false);
+      armIdle();
+    }, FRESH_MS);
+    return () => window.clearTimeout(timer);
+  }, [armIdle]);
 
   // Only the focused pane's toolbar watches the pointer. A toolbar belonging to
   // any other pane is not drawn at all, and one that still ran this would reset
@@ -608,6 +640,27 @@ export function SessionToolbar(props: SessionToolbarProps): ReactNode {
           <IconGripVertical size={14} />
         </button>
 
+        {/*
+          The two things a person does in the first minute of a session, first.
+
+          Fullscreen was the twelfth control and Ctrl+Alt+Del was two menus
+          deep, which meant the two most common requests were the two hardest
+          to find. They are here now, at the front, with the rest of the bar
+          unchanged behind them.
+        */}
+        <ToolButton label={`Fullscreen (${fullscreenHint})`} onClick={props.onFullscreen}>
+          <IconMaximize size={15} />
+        </ToolButton>
+
+        <ToolButton
+          label="Send Ctrl+Alt+Del to the remote computer"
+          onClick={() => props.onSendCombo("ctrl-alt-del")}
+        >
+          <IconCommand size={15} />
+        </ToolButton>
+
+        <Divider />
+
         {/* connection status */}
         <ToolButton
           label="Connection status"
@@ -711,10 +764,6 @@ export function SessionToolbar(props: SessionToolbarProps): ReactNode {
 
         <Divider />
 
-        <ToolButton label={`Fullscreen (${fullscreenHint})`} onClick={props.onFullscreen}>
-          <IconMaximize size={15} />
-        </ToolButton>
-
         {/* Only a session shown in a tab has panes to divide. A window has
             nothing to put a second desktop beside. */}
         {props.onSplit ? (
@@ -790,7 +839,7 @@ export function SessionToolbar(props: SessionToolbarProps): ReactNode {
         >
           {openMenu === "status" ? (
             <div className="w-60 px-2.5 py-1.5">
-              <SessionStatusDetails stats={props.stats} desktopName={props.desktopName} />
+              (<SessionStatusDetails stats={props.stats} queueStats={props.queueStats} desktopName={props.desktopName} />)
             </div>
           ) : null}
           {openMenu === "scale" ? (
@@ -1225,9 +1274,11 @@ function MenuRow({
  */
 export function SessionStatusDetails({
   stats,
+  queueStats,
   desktopName,
 }: {
   stats: SessionStats | null;
+  queueStats?: { depth: number; bytes: number; droppedRects: number; droppedUpdates: number } | null;
   desktopName: string;
 }): ReactNode {
   return (
@@ -1249,6 +1300,23 @@ export function SessionStatusDetails({
           <dd className="mono text-primary">{encodingName(stats.current_encoding)}</dd>
           <dt className="text-tertiary">Received</dt>
           <dd className="tabular-nums text-primary">{(stats.bytes_received / 1e6).toFixed(1)} MB</dd>
+          {/*
+            The renderer's own queue, and what it has shed.
+
+            It was invisible until now: the counters existed and nothing ever
+            read them, so "the picture is behind" could not be told apart from
+            "the picture is behind because the client is throwing frames
+            away". A person reporting a slow session can now see which it is,
+            and so can whoever reads the report.
+          */}
+          {queueStats && queueStats.droppedRects + queueStats.droppedUpdates > 0 ? (
+            <>
+              <dt className="text-tertiary">Shed</dt>
+              <dd className="tabular-nums text-warning">
+                {queueStats.droppedRects} rects, {queueStats.droppedUpdates} updates
+              </dd>
+            </>
+          ) : null}
         </dl>
       ) : (
         <p className="text-xs text-tertiary">Statistics arrive once the session reports them.</p>

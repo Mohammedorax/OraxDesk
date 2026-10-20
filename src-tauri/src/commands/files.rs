@@ -1313,8 +1313,17 @@ mod tests {
     #[test]
     fn local_mutations_refuse_roots_and_relative_paths() {
         assert!(guard_local_path("relative/path").is_err());
-        assert!(guard_local_path("/").is_err());
-        assert!(guard_local_path("/tmp/thing").is_ok());
+        // The root of the filesystem. It is the one path that is absolute on
+        // every platform and has no parent, so it is the one that must be
+        // refused for what it IS rather than for how it is spelled.
+        let root = if cfg!(windows) { "C:\\" } else { "/" };
+        assert!(guard_local_path(root).is_err());
+        // An ordinary absolute path, spelled the way THIS platform spells one.
+        // "/tmp/thing" is absolute on Linux and not on Windows, where a
+        // leading slash names the current drive rather than a root, and a
+        // test written that way only ever ran on the machine that wrote it.
+        let absolute = std::env::temp_dir().join("thing");
+        assert!(guard_local_path(&absolute.to_string_lossy()).is_ok());
     }
 
     #[test]

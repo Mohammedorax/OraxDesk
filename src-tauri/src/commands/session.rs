@@ -606,6 +606,46 @@ struct SessionEndpoint {
     protocol: ProtocolKind,
 }
 
+/// The "this machine is opening" claim, released when it goes out of scope.
+///
+/// `open_session_window` claims the machine so that a second connect gesture
+/// inside the gap between asking for a window and the window connecting finds
+/// the first one. `connect_session` is the other half of that handshake: it
+/// releases the claim when the session is established, and it has to release
+/// it when it is NOT, or the machine counts as "already open" for the whole
+/// grace period after a connect that failed.
+struct OpeningClaim {
+    windows: Arc<Mutex<HashMap<String, crate::state::PendingWindow>>>,
+    id: String,
+    released: bool,
+}
+
+impl OpeningClaim {
+    fn new(windows: Arc<Mutex<HashMap<String, crate::state::PendingWindow>>>, id: String) -> Self {
+        Self {
+            windows,
+            id,
+            released: false,
+        }
+    }
+
+    /// Give the claim back now. The session is established, so the machine is
+    /// open for a different reason.
+    fn release(&mut self) {
+        if self.released {
+            return;
+        }
+        self.released = true;
+        self.windows.lock().remove(&self.id);
+    }
+}
+
+impl Drop for OpeningClaim {
+    fn drop(&mut self) {
+        self.release();
+    }
+}
+
 /// The kebab-case tag of a `SessionState`, exactly as serde spells it in the
 /// per-window `state-changed` event, extracted from the serialized form so
 /// the two can never drift apart.
@@ -889,6 +929,14 @@ fn forward_events(
         // credential the user asked to remember but that never reached
         // `Connected` dies here, unwritten.
         creds_ctx.pending.lock().remove(&session_id);
+        // And so does an authentication prompt that was still on screen. The
+        // prompt is only removed when the session moves out of
+        // `Authenticating`, so a session that was cancelled while it was
+        // asking for a password left its request behind for the life of the
+        // process.
+        if let Some(app_state) = app.try_state::<AppState>() {
+            app_state.pending_prompts.lock().remove(&session_id);
+        }
         let entry = sessions.lock().remove(&session_id);
         // An attachment must not outlive the session it attached to: the id
         // would otherwise still read as agent driven in a pane, and a later
@@ -1101,6 +1149,15 @@ pub async fn connect_session(
         }
         None => uuid::Uuid::new_v4().to_string(),
     };
+    // The claim `open_session_window` took on this machine is released when
+    // this command ends, unless the session was actually established.
+    //
+    // The claim is what makes a second connect gesture inside the gap find
+    // the first one. Every failure path of this command used to leave it in
+    // place, so after a connect that failed the machine counted as "already
+    // open" for the whole grace period, and the retry was answered with
+    // "already open" and connected nothing.
+    let mut claim = OpeningClaim::new(state.opening_windows.clone(), id.clone());
     // Reconnecting reuses the same session id, the window label is derived
     // from it, so a stale incarnation has to be reaped first. Rejecting
     // outright is what made the Reconnect button fail with "session already
@@ -1390,7 +1447,7 @@ pub async fn connect_session(
     );
     // The window has stopped "opening", from here the registry entry above is
     // what makes this machine count as already open.
-    state.opening_windows.lock().remove(&id);
+    claim.release();
     // Announce the registration app-wide; the matching "ended" comes from the
     // forwarding task when the event stream closes.
     let _ = app.emit(
@@ -1698,6 +1755,18 @@ pub async fn send_input(
                     seq,
                     "input sequence gap: admitting after the timeout"
                 );
+                // A gap means an IPC batch was LOST, and a batch carries
+                // key-downs and key-ups together. The session keeps track of
+                // the keys it believes are held, so it can be told to let go
+                // of them: without this, a lost batch that held the key-up
+                // leaves a modifier stuck down on the remote for the rest of
+                // the session, and the person cannot type a capital letter
+                // or copy anything until they click away.
+                //
+                // The session is the one that knows what it believes is
+                // held, so the release is asked of it rather than guessed
+                // at here.
+                let _ = send_command(&state, &session_id, ClientCommand::ReleaseAllKeys).await;
             }
             Some(InputOrderDone { order, seq })
         }
@@ -1705,7 +1774,20 @@ pub async fn send_input(
     };
 
     let commands = framing::decode_input(body)?;
-    let (sender, last_pointer_mask) = state.command_channel(&session_id)?;
+    let (sender, last_pointer_mask) = match state.command_channel(&session_id) {
+        Ok(channel) => channel,
+        Err(error) => {
+            // The session is gone, so the order that was just created for it
+            // is never cleaned up by the session's own teardown. It is
+            // removed here, or every input sent to a session that had
+            // already gone leaves an entry behind for the life of the
+            // process.
+            if seq.is_some() {
+                input_orders().lock().remove(&session_id);
+            }
+            return Err(error);
+        }
+    };
     for command in commands {
         let motion_only = if let ClientCommand::Pointer { button_mask, .. } = &command {
             let mask = *button_mask as i32;

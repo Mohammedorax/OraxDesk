@@ -51,6 +51,7 @@ import {
 import {
   readViewPrefs,
   hasStoredViewPref,
+  isScalingMode,
   sameViewPrefs,
   viewPrefsKey,
   writeViewPrefs,
@@ -937,6 +938,32 @@ function SessionView({
     };
   }, [params.profileId, params.protocol, params.sessionId, prefsKey]);
 
+  // The same for the profile's "Scaling": how the remote screen fits the
+  // window to begin with.
+  //
+  // The box was saved with the profile and never read, so the session always
+  // started at the global default and the field in the editor was a control
+  // that changed nothing. It fills in only where nothing has been remembered
+  // against this computer, the same rule the pass-through seed follows: what
+  // the person last did in a session is the more recent thing.
+  useEffect(() => {
+    const id = params.profileId;
+    if (!id) return;
+    if (hasStoredViewPref(prefsKey, "scalingMode")) return;
+    let cancelled = false;
+    void safeInvoke<{ scalingMode?: string } | null>("get_host", { hostId: id }, null).then(
+      (host) => {
+        if (cancelled || !host?.scalingMode) return;
+        const mode = host.scalingMode;
+        if (!isScalingMode(mode)) return;
+        setScalingModeState(mode);
+      },
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [params.profileId, prefsKey]);
+
   const guessDisplays = params.protocol !== "rdp";
   useEffect(() => {
     if (!guessDisplays || layoutKnown || session.state.state !== "connected") return;
@@ -1204,9 +1231,10 @@ function SessionView({
 
   // Bell: brief visual pulse via toast
   useEffect(() => {
-    if (session.bellTick > 0) push("info", " Bell");
+    if (session.bellTick > 0) push("info", "Bell");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session.bellTick]);
+
 
   // ---------------------------------------------------------- library thumbnail
   //
@@ -1969,6 +1997,7 @@ function SessionView({
           protocol={params.protocol}
           state={st}
           stats={session.stats}
+          queueStats={rendererRef.current?.getQueueStats() ?? null}
           scalingMode={scalingMode}
           zoom={zoom}
           quality={quality}
@@ -2059,6 +2088,7 @@ function SessionView({
           name={session.desktopName}
           reason={st.reason}
           canRetry={st.can_retry}
+          symbol={st.symbol}
           profileId={params.profileId}
           onEditSecurity={
             params.profileId

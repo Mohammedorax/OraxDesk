@@ -406,11 +406,15 @@ export function discoveredThumbKey(address: string, port: number): string {
 export function DiscoveredTile({
   host,
   onAdd,
+  onEdit,
   onConnect,
   thumb,
 }: {
   host: DiscoveredHost;
+  /** Save this machine in the library, in one click. */
   onAdd: () => void;
+  /** Open the full editor for it. */
+  onEdit: () => void;
   onConnect: () => void;
   /**
    * blob: URL of a screenshot captured on a previous ad-hoc connect.
@@ -505,24 +509,47 @@ export function DiscoveredTile({
           {host.protocol && host.protocol !== "vnc" ? (
             <ProtocolBadge protocol={host.protocol} />
           ) : null}
+          {/*
+            The tile says so, rather than leaving it to the dashed border and
+            a section heading that sits below the whole grid of saved
+            computers. A person with thirty saved computers never scrolls down
+            to find that heading.
+          */}
+          <span className="shrink-0 rounded-sm bg-inset px-1.5 py-px text-2xs font-medium text-tertiary">
+            Not saved yet
+          </span>
           <span
             className="mono min-w-0 flex-1 truncate text-secondary"
             title={addressTitle}
             aria-label={mac ? `${address}, MAC address ${mac}` : address}
+            dir="ltr"
           >
             {address}
           </span>
           {secIcon}
         </div>
         <div className="flex gap-1.5 pt-1">
-          {/* "Add host" is the primary intent here, so it takes the leftover
-              width; Connect stays at its natural size. */}
+          {/*
+            "Add" saves the machine in one click. Discovery already knows its
+            name, address, port, protocol and MAC address, so making a person
+            fill in a fourteen-field form to keep one machine is the longest
+            possible way to do the shortest thing. "Edit" is still there for
+            anyone who wants the whole form, and the save can be undone from
+            the toast.
+          */}
           <button
             type="button"
-            className="btn-secondary min-w-0 flex-1 justify-center !px-2.5 !py-1 !text-xs"
+            className="btn-primary min-w-0 flex-1 justify-center !px-2.5 !py-1 !text-xs"
             onClick={onAdd}
           >
-            <IconPlus size={13} className="shrink-0" /> Add host
+            <IconPlus size={13} className="shrink-0" /> Add
+          </button>
+          <button
+            type="button"
+            className="btn-secondary shrink-0 !px-2.5 !py-1 !text-xs"
+            onClick={onEdit}
+          >
+            <IconEdit size={13} className="shrink-0" /> Edit
           </button>
           <button
             type="button"

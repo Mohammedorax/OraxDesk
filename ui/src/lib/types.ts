@@ -48,9 +48,20 @@ export function isProtocolKind(value: unknown): value is ProtocolKind {
  * The badge text for a protocol. An unrecognised value is shown verbatim
  * (upper-cased) so a host saved by a newer build is identifiable rather than
  * mislabelled as one of ours.
+ *
+ * "Boundary" is the name of the protocol family inside this project, not a
+ * word anyone outside it has any reason to know. What a person is connecting
+ * to is a computer running DeskVNC Support, so that is what the badge says.
  */
+const PROTOCOL_LABELS: Record<string, string> = {
+  vnc: "VNC",
+  rdp: "RDP",
+  ssh: "SSH",
+  boundary: "Support",
+};
+
 export function protocolLabel(p: string): string {
-  return p === "vnc" ? "VNC" : p === "rdp" ? "RDP" : p === "ssh" ? "SSH" : p.toUpperCase();
+  return PROTOCOL_LABELS[p] ?? p.toUpperCase();
 }
 
 /**
@@ -65,14 +76,32 @@ export function protocolLabel(p: string): string {
  * happened to fall through to.
  */
 const PROTOCOL_NAMES: Record<ProtocolKind, string> = {
-  boundary: "Boundary support",
-  rdp: "RDP (Windows Remote Desktop)",
-  ssh: "SSH terminal",
-  vnc: "VNC / screen sharing",
+  boundary: "DeskVNC Support (remote help)",
+  rdp: "Remote Desktop (RDP)",
+  ssh: "Terminal (SSH)",
+  vnc: "Screen sharing (VNC)",
 };
 
 export function protocolName(p: ProtocolKind): string {
   return PROTOCOL_NAMES[p];
+}
+
+/**
+ * The short name for the protocol selector.
+ *
+ * The four options sit side by side in a row about 130 pixels wide each, and
+ * the full name is a sentence: it goes in the tooltip and the screen reader
+ * label, and the button itself gets these.
+ */
+const PROTOCOL_SHORT_NAMES: Record<ProtocolKind, string> = {
+  boundary: "Support",
+  rdp: "Remote Desktop",
+  ssh: "Terminal",
+  vnc: "Screen sharing",
+};
+
+export function protocolShortName(p: ProtocolKind): string {
+  return PROTOCOL_SHORT_NAMES[p];
 }
 
 export type OsHint = "macos" | "windows" | "linux" | "qemu" | "unknown";

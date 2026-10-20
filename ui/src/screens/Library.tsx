@@ -32,6 +32,7 @@ import {
   safeListen,
   forgetCertificate,
   type OpenSessionOptions,
+  type SessionWindowOutcome,
 } from "../lib/tauri";
 import { seedMockThumbnails, useMockData } from "../lib/mock";
 import { useSessions } from "../state/SessionsContext";
@@ -43,7 +44,8 @@ import {
   restoreLayout,
   saveGroupLayout,
 } from "../lib/groupLayout";
-import { classNames, formatBps, fuzzyMatch, modKeyLabel, timeAgo } from "../lib/util";
+import { classNames, describeError, formatBps, fuzzyMatch, modKeyLabel, timeAgo } from "../lib/util";
+import { formatTarget } from "../lib/address";
 import { Sidebar, type SidebarSelection } from "../components/Sidebar";
 import { useHostDragSelect, type DropTarget } from "../hooks/useHostDragSelect";
 import { HostTile, DiscoveredTile, addressLabel, osLabel } from "../components/HostTile";
@@ -53,7 +55,7 @@ import { loadRdpDefaults } from "../lib/rdpDefaults";
 import { QuickConnect } from "../components/QuickConnect";
 import { mustInvoke } from "../lib/tauri";
 import { DeviceIdentityCard } from "../components/DeviceIdentityCard";
-import { rememberedRegistryUrl } from "../lib/support";
+import { rememberedRegistryUrl, registry } from "../lib/support";
 import { ContextMenu, Dialog, EmptyState, Select, TileSkeleton, type MenuItem } from "../components/primitives";
 import {
   IconActivity,
@@ -122,7 +124,7 @@ export function Library({
   autoAddDiscoveredId?: string | null;
   onAutoAddHandled?: () => void;
 }): ReactNode {
-  const { hosts, groups, tags, loading, saveHost, deleteHost, saveGroup, saveTag, setHostTags, setHostsGroup, addTagToHosts, removeTagFromHosts, savePassword, saveSshPassphrase, saveRdpCredentials, wakeHost, refresh, refreshThumbnail } = useHosts();
+  const { hosts, groups, tags, loading, saveHost, deleteHost, saveGroup, saveTag, setHostTags, setHostsGroup, addTagToHosts, removeTagFromHosts, savePassword, saveSshPassphrase, saveRdpCredentials, wakeHost, toggleFavorite, refresh, reload, refreshThumbnail } = useHosts();
   const { discovered, scan, startScan } = useDiscovery();
   const { settings, update } = useSettings();
   const { livePreviews, setLivePreviews } = useSessions();
@@ -172,7 +174,16 @@ export function Library({
       onConnected?: () => void,
     ): Promise<void> => {
       const background = options.background === true;
-      let outcome = await openSessionWindow({ ...options, asTab: tabbed });
+      let outcome: SessionWindowOutcome | null;
+      try {
+        outcome = await openSessionWindow({ ...options, asTab: tabbed });
+      } catch (err) {
+        // The shell refused or failed to open the session. Say so: a connect
+        // that fails silently is a button that does nothing, and the user has
+        // no way to tell that from a machine that is simply not answering.
+        push("danger", `Could not connect to ${label}: ${describeError(err)}`);
+        return;
+      }
       if (!outcome) return;
       // A tab the shell believes is still open, but which is not on the strip,
       // is a session on its way out: `disconnect_session` only ASKS the session
@@ -182,7 +193,12 @@ export function Library({
       // open" and connect nothing at all. Ask once more, saying outright that a
       // new one is wanted.
       if (outcome.reused && outcome.target === "tab" && !hasTab(outcome.sessionId)) {
-        outcome = await openSessionWindow({ ...options, asTab: tabbed, forceNew: true });
+        try {
+          outcome = await openSessionWindow({ ...options, asTab: tabbed, forceNew: true });
+        } catch (err) {
+          push("danger", `Could not connect to ${label}: ${describeError(err)}`);
+          return;
+        }
         if (!outcome) return;
       }
       if (outcome.reused) {
@@ -244,33 +260,12 @@ export function Library({
     [openSession, tabbed, openTab],
   );
 
-  // A nine-digit number is a device number, not a hostname: resolve it through
-  // the registry when one is configured, then connect to that endpoint.
-  const connectAdHocResolved = useCallback(
-    (protocol: ProtocolKind, address: string, port: number): void => {
-      const digits = address.trim().replaceAll(" ", "");
-      const registryUrl = rememberedRegistryUrl();
-      if (/^\d{9}$/.test(digits) && registryUrl !== "" && inTauri()) {
-        void (async () => {
-          try {
-            const record = await mustInvoke<{ id: string }>("registry_lookup_number", {
-              url: registryUrl,
-              number: digits,
-            });
-            connectAdHoc("boundary", record.id, 0);
-          } catch {
-            connectAdHoc(protocol, address, port);
-          }
-        })();
-        return;
-      }
-      connectAdHoc(protocol, address, port);
-    },
-    // connectAdHoc is defined just below; the body only runs after render.
-    [],
-  );
   const connectAdHoc = useCallback(
     (protocol: ProtocolKind, address: string, port: number): void => {
+      // Say what is being attempted. The session opens in another window or
+      // tab, so without this the address bar goes empty and nothing at all
+      // happens where the person is looking.
+      push("info", `Connecting to ${address}${port ? ` on port ${port}` : ""}`);
       if (inTauri()) {
         void openSession({ address, port, protocol }, address);
         return;
@@ -295,7 +290,38 @@ export function Library({
         `&name=${encodeURIComponent(address)}` +
         (protocol === "vnc" ? "" : `&protocol=${protocol}`);
     },
-    [openSession, tabbed, openTab],
+    [openSession, tabbed, openTab, push],
+  );
+
+  // A nine-digit number is a device number, not a hostname: resolve it through
+  // the registry when one is configured, then connect to that endpoint.
+  //
+  // `connectAdHoc` is a dependency, not a captured variable. It used to be
+  // declared AFTER this callback with an empty dependency list, which froze
+  // the very first render's copy of it: the connection then used whatever the
+  // window mode was when the library opened, for the rest of the session, so
+  // switching between tabs and windows and then typing a number opened the
+  // wrong kind of thing.
+  const connectAdHocResolved = useCallback(
+    (protocol: ProtocolKind, address: string, port: number): void => {
+      const digits = address.trim().replaceAll(" ", "");
+      const registryUrl = rememberedRegistryUrl();
+      if (/^\d{9}$/.test(digits) && registryUrl !== "" && inTauri()) {
+        void (async () => {
+          try {
+            const record = await registry.lookupNumber(registryUrl, digits);
+            connectAdHoc("boundary", record.id, 0);
+          } catch {
+            // No such number in the registry, or the registry is down. Fall
+            // back to what the user typed rather than doing nothing.
+            connectAdHoc(protocol, address, port);
+          }
+        })();
+        return;
+      }
+      connectAdHoc(protocol, address, port);
+    },
+    [connectAdHoc],
   );
 
   /**
@@ -367,28 +393,32 @@ export function Library({
           );
           continue;
         }
-        void openSessionWindow({ profileId: host.id, asTab: true }).then((outcome) => {
-          if (!outcome) return;
-          if (outcome.reused) {
-            // Already connected somewhere: move it in rather than refusing.
-            adopt(tabId, paneId, outcome.sessionId);
-            return;
-          }
-          if (outcome.target !== "tab" || !outcome.params) return;
-          openTab(
-            outcome.sessionId,
-            {
-              sessionId: outcome.sessionId,
-              profileId: outcome.params.profileId,
-              address: outcome.params.address,
-              port: outcome.params.port,
-              name: outcome.params.name,
-              protocol: outcome.params.protocol,
-            },
-            { tabId, paneId },
-          );
-          void safeInvoke("touch_connected", { hostId: host.id }, null);
-        });
+        void openSessionWindow({ profileId: host.id, asTab: true })
+          .then((outcome) => {
+            if (!outcome) return;
+            if (outcome.reused) {
+              // Already connected somewhere: move it in rather than refusing.
+              adopt(tabId, paneId, outcome.sessionId);
+              return;
+            }
+            if (outcome.target !== "tab" || !outcome.params) return;
+            openTab(
+              outcome.sessionId,
+              {
+                sessionId: outcome.sessionId,
+                profileId: outcome.params.profileId,
+                address: outcome.params.address,
+                port: outcome.params.port,
+                name: outcome.params.name,
+                protocol: outcome.params.protocol,
+              },
+              { tabId, paneId },
+            );
+            void safeInvoke("touch_connected", { hostId: host.id }, null);
+          })
+          .catch((err: unknown) => {
+            push("danger", `Could not connect to ${host.friendlyName}: ${describeError(err)}`);
+          });
       }
     },
     [groups, hosts, openArranged, openTab, adopt, push],
@@ -723,21 +753,93 @@ export function Library({
    * it off the machine by hand. `osHint` goes through `resolvedOsHint` so a
    * name proven to come from Windows wins over the server-string guess.
    */
-  const addDiscovered = useCallback((d: DiscoveredHost): void => {
-    setHostDialog(
-      draftFromHost(null, {
+  const addDiscovered = useCallback(
+    (d: DiscoveredHost): void => {
+      setHostDialog(
+        draftFromHost(null, {
+          friendlyName: d.name,
+          address: d.address,
+          port: d.port,
+          // The discovery row already knows what answers on that port, so the
+          // editor opens on the right side of the protocol selector rather
+          // than making the user notice and switch it.
+          protocol: d.protocol ?? "vnc",
+          osHint: resolvedOsHint(d),
+          wolMac: hostMac(d),
+        }),
+      );
+    },
+    [],
+  );
+
+  /**
+   * Save a discovered machine in one click.
+   *
+   * Discovery already knows the name, the address, the port, the protocol and
+   * the MAC address, so the editor's whole job here is to let a person check
+   * and adjust what the app already worked out. Making them fill in a
+   * fourteen-field form to keep one machine is the longest possible way to
+   * do the shortest thing.
+   *
+   * The tile's "Edit" button still opens the full form for anyone who wants
+   * it, and the toast offers Undo, so nothing is taken away.
+   */
+  const saveDiscovered = useCallback(
+    (d: DiscoveredHost): void => {
+      const draft = draftFromHost(null, {
         friendlyName: d.name,
         address: d.address,
         port: d.port,
-        // The discovery row already knows what answers on that port, so the
-        // editor opens on the right side of the protocol selector rather
-        // than making the user notice and switch it.
         protocol: d.protocol ?? "vnc",
         osHint: resolvedOsHint(d),
         wolMac: hostMac(d),
-      }),
-    );
-  }, []);
+      });
+      void (async () => {
+        try {
+          await saveHost({
+            id: draft.id,
+            friendlyName: draft.friendlyName,
+            address: draft.address,
+            port: draft.port,
+            protocol: draft.protocol,
+            osHint: draft.osHint,
+            wolMac: draft.wolMac,
+            securityPref: null,
+            qualityPref: "auto",
+            scalingMode: "aspect-fit",
+            keyboardMode: "auto",
+            passthrough: false,
+            sshTunnel: null,
+            groupId: null,
+            tags: [],
+            hasPassword: false,
+            rdpSettings: null,
+            sshSettings: null,
+          });
+          push("success", `Added ${draft.friendlyName}`, {
+            label: "Undo",
+            run: () => {
+              void (async () => {
+                // The same address AND port, not just the address: another
+                // saved computer on the same machine but a different port is
+                // a different computer, and removing it would be a surprise.
+                for (const h of hostsRef.current.filter(
+                  (x) => x.address === draft.address && x.port === draft.port,
+                )) {
+                  await deleteHost(h.id);
+                }
+              })().catch((err: unknown) =>
+                push("danger", `Could not remove that: ${describeError(err)}`),
+              );
+            },
+          });
+        } catch (err) {
+          push("danger", `Could not save ${d.name}: ${describeError(err)}`);
+        }
+      })();
+    },
+    [saveHost, deleteHost, push],
+  );
 
   /** The MAC discovery is currently reporting for this endpoint, if any. */
   const discoveredMacFor = useCallback(
@@ -817,94 +919,128 @@ export function Library({
 
   const saveDraft = useCallback(
     async (draft: HostDraft): Promise<void> => {
-      const saved = await saveHost({
-        id: draft.id,
-        friendlyName: draft.friendlyName,
-        address: draft.address,
-        port: draft.port,
-        groupId: draft.groupId,
-        osHint: draft.osHint,
-        securityPref: draft.securityPref,
-        qualityPref: draft.qualityPref,
-        scalingMode: draft.scalingMode,
-        keyboardMode: draft.keyboardMode,
-        passthrough: draft.passthrough,
-        sshTunnel: serializeSshTunnel(draft.sshTunnel),
-        wolMac: draft.wolMac,
-        tags: draft.tagIds,
-        hasPassword: draft.hasPassword,
-        protocol: draft.protocol,
-        // An untouched settings object stores null, so the column only fills
-        // once the user actually changes something and the Rust side keeps
-        // applying its own defaults.
-        rdpSettings: draft.protocol === "rdp" ? serializeRdpSettings(draft.rdp) : null,
-        sshSettings: draft.protocol === "ssh" ? serializeSshSettings(draft.ssh) : null,
-      });
+      let saved: HostProfile | null;
+      try {
+        saved = await saveHost({
+          id: draft.id,
+          friendlyName: draft.friendlyName,
+          address: draft.address,
+          port: draft.port,
+          groupId: draft.groupId,
+          osHint: draft.osHint,
+          securityPref: draft.securityPref,
+          qualityPref: draft.qualityPref,
+          scalingMode: draft.scalingMode,
+          keyboardMode: draft.keyboardMode,
+          passthrough: draft.passthrough,
+          sshTunnel: serializeSshTunnel(draft.sshTunnel),
+          wolMac: draft.wolMac,
+          tags: draft.tagIds,
+          hasPassword: draft.hasPassword,
+          protocol: draft.protocol,
+          // An untouched settings object stores null, so the column only fills
+          // once the user actually changes something and the Rust side keeps
+          // applying its own defaults.
+          rdpSettings: draft.protocol === "rdp" ? serializeRdpSettings(draft.rdp) : null,
+          sshSettings: draft.protocol === "ssh" ? serializeSshSettings(draft.ssh) : null,
+        });
+      } catch (err) {
+        // The profile was not written. Say so and keep the dialog open, with
+        // everything the user typed still in it, rather than closing it and
+        // claiming success.
+        push("danger", `Could not save ${draft.friendlyName}: ${describeError(err)}`);
+        return;
+      }
       const id = saved?.id ?? draft.id;
       if (id) {
         // An RDP password belongs with its user name and domain, which are
         // three fields of one credential rather than a password on its own.
-        if (draft.protocol === "rdp") {
-          await saveRdpCredentials(id, {
-            user: draft.rdpUser,
-            domain: draft.rdpDomain,
-            password: draft.password,
-          });
-        } else if (draft.protocol === "ssh") {
-          // `save_password` (Rust) already carries `sshUser` / `sshPassword`
-          // fields alongside the existing `sshPassphrase` (see
-          // `StoredCredentials` in crates/vnc-store/src/models.rs), and
-          // `connect_session` reads exactly this pair for SSH account
-          // password auth. There is no `saveSshCredentials` wrapper in
-          // HostsContext yet, only `savePassword` (hardcoded to
-          // `vncPassword`) and `saveSshPassphrase` (hardcoded to
-          // `sshPassphrase`), and HostsContext.tsx is outside this change's
-          // scope, so this calls the command directly with `safeInvoke`,
-          // already imported here, rather than adding a new context method.
-          // Only non-empty fields are sent, matching `saveRdpCredentials`'s
-          // own rule: an empty box means "keep what is stored", not "erase
-          // it", and a merge on the Rust side is what makes that true.
-          const payload: Record<string, string> = {};
-          if (draft.sshUser.trim()) payload.sshUser = draft.sshUser.trim();
-          if (draft.password) payload.sshPassword = draft.password;
-          if (Object.keys(payload).length > 0) {
-            await safeInvoke("save_password", { hostId: id, creds: payload }, null);
-            // `saveRdpCredentials` flips `hasPassword` in local state itself
-            // after a write like this one, which needs `setHosts` and so
-            // lives in HostsContext.tsx, outside this change's scope. A
-            // refresh gets the library's key icon to the same correct end
-            // state by re-reading it from the backend instead.
-            if (payload.sshPassword) await refresh();
+        //
+        // Everything from here on is a separate write, and each one can fail
+        // on its own: the keychain can refuse, the vault can be locked. A
+        // failure is reported, and the profile that WAS written stays
+        // written, so the user is told exactly what went wrong rather than
+        // being handed a blanket "could not save".
+        try {
+          if (draft.protocol === "rdp") {
+            await saveRdpCredentials(id, {
+              user: draft.rdpUser,
+              domain: draft.rdpDomain,
+              password: draft.password,
+            });
+          } else if (draft.protocol === "ssh") {
+            // `save_password` (Rust) already carries `sshUser` / `sshPassword`
+            // fields alongside the existing `sshPassphrase` (see
+            // `StoredCredentials` in crates/vnc-store/src/models.rs), and
+            // `connect_session` reads exactly this pair for SSH account
+            // password auth. There is no `saveSshCredentials` wrapper in
+            // HostsContext yet, only `savePassword` (hardcoded to
+            // `vncPassword`) and `saveSshPassphrase` (hardcoded to
+            // `sshPassphrase`), and HostsContext.tsx is outside this change's
+            // scope, so this calls the command directly, rather than adding a
+            // new context method.
+            // Only non-empty fields are sent, matching `saveRdpCredentials`'s
+            // own rule: an empty box means "keep what is stored", not "erase
+            // it", and a merge on the Rust side is what makes that true.
+            const payload: Record<string, string> = {};
+            if (draft.sshUser.trim()) payload.sshUser = draft.sshUser.trim();
+            if (draft.password) payload.sshPassword = draft.password;
+            if (Object.keys(payload).length > 0) {
+              await mustInvoke("save_password", { hostId: id, creds: payload });
+              // `saveRdpCredentials` flips `hasPassword` in local state itself
+              // after a write like this one, which needs `setHosts` and so
+              // lives in HostsContext.tsx, outside this change's scope. A
+              // refresh gets the library's key icon to the same correct end
+              // state by re-reading it from the backend instead.
+              if (payload.sshPassword) await refresh();
+            }
+          } else if (draft.protocol === "vnc") {
+            // A Mac's Screen Sharing, and the other RFB methods that sign in
+            // with an account, keep the user name beside the password in the
+            // `vencrypt*` pair, which is where `connect_session` looks first
+            // and where a post-connect save puts them too. The password only
+            // case is still `savePassword`, unchanged.
+            const payload = vncCredentialPayload(
+              draft.vncUser,
+              draft.password,
+              vncTakesUsername(draft.securityPref, draft.osHint),
+            );
+            if (payload?.vncPassword && !payload.vencryptUser && !payload.vencryptPass) {
+              await savePassword(id, payload.vncPassword);
+            } else if (payload) {
+              await mustInvoke("save_password", { hostId: id, creds: payload });
+              // Same reason as the SSH branch: the key icon is re-read rather
+              // than flipped here.
+              if (payload.vencryptPass) await refresh();
+            }
+          } else if (draft.password) {
+            await savePassword(id, draft.password);
           }
-        } else if (draft.protocol === "vnc") {
-          // A Mac's Screen Sharing, and the other RFB methods that sign in
-          // with an account, keep the user name beside the password in the
-          // `vencrypt*` pair, which is where `connect_session` looks first
-          // and where a post-connect save puts them too. The password only
-          // case is still `savePassword`, unchanged.
-          const payload = vncCredentialPayload(
-            draft.vncUser,
-            draft.password,
-            vncTakesUsername(draft.securityPref, draft.osHint),
+          if (draft.sshPassphrase) await saveSshPassphrase(id, draft.sshPassphrase);
+          await setHostTags(id, draft.tagIds);
+        } catch (err) {
+          // The profile itself is saved. What failed is one of the secrets
+          // that go with it, so say that and not "could not save the host".
+          push(
+            "danger",
+            `${draft.friendlyName} was saved, but its password was not: ${describeError(err)}`,
           );
-          if (payload?.vncPassword && !payload.vencryptUser && !payload.vencryptPass) {
-            await savePassword(id, payload.vncPassword);
-          } else if (payload) {
-            await safeInvoke("save_password", { hostId: id, creds: payload }, null);
-            // Same reason as the SSH branch: the key icon is re-read rather
-            // than flipped here.
-            if (payload.vencryptPass) await refresh();
-          }
-        } else if (draft.password) {
-          await savePassword(id, draft.password);
+          setHostDialog(null);
+          return;
         }
-        if (draft.sshPassphrase) await saveSshPassphrase(id, draft.sshPassphrase);
-        await setHostTags(id, draft.tagIds);
       }
       setHostDialog(null);
-      push("success", draft.id ? "Host updated" : `Added ${draft.friendlyName}`);
+      // The one thing a person usually wants next is to connect to the
+      // computer they have just added, and the toast is where that belongs.
+      push("success", draft.isNew ? `Added ${draft.friendlyName}` : "Host updated", {
+        label: "Connect",
+        run: () => {
+          const saved = hostsRef.current.find((h) => h.id === id);
+          if (saved) connectHost(saved);
+        },
+      });
     },
-    [saveHost, savePassword, saveSshPassphrase, saveRdpCredentials, setHostTags, refresh, push],
+    [saveHost, savePassword, saveSshPassphrase, saveRdpCredentials, setHostTags, refresh, push, connectHost],
   );
 
   const paletteActions = useMemo((): PaletteAction[] => {
@@ -920,18 +1056,19 @@ export function Library({
       })),
       { id: "new-host", label: "New host…", hint: "", run: () => setHostDialog(draftFromHost(null)) },
       { id: "quick-connect", label: "Connect to an address…", hint: `${modKeyLabel}T`, run: focusQuickConnect },
-      { id: "scan", label: "Scan network", hint: "", run: () => void startScan() },
+      { id: "scan", label: "Scan network", hint: "", run: () => void startScan().catch((err: unknown) => push("danger", describeError(err))) },
       {
         id: "toggle-view",
         label: settings.libraryView === "grid" ? "Switch to list view" : "Switch to grid view",
         run: () => update({ libraryView: settings.libraryView === "grid" ? "list" : "grid" }),
       },
       { id: "preferences", label: "Open Preferences", run: onOpenPreferences },
-      { id: "refresh", label: "Refresh library", run: () => void refresh() },
+      { id: "refresh", label: "Refresh library", run: () => void reload() },
       { id: "help", label: "Help & keyboard shortcuts", run: onOpenAbout },
       { id: "about", label: "About DeskVNCViewer", run: onOpenAbout },
     ];
-  }, [summaries, selectTab, settings.libraryView, update, startScan, focusQuickConnect, onOpenPreferences, onOpenAbout, refresh]);
+    }, [summaries, selectTab, settings.libraryView, update, startScan, focusQuickConnect, onOpenPreferences, onOpenAbout, reload]);
+
 
   // Onboarding hand-off: open the add dialog pre-filled from a discovered host
   useEffect(() => {
@@ -1053,19 +1190,30 @@ export function Library({
             // refresh, and the toast must not claim the work is done before
             // any of it has been attempted.
             void (async () => {
-              for (const h of doomed) await deleteHost(h.id);
+              // One host failing to delete does not stop the rest, and the
+              // count in the message is the count that actually went.
+              let deleted = 0;
+              for (const h of doomed) {
+                try {
+                  await deleteHost(h.id);
+                  deleted += 1;
+                } catch (err) {
+                  push("danger", `Could not delete ${h.friendlyName}: ${describeError(err)}`);
+                }
+              }
+              if (deleted === 0) return;
               // Undo restores the profiles and their tags. It cannot bring
               // back the saved passwords: `delete_host` drops the keychain
               // entry, the history rows and the thumbnail, and none of those
               // are recoverable from here. Say so rather than promise more
               // than the button delivers.
-              push("info", `Deleted ${doomed.length} hosts. Saved passwords are gone.`, {
+              push("info", `Deleted ${deleted} hosts. Saved passwords are gone.`, {
                 label: "Undo",
                 run: () => {
                   void (async () => {
                     for (const h of doomed) await saveHost({ ...h });
                   })().catch((err: unknown) =>
-                    push("danger", `Could not restore those hosts: ${String(err)}`),
+                    push("danger", `Could not restore those hosts: ${describeError(err)}`),
                   );
                 },
               });
@@ -1094,7 +1242,7 @@ export function Library({
       },
       {
         label: host.favorite ? "Remove from Favorites" : "Add to Favorites",
-        onSelect: () => void saveHost({ ...host, favorite: !host.favorite }),
+        onSelect: () => toggleFavorite(host.id),
       },
       {
         label: "Duplicate",
@@ -1104,14 +1252,22 @@ export function Library({
             id: undefined,
             friendlyName: `${host.friendlyName} copy`,
             hasPassword: false,
-          }),
+          }).catch((err: unknown) =>
+            push("danger", `Could not duplicate ${host.friendlyName}: ${describeError(err)}`),
+          ),
       },
       {
         label: "Wake (Wake-on-LAN)",
         disabled: !host.wolMac,
         onSelect: () => {
-          void wakeHost(host.id);
-          push("info", `Magic packet sent to ${host.friendlyName}`);
+          // The message waits for the packet to have been sent. The Rust side
+          // refuses when the host has no MAC address stored, and the old code
+          // said "Magic packet sent" whether or not that had happened.
+          void wakeHost(host.id)
+            .then(() => push("info", `Magic packet sent to ${host.friendlyName}`))
+            .catch((err: unknown) =>
+              push("danger", `Could not wake ${host.friendlyName}: ${describeError(err)}`),
+            );
         },
       },
       {
@@ -1249,7 +1405,7 @@ export function Library({
         >
           <IconActivity size={15} />
         </button>
-        <button type="button" className="btn-secondary relative overflow-hidden" onClick={() => void startScan()}>
+        <button type="button" className="btn-secondary relative overflow-hidden" onClick={() => void startScan().catch((err: unknown) => push("danger", describeError(err)))}>
           {scan.running ? (
             <span className="absolute inset-x-0 bottom-0 h-0.5 bg-inset">
               <span
@@ -1339,7 +1495,7 @@ export function Library({
               icon={<IconMonitor size={56} />}
               title="Let's find your computers"
               body="DeskVNCViewer can discover computers on your local network automatically, or you can add one by address."
-              primary={{ label: "Find computers on my network", onClick: () => void startScan() }}
+              primary={{ label: "Find computers on my network", onClick: () => void startScan().catch((err: unknown) => push("danger", describeError(err))) }}
               secondary={{ label: "Add a computer manually", onClick: () => setHostDialog(draftFromHost(null)) }}
             />
           ) : (
@@ -1364,7 +1520,11 @@ export function Library({
                         showProtocol={showProtocol}
                         onConnect={() => connectHost(h)}
                         onEdit={() => editHost(h)}
-                        onWake={() => void wakeHost(h.id)}
+                        onWake={() =>
+                          void wakeHost(h.id).catch((err: unknown) =>
+                            push("danger", `Could not wake ${h.friendlyName}: ${describeError(err)}`),
+                          )
+                        }
                         onContextMenu={(e) => {
                           e.preventDefault();
                           openCtxMenu(e, h);
@@ -1398,8 +1558,17 @@ export function Library({
                       <DiscoveredTile
                         key={d.id}
                         host={d}
-                        onAdd={() => addDiscovered(d)}
-                        onConnect={() => connectAdHoc(d.protocol ?? "vnc", d.address, d.port)}
+                        onAdd={() => saveDiscovered(d)}
+                        onEdit={() => addDiscovered(d)}
+                        onConnect={() => {
+                          // The same path a quick connect takes, so the
+                          // address is remembered in the recents list like
+                          // every other ad-hoc connection.
+                          connectAdHocResolved(d.protocol ?? "vnc", d.address, d.port);
+                          rememberQuickConnect(
+                            formatTarget(d.protocol ?? "vnc", d.address, d.port),
+                          );
+                        }}
                       />
                     ))}
                   </div>
@@ -1409,7 +1578,7 @@ export function Library({
                   icon={<IconZap size={48} />}
                   title="Nothing discovered yet"
                   body="Some computers don't advertise themselves on the network. You can actively scan this subnet, or add a computer by address."
-                  primary={{ label: "Scan this network", onClick: () => void startScan() }}
+                  primary={{ label: "Scan this network", onClick: () => void startScan().catch((err: unknown) => push("danger", describeError(err))) }}
                   secondary={{ label: "Add manually", onClick: () => setHostDialog(draftFromHost(null)) }}
                 />
               ) : null}
@@ -1491,7 +1660,7 @@ export function Library({
           draft={hostDialog}
           groups={groups}
           tags={tags}
-          onSave={(d) => void saveDraft(d)}
+          onSave={saveDraft}
           onClose={() => setHostDialog(null)}
         />
       ) : null}

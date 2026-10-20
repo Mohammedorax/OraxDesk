@@ -89,7 +89,14 @@ export function Onboarding({
                   className="btn-primary"
                   onClick={() => {
                     setRanDiscovery(true);
-                    void startScan();
+                    // The context resets the scan state itself when the
+                    // command fails, so the spinner stops and the message
+                    // below says that nothing was found yet. The failure is
+                    // not swallowed: it is reported to the console, because
+                    // this screen has no toast of its own.
+                    void startScan().catch((err: unknown) => {
+                      console.error("[onboarding] the network scan could not be started:", err);
+                    });
                   }}
                 >
                   <IconZap size={14} /> Find computers on my network

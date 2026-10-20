@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { useI18n } from "../lib/i18n";
-import { writeClipboard } from "../lib/tauri";
+import { mustInvoke, writeClipboard } from "../lib/tauri";
 
 /**
  * A short, stable number for this computer, shown to the person asking for help
@@ -12,7 +12,12 @@ import { writeClipboard } from "../lib/tauri";
  * still needs the short-lived code and the person's approval.
  */
 export async function deviceNumber(machineId: string): Promise<string> {
-  // The registry hashes the raw 32-byte public key, and the endpoint id is its
+  // The backend owns the derivation, and its answer is the one the registry
+  // stores. The calculation below is the fallback for the browser build,
+  // where there is no backend to ask, and it has to agree with the backend's
+  // to the digit.
+  //
+  // The backend hashes the raw 32-byte public key, and the endpoint id is its
   // lower-case hex. Decode it so both sides produce the same nine digits.
   const clean = machineId.trim().toLowerCase();
   const bytes = /^[0-9a-f]{64}$/.test(clean)
@@ -34,9 +39,18 @@ export function DeviceNumber({ machineId }: { machineId: string }): ReactNode {
 
   useEffect(() => {
     let alive = true;
-    void deviceNumber(machineId).then((value) => {
-      if (alive) setNumber(value);
-    });
+    // The backend first, because it is the authority. The browser
+    // calculation is the fallback, and the two are the same number.
+    void mustInvoke<{ number: string }>("machine_identity")
+      .then((value) => {
+        if (alive && value?.number) setNumber(value.number);
+      })
+      .catch(() => {
+        if (!alive) return;
+        void deviceNumber(machineId).then((value) => {
+          if (alive) setNumber(value);
+        });
+      });
     return () => {
       alive = false;
     };

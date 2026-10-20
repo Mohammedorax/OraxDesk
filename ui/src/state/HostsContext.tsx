@@ -29,6 +29,40 @@ import {
 const THUMBNAIL_EVENT = "library://thumbnail";
 
 /**
+ * Where the favourites live: local storage, next to the rest of the
+ * interface's own state, because they are the interface's own state and not
+ * a column the store knows about.
+ */
+const FAVORITES_KEY = "deskvnc.library.favorites";
+
+function readFavoriteIds(): Set<string> {
+  try {
+    const raw = localStorage.getItem(FAVORITES_KEY);
+    if (!raw) return new Set();
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return new Set();
+    return new Set(parsed.filter((id): id is string => typeof id === "string"));
+  } catch {
+    // Blocked or corrupt storage: no favourites, and nothing is lost that
+    // the user could not have written themselves.
+    return new Set();
+  }
+}
+
+function writeFavoriteIds(ids: Set<string>): void {
+  try {
+    localStorage.setItem(FAVORITES_KEY, JSON.stringify([...ids]));
+  } catch {
+    // Blocked storage: the flag lasts until the window closes.
+  }
+}
+
+/** Put the client-side favourite flag back onto the profiles. */
+function applyFavorites(list: HostProfile[], ids: Set<string>): HostProfile[] {
+  return list.map((h) => ({ ...h, favorite: ids.has(h.id) }));
+}
+
+/**
  * Session lifecycle broadcast (`src-tauri/src/commands/session.rs`). The
  * Library only cares about one of its payloads: `host-adopted`, sent when a
  * quick connect that ticked "remember this password" gained a host profile,
@@ -48,7 +82,11 @@ interface HostsContextValue {
   tags: HostTag[];
   loading: boolean;
   refresh: () => Promise<void>;
+  /** A full reload, tile pictures included. */
+  reload: () => Promise<void>;
   saveHost: (host: Partial<HostProfile> & { id?: string }) => Promise<HostProfile | null>;
+  /** Add or remove a host from the favourites. Client-side only. */
+  toggleFavorite: (id: string) => void;
   deleteHost: (id: string) => Promise<void>;
   saveGroup: (group: Partial<HostGroup> & { name: string }) => Promise<HostGroup>;
   deleteGroup: (id: string) => Promise<void>;
@@ -117,6 +155,9 @@ export function HostsProvider({ children }: { children: ReactNode }): ReactNode 
    * absent means "not fetched yet".
    */
   const [thumbs, setThumbs] = useState<Record<string, string | null>>({});
+  /** The same map, for the code that has to read it without re-rendering. */
+  const thumbsRef = useRef(thumbs);
+  thumbsRef.current = thumbs;
   /** Hosts already resolved or in flight, keeps `requestThumbnail` stable. */
   const thumbKnown = useRef(new Set<string>());
   const thumbPending = useRef(new Set<string>());
@@ -125,13 +166,18 @@ export function HostsProvider({ children }: { children: ReactNode }): ReactNode 
   /** False once this provider is gone: a late fetch must not leak a blob URL. */
   const mounted = useRef(true);
 
-  /** Store one resolved thumbnail, revoking whatever it replaces. */
+  /**
+   * Store one resolved thumbnail, revoking whatever it replaces.
+   *
+   * The revocation happens OUTSIDE the state updater. An updater is meant to
+   * be pure, and React may call it more than once, so revoking a blob URL
+   * inside one meant the URL could be revoked while the image it belonged to
+   * was still on screen.
+   */
   const putThumb = useCallback((key: string, url: string | null): void => {
-    setThumbs((prev) => {
-      const old = prev[key];
-      if (old && old !== url) revokeThumb(old);
-      return { ...prev, [key]: url };
-    });
+    const previous = thumbsRef.current[key];
+    setThumbs((prev) => ({ ...prev, [key]: url }));
+    if (previous && previous !== url) revokeThumb(previous);
   }, []);
 
   const requestThumbnail = useCallback(
@@ -214,29 +260,86 @@ export function HostsProvider({ children }: { children: ReactNode }): ReactNode 
     for (const key of [...thumbKnown.current]) refreshThumbnail(key);
   }, [refreshThumbnail]);
 
-  const refresh = useCallback(async (): Promise<void> => {
-    revalidateThumbnails();
-    if (mock) {
-      setHosts(withMockThumbnails(MOCK_HOSTS));
-      setGroups(MOCK_GROUPS);
-      setTags(MOCK_TAGS);
+  /**
+   * Favourites are a client-side flag: the store has no `favorite` column.
+   *
+   * They used to be carried in the `save_host` payload, where the backend
+   * dropped them, and then erased by the `refresh()` that followed, so the
+   * flag only ever existed in the array between one write and the next read
+   * of it. In the shipped app the Favourites count in the sidebar and the
+   * Favourites filter were therefore always empty.
+   *
+   * They live here instead, keyed by host id and kept in local storage, and
+   * are merged back onto the profiles every time the list is read.
+   */
+  const [favoriteIds, setFavoriteIds] = useState<Set<string>>(readFavoriteIds);
+  const favoriteIdsRef = useRef(favoriteIds);
+  favoriteIdsRef.current = favoriteIds;
+
+  /**
+   * Bumped on every read of the library, so a read that was issued first but
+   * lands last cannot overwrite a newer one.
+   *
+   * `refresh` is called after every write, and each call issues three
+   * `list_*` commands. Two of those in flight at once could settle in the
+   * wrong order, and the library would then show a snapshot taken before the
+   * last write landed.
+   */
+  const libraryGeneration = useRef(0);
+
+  /**
+   * Read the library and put it on screen.
+   *
+   * `revalidate` re-reads every thumbnail, which is what a window that has
+   * just opened needs and what a write does not: the tile pictures do not
+   * change when a host is renamed, and re-reading all of them meant that
+   * saving one host read the PNG of every host in the library.
+   */
+  const readLibrary = useCallback(
+    async (revalidate: boolean): Promise<void> => {
+      if (revalidate) revalidateThumbnails();
+      if (mock) {
+        setHosts(withMockThumbnails(MOCK_HOSTS));
+        setGroups(MOCK_GROUPS);
+        setTags(MOCK_TAGS);
+        setLoading(false);
+        return;
+      }
+      const generation = ++libraryGeneration.current;
+      const [h, g, t] = await Promise.all([
+        safeInvoke<HostProfile[]>("list_hosts", undefined, []),
+        safeInvoke<HostGroup[]>("list_groups", undefined, []),
+        safeInvoke<HostTag[]>("list_tags", undefined, []),
+      ]);
+      // A read that lost the race is not the answer any more.
+      if (generation !== libraryGeneration.current) return;
+      // A read that failed must not empty the library. The old code took the
+      // `[]` fallback at face value, so a single failed `list_hosts` replaced
+      // every host with nothing and the user was shown an empty library, with
+      // no way to tell that from having deleted them all.
+      setHosts((prev) => (Array.isArray(h) ? applyFavorites(h, favoriteIdsRef.current) : prev));
+      setGroups((prev) => (Array.isArray(g) ? g : prev));
+      setTags((prev) => (Array.isArray(t) ? t : prev));
       setLoading(false);
-      return;
-    }
-    const [h, g, t] = await Promise.all([
-      safeInvoke<HostProfile[]>("list_hosts", undefined, []),
-      safeInvoke<HostGroup[]>("list_groups", undefined, []),
-      safeInvoke<HostTag[]>("list_tags", undefined, []),
-    ]);
-    setHosts(Array.isArray(h) ? h : []);
-    setGroups(Array.isArray(g) ? g : []);
-    setTags(Array.isArray(t) ? t : []);
-    setLoading(false);
-  }, [mock, revalidateThumbnails]);
+    },
+    [mock, revalidateThumbnails],
+  );
+
+  /** The library as it is now. A write does not change any picture. */
+  const refresh = useCallback(async (): Promise<void> => {
+    await readLibrary(false);
+  }, [readLibrary]);
+
+  /** A full reload, pictures included. For a window that has just opened. */
+  const reload = useCallback(async (): Promise<void> => {
+    await readLibrary(true);
+  }, [readLibrary]);
 
   useEffect(() => {
-    void refresh();
-  }, [refresh]);
+    // The first read of a window re-reads the pictures too, because the
+    // tiles have not asked for them yet.
+    void reload();
+  }, [reload]);
 
   /** Latest host list, for callbacks that must not change identity with it. */
   const hostsRef = useRef(hosts);
@@ -273,12 +376,38 @@ export function HostsProvider({ children }: { children: ReactNode }): ReactNode 
       // UI-local fields are not columns on the Rust struct; drop them so the
       // payload is exactly the backend contract.
       const { favorite: _favorite, online: _online, ...profile } = full;
-      const saved = await safeInvoke<HostProfile | null>("save_host", { profile }, null);
+      // `mustInvoke`, not `safeInvoke`: a swallowed failure used to reach the
+      // caller as `null`, which the editor read as "the host has no id yet",
+      // skipped the password write entirely, and then told the user the host
+      // had been added. The host was not in the library and the password the
+      // user had just typed was gone.
+      const saved = await mustInvoke<HostProfile>("save_host", { profile });
       await refresh();
       return saved;
     },
     [mock, refresh],
   );
+
+  /**
+   * Add or remove a host from the favourites.
+   *
+   * The flag has no column in the store, so it is kept here and in local
+   * storage, and merged back onto the profiles whenever the list is read.
+   */
+  const toggleFavorite = useCallback((id: string): void => {
+    // The new set is computed here rather than inside the state updater: an
+    // updater is meant to be pure, and React may call it more than once, so
+    // writing to storage from inside one would write more than once.
+    const next = new Set(favoriteIdsRef.current);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    writeFavoriteIds(next);
+    favoriteIdsRef.current = next;
+    setFavoriteIds(next);
+    setHosts((prev) =>
+      prev.map((h) => (h.id === id ? { ...h, favorite: next.has(id) } : h)),
+    );
+  }, []);
 
   const deleteHost = useCallback(
     async (id: string): Promise<void> => {
@@ -289,7 +418,10 @@ export function HostsProvider({ children }: { children: ReactNode }): ReactNode 
         setHosts((prev) => prev.filter((h) => h.id !== id));
         return;
       }
-      await safeInvoke("delete_host", { hostId: id }, null);
+      // `mustInvoke`, not `safeInvoke`: a delete that failed has to be
+      // reported, because the caller tells the user the host is gone and
+      // offers an Undo that would restore a row that never left.
+      await mustInvoke("delete_host", { hostId: id });
       await refresh();
     },
     [mock, refresh, forgetThumbnail],
@@ -343,7 +475,7 @@ export function HostsProvider({ children }: { children: ReactNode }): ReactNode 
         setHosts((prev) => prev.map((h) => (h.groupId === id ? { ...h, groupId: null } : h)));
         return;
       }
-      await safeInvoke("delete_group", { groupId: id }, null);
+      await mustInvoke("delete_group", { groupId: id });
       await refresh();
     },
     [mock, refresh],
@@ -383,7 +515,7 @@ export function HostsProvider({ children }: { children: ReactNode }): ReactNode 
         setHosts((prev) => prev.map((h) => ({ ...h, tags: h.tags.filter((t) => t !== id) })));
         return;
       }
-      await safeInvoke("delete_tag", { tagId: id }, null);
+      await mustInvoke("delete_tag", { tagId: id });
       await refresh();
     },
     [mock, refresh],
@@ -395,7 +527,7 @@ export function HostsProvider({ children }: { children: ReactNode }): ReactNode 
         setHosts((prev) => prev.map((h) => (h.id === hostId ? { ...h, tags: tagIds } : h)));
         return;
       }
-      await safeInvoke("set_host_tags", { hostId, tagIds }, null);
+      await mustInvoke("set_host_tags", { hostId, tagIds });
       await refresh();
     },
     [mock, refresh],
@@ -463,7 +595,11 @@ export function HostsProvider({ children }: { children: ReactNode }): ReactNode 
 
   const savePassword = useCallback(
     async (hostId: string, password: string): Promise<void> => {
-      await safeInvoke("save_password", { hostId, creds: { vncPassword: password } }, null);
+      // `mustInvoke`, not `safeInvoke`: the keychain can refuse (locked,
+      // unavailable), and the flag below used to be flipped anyway, so the
+      // tile showed a key for a secret that was never stored and the next
+      // connect asked for a password the user believed was saved.
+      await mustInvoke("save_password", { hostId, creds: { vncPassword: password } });
       setHosts((prev) => prev.map((h) => (h.id === hostId ? { ...h, hasPassword: true } : h)));
     },
     [],
@@ -474,7 +610,7 @@ export function HostsProvider({ children }: { children: ReactNode }): ReactNode 
       // Deliberately does NOT flip `hasPassword`: that flag (and the key
       // icon) means "a VNC password is saved", and the connect flow reads it
       // to decide whether to expect a prompt.
-      await safeInvoke("save_password", { hostId, creds: { sshPassphrase: passphrase } }, null);
+      await mustInvoke("save_password", { hostId, creds: { sshPassphrase: passphrase } });
     },
     [],
   );
@@ -492,7 +628,7 @@ export function HostsProvider({ children }: { children: ReactNode }): ReactNode 
       if (creds.domain.trim()) payload.rdpDomain = creds.domain.trim();
       if (creds.password) payload.rdpPassword = creds.password;
       if (Object.keys(payload).length === 0) return;
-      await safeInvoke("save_password", { hostId, creds: payload }, null);
+      await mustInvoke("save_password", { hostId, creds: payload });
       if (payload.rdpPassword) {
         setHosts((prev) => prev.map((h) => (h.id === hostId ? { ...h, hasPassword: true } : h)));
       }
@@ -502,14 +638,17 @@ export function HostsProvider({ children }: { children: ReactNode }): ReactNode 
 
   const deletePassword = useCallback(
     async (hostId: string): Promise<void> => {
-      await safeInvoke("delete_password", { hostId }, null);
+      await mustInvoke("delete_password", { hostId });
       setHosts((prev) => prev.map((h) => (h.id === hostId ? { ...h, hasPassword: false } : h)));
     },
     [],
   );
 
   const wakeHost = useCallback(async (hostId: string): Promise<void> => {
-    await safeInvoke("wake_host", { profileId: hostId }, null);
+    // `mustInvoke`: the Rust side refuses when the host has no MAC address
+    // stored, and that refusal used to be swallowed, so the caller said
+    // "Magic packet sent" for a packet that was never sent.
+    await mustInvoke("wake_host", { profileId: hostId });
   }, []);
 
   const thumbnailUrl = useCallback((key: string): string | null => thumbs[key] ?? null, [thumbs]);
@@ -568,8 +707,6 @@ export function HostsProvider({ children }: { children: ReactNode }): ReactNode 
   }, [refresh]);
 
   // Unmount: release every blob: URL still held.
-  const thumbsRef = useRef(thumbs);
-  thumbsRef.current = thumbs;
   useEffect(() => {
     // Re-armed on mount: StrictMode's dev remount runs the cleanup below once
     // before the real mount, and a permanently false flag would then throw
@@ -583,16 +720,16 @@ export function HostsProvider({ children }: { children: ReactNode }): ReactNode 
 
   const value = useMemo(
     () => ({
-      hosts, groups, tags, loading, refresh, saveHost, deleteHost, saveGroup,
+      hosts, groups, tags, loading, refresh, reload, saveHost, deleteHost, saveGroup,
       deleteGroup, saveTag, deleteTag, setHostTags, setHostsGroup, addTagToHosts,
       removeTagFromHosts, savePassword, saveSshPassphrase, saveRdpCredentials, deletePassword,
-      wakeHost, thumbnailUrl, requestThumbnail, refreshThumbnail,
+      wakeHost, toggleFavorite, thumbnailUrl, requestThumbnail, refreshThumbnail,
     }),
     [
-      hosts, groups, tags, loading, refresh, saveHost, deleteHost, saveGroup,
+      hosts, groups, tags, loading, refresh, reload, saveHost, deleteHost, saveGroup,
       deleteGroup, saveTag, deleteTag, setHostTags, setHostsGroup, addTagToHosts,
       removeTagFromHosts, savePassword, saveSshPassphrase, saveRdpCredentials, deletePassword,
-      wakeHost, thumbnailUrl, requestThumbnail, refreshThumbnail,
+      wakeHost, toggleFavorite, thumbnailUrl, requestThumbnail, refreshThumbnail,
     ],
   );
 

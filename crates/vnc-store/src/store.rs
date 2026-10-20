@@ -254,6 +254,10 @@ impl Store {
     pub fn save_host(&self, profile: &HostProfile) -> Result<()> {
         let mut conn = self.conn.lock();
         let tx = conn.transaction()?;
+        // The tag set is written as part of the same transaction as the
+        // profile, so a tag that does not exist must be refused before
+        // anything is written. See [`Store::set_host_tags`] for why.
+        check_tags_exist(&tx, &profile.tags)?;
         let now = now_ts();
         tx.execute(
             "INSERT INTO hosts (
@@ -538,9 +542,17 @@ impl Store {
     }
 
     /// Replaces the host's tag set.
+    ///
+    /// `host_tags` predates foreign keys and has none, so nothing in the
+    /// schema stops a row naming a tag that no longer exists. Such a row is
+    /// invisible in the interface (the tag it names cannot be looked up) yet
+    /// it silently filters the host out of a tag search, so a tag that is not
+    /// there is refused here rather than written. See
+    /// [`Store::add_tag_to_hosts`] for the same rule on the other path.
     pub fn set_host_tags(&self, host_id: &str, tag_ids: &[String]) -> Result<()> {
         let mut conn = self.conn.lock();
         let tx = conn.transaction()?;
+        check_tags_exist(&tx, tag_ids)?;
         tx.execute("DELETE FROM host_tags WHERE host_id = ?1", [host_id])?;
         for tag_id in tag_ids {
             tx.execute(
@@ -838,6 +850,32 @@ fn host_tag_ids(conn: &Connection, host_id: &str) -> Result<Vec<String>> {
     Ok(tags)
 }
 
+/// Refuse a tag set that names a tag which is not there.
+///
+/// `host_tags` has no foreign keys, so nothing in the schema stops a row
+/// naming a tag that was deleted. Such a row cannot be looked up in the
+/// interface, yet it still filters the host out of a tag search, and the host
+/// then disappears with no way to find it. One query checks the whole set.
+fn check_tags_exist(tx: &rusqlite::Transaction<'_>, tag_ids: &[String]) -> Result<()> {
+    if tag_ids.is_empty() {
+        return Ok(());
+    }
+    let placeholders = std::iter::repeat_n("?", tag_ids.len())
+        .collect::<Vec<_>>()
+        .join(",");
+    let sql = format!("SELECT id FROM tags WHERE id IN ({placeholders})");
+    let mut stmt = tx.prepare(&sql)?;
+    let known: std::collections::HashSet<String> = stmt
+        .query_map(rusqlite::params_from_iter(tag_ids.iter()), |r| r.get(0))?
+        .collect::<rusqlite::Result<_>>()?;
+    for tag_id in tag_ids {
+        if !known.contains(tag_id) {
+            return Err(Error::InvalidData(format!("no such tag: {tag_id}")));
+        }
+    }
+    Ok(())
+}
+
 /// Column order: host, port, scheme, sha256_spki, subject, first_trusted_at,
 /// last_seen_at, security_type.
 fn cert_pin_from_row(row: &Row<'_>) -> rusqlite::Result<CertPin> {
@@ -935,6 +973,48 @@ mod tests {
             has_password: true,
             ..Default::default()
         }
+    }
+
+    /// A tag that is not there is refused, on both paths that write a host's
+    /// tag set.
+    ///
+    /// `host_tags` has no foreign keys, so a row naming a deleted tag can be
+    /// written. Such a row cannot be looked up in the interface, yet it still
+    /// filters the host out of a tag search, and the host then disappears with
+    /// no way to find it. `add_tag_to_hosts` already refused this; the whole
+    /// set is refused, so the two paths agree.
+    #[test]
+    fn a_tag_that_does_not_exist_is_refused() {
+        let (_dir, store) = temp_store();
+        let tag = Tag {
+            id: "tag-real".into(),
+            name: "Real".into(),
+            color: "red".into(),
+        };
+        store.save_tag(&tag).unwrap();
+        let mut host = sample_host("Studio", "192.168.1.20");
+        host.id = "host-1".into();
+        host.tags = vec!["tag-real".into()];
+        store.save_host(&host).unwrap();
+
+        // A host carrying a tag that is not there is refused, and nothing is
+        // written.
+        let mut bad = sample_host("Studio", "192.168.1.20");
+        bad.id = "host-2".into();
+        bad.tags = vec!["tag-real".into(), "tag-gone".into()];
+        assert!(store.save_host(&bad).is_err());
+        assert!(store.get_host("host-2").unwrap().is_none());
+
+        // The same set through the other path.
+        assert!(store.set_host_tags("host-1", &["tag-gone".into()]).is_err());
+        // And the host keeps the tags it had.
+        let kept = store.get_host("host-1").unwrap().unwrap();
+        assert_eq!(kept.tags, vec!["tag-real".to_string()]);
+
+        // A tag that IS there is accepted.
+        store.set_host_tags("host-1", &["tag-real".into()]).unwrap();
+        let kept = store.get_host("host-1").unwrap().unwrap();
+        assert_eq!(kept.tags, vec!["tag-real".to_string()]);
     }
 
     #[test]

@@ -1,8 +1,10 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { BoundaryProviderSetup } from "./BoundaryProviderSetup";
 import { DeviceNumber } from "./DeviceNumber";
 import { RegistryCodePanel } from "./RegistryCodePanel";
 import { writeClipboard } from "../lib/tauri";
+import { Dialog } from "./primitives";
+import { useI18n } from "../lib/i18n";
 import {
   setCodeService,
   shortId,
@@ -22,17 +24,15 @@ import {
  * `SupportOverlay`, so they appear whether or not this window is open.
  */
 export function GetHelp(): ReactNode {
-  const dialog = useRef<HTMLDialogElement>(null);
+  const { t } = useI18n();
   const [open, setOpen] = useState(false);
   const view = useSupport();
   const show = () => {
     setOpen(true);
-    dialog.current?.showModal();
     void support.refreshDisplays().catch(() => undefined);
   };
   const close = () => {
     setOpen(false);
-    dialog.current?.close();
   };
   const helping = (view?.unattended.active.length ?? 0) > 0;
   const busy = view?.sharing || helping;
@@ -42,22 +42,39 @@ export function GetHelp(): ReactNode {
         type="button"
         className={`rounded-md border px-3 py-1.5 text-sm hover:bg-inset ${busy ? "border-danger text-danger" : "border-subtle text-primary"}`}
         onClick={show}
-        title="Let someone you trust see or control this computer"
+        title={t("gethelp.intro")}
       >
-        {view?.connected || helping ? "Sharing" : "Get help"}
+        {view?.connected || helping ? t("gethelp.sharing") : t("gethelp.button")}
       </button>
-      <dialog
-        ref={dialog}
-        onClose={() => setOpen(false)}
-        className="m-auto max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-lg border border-subtle bg-raised p-6 text-primary shadow-lg backdrop:bg-black/40"
-      >
-        {open && view ? <Body view={view} onClose={close} /> : null}
-      </dialog>
+      {/*
+        The shared Dialog primitive, not a native <dialog>. A native one is in
+        the TOP LAYER, and top-layer promotion does not reset `visibility`,
+        which the pane grid uses to hide a background pane. So a native dialog
+        opened while a background pane was hidden stayed in the top layer,
+        still modal, and INVISIBLE: the window was blocked by a dialog nobody
+        could see and nobody could dismiss. The shared primitive is gated on
+        the pane being the visible one, which is what stops that.
+      */}
+      {open ? (
+        <Dialog title={t("gethelp.title")} onClose={close} width={720}>
+          {view ? (
+            <Body view={view} />
+          ) : (
+            // The window used to open EMPTY: the support state arrives from
+            // the shell a moment later, and until it did there was nothing
+            // in the dialog at all, just a dimmed screen.
+            <div className="py-6 text-center text-sm text-secondary">
+              <p>{t("gethelp.loading")}</p>
+            </div>
+          )}
+        </Dialog>
+      ) : null}
     </>
   );
 }
 
-function Body({ view, onClose }: { view: SupportView; onClose: () => void }): ReactNode {
+function Body({ view }: { view: SupportView }): ReactNode {
+  const { t } = useI18n();
   const [error, setError] = useState("");
   const run = (action: () => Promise<unknown>) => {
     setError("");
@@ -65,25 +82,18 @@ function Body({ view, onClose }: { view: SupportView; onClose: () => void }): Re
   };
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex items-start gap-3">
-        <div>
-          <h2 className="text-lg font-semibold">Get help</h2>
-          <p className="mt-1 text-sm text-secondary">
-            Let someone you trust see or control this computer. They see nothing until you approve
-            them.
-          </p>
-        </div>
-        <button type="button" className="btn-secondary ml-auto shrink-0" onClick={onClose}>
-          Close
-        </button>
-      </div>
+      {/*
+        The title and the close button are the Dialog primitive's own now, so
+        this window has one header rather than two.
+      */}
+      <p className="-mt-1 text-sm text-secondary">{t("gethelp.intro")}</p>
       <section className="rounded-lg border border-subtle bg-surface p-4">
         {view.connected ? <Sharing view={view} run={run} /> : <Share view={view} run={run} />}
       </section>
       {error ? <p role="alert" className="text-sm text-danger">{error}</p> : null}
       <StatusLine view={view} />
       <details className="rounded-lg border border-subtle p-4">
-        <summary className="cursor-pointer font-medium">Settings</summary>
+        <summary className="cursor-pointer font-medium">{t("gethelp.settings")}</summary>
         <div className="mt-4 flex flex-col gap-6">
           <ScreenSettings view={view} run={run} />
           <UnattendedSettings view={view} run={run} />
@@ -148,7 +158,8 @@ function DisplayPicker({ view, run }: { view: SupportView; run: Run }): ReactNod
 
 /** Before anyone is connected: the code, or the button that makes one. */
 function Share({ view, run }: { view: SupportView; run: Run }): ReactNode {
-  const label = view.codesAvailable ? "Get a code" : "Create invitation";
+  const { t } = useI18n();
+  const label = view.codesAvailable ? t("gethelp.getCode") : t("gethelp.createInvitation");
   let body: ReactNode;
   if (!view.sharing) {
     if (!view.screenPermission) body = <ScreenPermission />;
@@ -172,7 +183,7 @@ function Share({ view, run }: { view: SupportView; run: Run }): ReactNode {
           >
             {label}
           </button>
-          <p className="text-xs text-secondary">One code per session. It expires after 10 minutes if nobody connects.</p>
+          <p className="text-xs text-secondary">{t("gethelp.shareIntro")}</p>
         </>
       );
   } else if (!view.invitation || view.codeBusy) {
@@ -192,10 +203,10 @@ function Share({ view, run }: { view: SupportView; run: Run }): ReactNode {
     body = (
       <>
         <p className="mono select-all text-center text-3xl font-semibold tracking-wider">{view.code}</p>
-        <p className="text-xs text-secondary">Read it out or send it. Your helper enters it, and you approve them here.</p>
+        <p className="text-xs text-secondary">{t("gethelp.readOut")}</p>
         <div className="flex gap-2">
-          <Copy text={view.code} label="Copy code" />
-          <Copy text={view.invitation} label="Copy the full invitation instead" />
+          <Copy text={view.code} label={t("gethelp.copyCode")} />
+          <Copy text={view.invitation} label={t("gethelp.copyInvitation")} />
         </div>
       </>
     );
@@ -242,6 +253,7 @@ function Share({ view, run }: { view: SupportView; run: Run }): ReactNode {
 }
 
 function UnattendedSummary({ view }: { view: SupportView }): ReactNode {
+  const { t } = useI18n();
   const u = view.unattended;
   return (
     <div className="mt-2 border-t border-subtle pt-3 text-sm">
@@ -256,9 +268,9 @@ function UnattendedSummary({ view }: { view: SupportView }): ReactNode {
       {u.enabled ? (
         <>
           <div className="mt-1 flex items-center gap-2">
-            <span className="text-xs text-secondary">This computer's ID</span>
+            <span className="text-xs text-secondary">{t("device.id")}</span>
             <span className="mono text-xs">{shortId(u.machineId)}</span>
-            <Copy text={u.machineId} label="Copy ID" />
+            <Copy text={u.machineId} label={t("device.copyId")} />
           </div>
         </>
       ) : null}
@@ -387,6 +399,7 @@ function ScreenSettings({ view, run }: { view: SupportView; run: Run }): ReactNo
 }
 
 function UnattendedSettings({ view, run }: { view: SupportView; run: Run }): ReactNode {
+  const { t } = useI18n();
   const u = view.unattended;
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
@@ -414,10 +427,12 @@ function UnattendedSettings({ view, run }: { view: SupportView; run: Run }): Rea
       </label>
       {u.enabled ? (
         <div>
-          <p className="text-xs text-secondary">{u.reachable ? "This computer's ID, reachable now" : "This computer's ID"}</p>
+          <p className="text-xs text-secondary">
+            {u.reachable ? "This computer's ID, reachable now" : t("device.id")}
+          </p>
           <div className="flex items-center gap-2">
-            <span className="mono break-all text-xs">{u.machineId}</span>
-            <Copy text={u.machineId} label="Copy ID" />
+            <span className="mono break-all text-xs" dir="ltr">{u.machineId}</span>
+            <Copy text={u.machineId} label={t("device.copyId")} />
           </div>
           <p className="mt-1 text-xs text-secondary">
             A helper enters it as the computer ID, with the unattended password unless they were paired here.

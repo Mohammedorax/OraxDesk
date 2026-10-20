@@ -16,8 +16,9 @@ import { GetHelp } from "./GetHelp";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { DiscoveredHost, HostProfile, ProtocolKind } from "../lib/types";
 import { DEFAULT_PORT, PROTOCOLS, hostProtocol, protocolLabel, protocolName } from "../lib/types";
-import { formatTarget, parseConnectTarget, presetProtocol } from "../lib/address";
+import { formatTarget, isDisplayNumber, parseConnectTarget, presetProtocol } from "../lib/address";
 import { classNames, fuzzyMatch, modKeyLabel } from "../lib/util";
+import { useI18n } from "../lib/i18n";
 import { IconArrowRight, IconClock, IconMonitor, IconZap } from "./icons";
 
 /** Matches the Rust side's `normalize_address`, so both agree on "same machine". */
@@ -55,6 +56,14 @@ interface Suggestion {
   /** Shown as a chip on the row, so "Connect to rdp://frontdesk" and
    *  "Connect to frontdesk" are visibly different things. */
   protocol: ProtocolKind;
+  /**
+   * Which group of suggestions this row belongs to.
+   *
+   * The list used to be one flat wall of up to thirteen rows with no
+   * headings, so a person who typed one character got a screen of recents
+   * with no way to tell them from their own computers.
+   */
+  group: "typed" | "hosts" | "nearby" | "recent";
   run: () => void;
 }
 
@@ -80,6 +89,7 @@ export function QuickConnect({
   onConnectAddress: (protocol: ProtocolKind, address: string, port: number) => void;
   onRemember: (address: string) => void;
 }): ReactNode {
+  const { t } = useI18n();
   const [value, setValue] = useState("");
   const [open, setOpen] = useState(false);
   /** -1 is "nothing picked yet", so Enter uses the field, not a highlighted row. */
@@ -139,12 +149,45 @@ export function QuickConnect({
     );
   }, [parsed, flipped, savedMatch]);
 
+  /**
+   * The port this connect will use, read under the protocol that was chosen.
+   *
+   * The number after the colon is not the same thing for every protocol: the
+   * VNC convention reads `box:22` as DISPLAY 22, which is port 5922, while
+   * SSH and RDP have no display numbers and read it as the port 22. So a
+   * person who typed `box:22` meaning SSH, saw "VNC" and "port 5922", and
+   * clicked the chip to fix it, would still have been dialled on 5922.
+   *
+   * The parser already knows how to read the input under a given protocol
+   * (`parseConnectTarget(input, assume)`), so the chip simply re-reads it.
+   */
+  const resolvedPort: number = useMemo(() => {
+    if (!parsed.ok) return DEFAULT_PORT[resolved];
+    if (resolved === "vnc") return parsed.target.port;
+    const reread = parseConnectTarget(value, resolved);
+    return reread.ok ? reread.target.port : parsed.target.port;
+  }, [parsed, resolved, value]);
+
+  /**
+   * Was the number a DISPLAY number rather than a port?
+   *
+   * `box:22` is display 22 on port 5922. The chip says so, because the number
+   * the person typed and the port that will be dialled are not the same
+   * thing, and that is the whole reason a person who meant SSH can end up on
+   * the wrong port.
+   */
+  const displayNumber: boolean = useMemo(
+    () => parsed.ok && resolved === "vnc" && isDisplayNumber(value, parsed.target.port),
+    [parsed, resolved, value],
+  );
+
   const connectTyped = (): void => {
     if (!parsed.ok) {
       setAttempted(true);
       return;
     }
-    const { address, port, username } = parsed.target;
+    const { address, username } = parsed.target;
+    const port = resolvedPort;
     if (savedMatch) {
       onConnectHost(savedMatch);
     } else {
@@ -161,15 +204,17 @@ export function QuickConnect({
     const out: Suggestion[] = [];
 
     if (trimmed !== "" && parsed.ok) {
-      const { address, port, username } = parsed.target;
+      const { address, username } = parsed.target;
+      const port = resolvedPort;
       const typedLabel = formatTarget(resolved, address, port, username);
       out.push(
         savedMatch
           ? {
               key: "typed",
               kind: "host",
-              label: `Connect to ${savedMatch.friendlyName}`,
-              sub: "saved host",
+              group: "typed",
+              label: t("quick.connectTo", { target: savedMatch.friendlyName }),
+              sub: t("quick.savedHost"),
               protocol: hostProtocol(savedMatch),
               run: () => {
                 onConnectHost(savedMatch);
@@ -181,7 +226,8 @@ export function QuickConnect({
           : {
               key: "typed",
               kind: "address",
-              label: `Connect to ${typedLabel}`,
+              group: "typed",
+              label: t("quick.connectTo", { target: typedLabel }),
               // Silent on a protocol's OWN default port (5900 for VNC, 3389
               // for RDP, 22 for SSH); named otherwise, which is the thing
               // worth reading there. `resolved === "rdp" ? "" : port === 5900`
@@ -210,6 +256,7 @@ export function QuickConnect({
       for (const { h } of matches) {
         out.push({
           key: `host-${h.id}`,
+          group: "hosts",
           kind: "host",
           label: h.friendlyName,
           sub: formatTarget(hostProtocol(h), h.address, h.port),
@@ -232,6 +279,7 @@ export function QuickConnect({
         const label = formatTarget(kind, d.address, d.port);
         out.push({
           key: `nearby-${d.id}`,
+          group: "nearby",
           kind: "nearby",
           label: d.name,
           sub: label,
@@ -262,9 +310,10 @@ export function QuickConnect({
       const kind = p.target.protocol ?? presetProtocol(p.target);
       out.push({
         key: `recent-${r}`,
+          group: "recent",
         kind: "recent",
         label: r,
-        sub: "recent",
+        sub: t("quick.recent"),
         protocol: kind,
         run: () => {
           onConnectAddress(kind, p.target.address, p.target.port);
@@ -332,19 +381,26 @@ export function QuickConnect({
       <div className="relative min-w-0 flex-1 md:max-w-xl">
         <IconMonitor
           size={15}
-          className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-tertiary"
+          className="pointer-events-none absolute start-2.5 top-1/2 -translate-y-1/2 text-tertiary"
         />
         <input
           ref={inputRef}
-          className="field mono !pl-8"
-          placeholder={`Connect to an address, e.g. 192.168.1.20:1 or rdp://frontdesk  (${modKeyLabel}T)`}
-          aria-label="Address to connect to"
+          className="field mono !ps-8"
+          placeholder={t("quick.placeholder", { key: modKeyLabel })}
+          aria-label={t("quick.label")}
           spellCheck={false}
           autoComplete="off"
+          // An address is not a sentence, and the layout is right-to-left by
+          // default in this app: without this, the bidi algorithm reorders
+          // the parts of `192.168.1.20:1` and `rdp://frontdesk`, and the
+          // text ends up somewhere other than where it was typed.
+          dir="ltr"
+          style={{ unicodeBidi: "isolate" }}
           role="combobox"
           aria-expanded={showList}
           aria-controls="quick-connect-list"
           aria-autocomplete="list"
+          aria-invalid={invalid}
           value={value}
           onChange={(e) => {
             setValue(e.target.value);
@@ -364,49 +420,61 @@ export function QuickConnect({
             className="fade-in absolute left-0 right-0 top-full z-30 mt-1 max-h-80 overflow-y-auto rounded-md border border-subtle bg-raised p-1.5 shadow-(--shadow-pop)"
           >
             {suggestions.map((s, i) => (
-              <button
-                key={s.key}
-                type="button"
-                data-index={i}
-                role="option"
-                aria-selected={i === selected}
-                className={classNames(
-                  "flex w-full items-center gap-3 rounded-md px-3 py-2 text-left",
-                  i === selected ? "bg-accent text-accent-fg" : "text-primary hover:bg-inset",
-                )}
-                onPointerMove={() => setSelected(i)}
-                // Keeping focus in the field means the blur that closes this
-                // list cannot land before the click that uses it, which would
-                // unmount this button mid-gesture and swallow the click.
-                // Both events are suppressed because WebKit, which is what
-                // this ships on, has not always honoured the pointer one.
-                onPointerDown={(e) => e.preventDefault()}
-                onMouseDown={(e) => e.preventDefault()}
-                onClick={s.run}
-              >
-                <span className={i === selected ? "opacity-90" : "text-tertiary"}>
-                  <SuggestionIcon kind={s.kind} />
-                </span>
-                <span className="min-w-0 flex-1 truncate text-sm font-medium">{s.label}</span>
-                <span
+              <div key={s.key}>
+                {/*
+                  A heading per group. The list used to be one flat wall of up
+                  to thirteen rows, so a person who typed a single character
+                  got a screen of recents with no way to tell them from their
+                  own computers.
+                */}
+                {i === 0 || suggestions[i - 1].group !== s.group ? (
+                  <p className="px-3 pb-1 pt-2 text-2xs font-semibold uppercase tracking-wide text-tertiary">
+                    {groupHeading(s.group)}
+                  </p>
+                ) : null}
+                <button
+                  data-index={i}
+                  type="button"
+                  role="option"
+                  aria-selected={i === selected}
                   className={classNames(
-                    "mono shrink-0 rounded-sm px-1.5 py-0.5 text-[10px] font-semibold tracking-wide",
-                    i === selected ? "bg-black/15" : "bg-inset text-tertiary",
+                    "flex w-full items-center gap-3 rounded-md px-3 py-2 text-start",
+                    i === selected ? "bg-accent text-accent-fg" : "text-primary hover:bg-inset",
                   )}
+                  onPointerMove={() => setSelected(i)}
+                  // Keeping focus in the field means the blur that closes this
+                  // list cannot land before the click that uses it, which would
+                  // unmount this button mid-gesture and swallow the click.
+                  // Both events are suppressed because WebKit, which is what
+                  // this ships on, has not always honoured the pointer one.
+                  onPointerDown={(e) => e.preventDefault()}
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={s.run}
                 >
-                  {protocolLabel(s.protocol)}
-                </span>
-                {s.sub ? (
+                  <span className={i === selected ? "opacity-90" : "text-tertiary"}>
+                    <SuggestionIcon kind={s.kind} />
+                  </span>
+                  <span className="min-w-0 flex-1 truncate text-sm font-medium">{s.label}</span>
                   <span
                     className={classNames(
-                      "mono truncate text-xs",
-                      i === selected ? "opacity-75" : "text-tertiary",
+                      "mono shrink-0 rounded-sm px-1.5 py-0.5 text-[10px] font-semibold tracking-wide",
+                      i === selected ? "bg-black/15" : "bg-inset text-tertiary",
                     )}
                   >
-                    {s.sub}
+                    {protocolLabel(s.protocol)}
                   </span>
-                ) : null}
-              </button>
+                  {s.sub ? (
+                    <span
+                      className={classNames(
+                        "mono truncate text-xs",
+                        i === selected ? "opacity-75" : "text-tertiary",
+                      )}
+                    >
+                      {s.sub}
+                    </span>
+                  ) : null}
+                </button>
+              </div>
             ))}
           </div>
         ) : null}
@@ -419,21 +487,55 @@ export function QuickConnect({
         cycles rather than flips, and the tooltip names the protocol one more
         click reaches, so "the other protocol" never has to mean one of two
         unnamed alternatives.
+
+        When the number after the colon was read as a DISPLAY number, the chip
+        says so. `box:22` is display 22 on port 5922, and the port that will
+        be dialled is not the number that was typed, so the chip carries the
+        translation rather than leaving the person to work it out.
+
+        A saved host is NOT a dead grey chip: the app has quietly decided to
+        use that profile, and a disabled button cannot explain itself, so the
+        chip says "saved" and stays readable.
       */}
       {trimmed !== "" && parsed.ok ? (
         <button
           type="button"
-          className="mono shrink-0 rounded-md border border-subtle px-2 py-1 text-xs font-semibold text-secondary hover:text-primary"
+          className={classNames(
+            "mono shrink-0 rounded-md border px-2 py-1 text-xs font-semibold",
+            savedMatch !== null
+              ? "border-subtle text-tertiary"
+              : "border-subtle text-secondary hover:text-primary",
+          )}
           title={
             savedMatch
-              ? `${savedMatch.friendlyName} is saved as ${protocolLabel(resolved)}`
-              : `Click to connect with ${protocolName(nextProtocol(resolved))} instead`
+              ? t("quick.chipSavedTitle", {
+                  name: savedMatch.friendlyName,
+                  protocol: protocolName(hostProtocol(savedMatch)),
+                })
+              : t("quick.chipTitle", {
+                  protocol: protocolName(resolved),
+                  next: protocolName(nextProtocol(resolved)),
+                })
           }
-          disabled={savedMatch !== null}
           onPointerDown={(e) => e.preventDefault()}
-          onClick={() => setFlipped(nextProtocol(resolved))}
+          onClick={() => {
+            // A saved profile decides the protocol on its own, so there is
+            // nothing to flip: the click says so rather than doing nothing.
+            if (savedMatch !== null) {
+              onConnectHost(savedMatch);
+              return;
+            }
+            setFlipped(nextProtocol(resolved));
+          }}
         >
-          {protocolLabel(resolved)}
+          {savedMatch !== null
+            ? t("quick.chipSaved")
+            : displayNumber
+              ? t("quick.chipDisplay", {
+                  protocol: protocolLabel(resolved),
+                  display: (resolvedPort - DEFAULT_PORT.vnc).toString().padStart(2, "0"),
+                })
+              : protocolLabel(resolved)}
         </button>
       ) : null}
       <button
@@ -441,9 +543,7 @@ export function QuickConnect({
         className="btn-secondary shrink-0"
         disabled={trimmed === ""}
         onClick={connectTyped}
-      >
-        Connect
-      </button>
+      >{t("quick.connect")}</button>
       {invalid ? (
         <span
           className={classNames("truncate text-xs", attempted ? "text-danger" : "text-tertiary")}
@@ -452,7 +552,11 @@ export function QuickConnect({
           {parsed.error}
         </span>
       ) : (
-        <span className="truncate text-xs text-tertiary">Connects without saving anything</span>
+        <span className="truncate text-xs text-tertiary">
+          {savedMatch
+            ? t("quick.viaSaved", { name: savedMatch.friendlyName })
+            : t("quick.remembered")}
+        </span>
       )}
     </div>
   );
@@ -468,5 +572,19 @@ function SuggestionIcon({ kind }: { kind: Suggestion["kind"] }): ReactNode {
       return <IconClock size={16} />;
     default:
       return <IconMonitor size={16} />;
+  }
+}
+
+/** The heading above each group of suggestions. */
+function groupHeading(group: Suggestion["group"]): string {
+  switch (group) {
+    case "typed":
+      return "This address";
+    case "hosts":
+      return "Your computers";
+    case "nearby":
+      return "On this network";
+    default:
+      return "Recent";
   }
 }

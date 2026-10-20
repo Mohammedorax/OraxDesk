@@ -176,12 +176,22 @@ export function SessionsProvider({ children }: { children: ReactNode }): ReactNo
   // ------------------------------------------------------- live-previews toggle
 
   const [livePreviews, setLivePreviewsState] = useState(false);
+  /**
+   * Set as soon as the person touches the switch.
+   *
+   * The stored value is read once, on mount, and the read lands whenever it
+   * lands. If the switch was turned OFF in the meantime, the read would turn
+   * it back ON, because the read only ever set it to true. The flag says
+   * "the person has already decided", and the read then leaves it alone.
+   */
+  const livePreviewsChosen = useRef(false);
 
   useEffect(() => {
     let cancelled = false;
     void safeInvoke<string | null>("get_app_setting", { key: LIVE_PREVIEWS_KEY }, null).then(
       (raw) => {
-        if (!cancelled && raw === "1") setLivePreviewsState(true);
+        if (cancelled || livePreviewsChosen.current) return;
+        if (raw === "1") setLivePreviewsState(true);
       },
     );
     return () => {
@@ -190,6 +200,7 @@ export function SessionsProvider({ children }: { children: ReactNode }): ReactNo
   }, []);
 
   const setLivePreviews = useCallback((enabled: boolean): void => {
+    livePreviewsChosen.current = true;
     setLivePreviewsState(enabled);
     void safeInvoke("set_app_setting", { key: LIVE_PREVIEWS_KEY, value: enabled ? "1" : "0" }, null);
     // Session windows read the setting once at startup and listen for this
