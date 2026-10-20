@@ -1,4 +1,5 @@
 import { authenticate, consumeNonce, verifySignature } from "./auth";
+import { audit } from "./audit";
 import {
   MAX_CLIENT_VERSION_CHARS,
   MAX_LABEL_CHARS,
@@ -25,6 +26,7 @@ export interface DeviceRow {
   protocol_version: number;
   client_version: string | null;
   created_at: number;
+  last_seen_at: number | null;
   revoked_at: number | null;
 }
 
@@ -36,12 +38,17 @@ function deviceView(row: DeviceRow): Record<string, unknown> {
     protocol_version: row.protocol_version,
     client_version: row.client_version,
     created_at: row.created_at,
+    // When the device was last here. It is the only liveness signal the
+    // registry has, and it is written on every authenticated call rather
+    // than by a heartbeat, so a device that never calls the registry is
+    // never written about.
+    last_seen_at: row.last_seen_at,
     revoked_at: row.revoked_at,
   };
 }
 
 const VIEW_COLUMNS =
-  "id, fingerprint, number, protocol_version, client_version, created_at, revoked_at";
+  "id, fingerprint, number, protocol_version, client_version, created_at, last_seen_at, revoked_at";
 
 /**
  * Registers a device, or refreshes an existing registration. The request is
@@ -54,7 +61,13 @@ export async function registerDevice(
   body: Record<string, unknown>,
   raw: RawBody,
 ): Promise<Response> {
-  rejectUnknownKeys(body, ["public_key", "label", "client_version", "protocol_version"]);
+  rejectUnknownKeys(body, [
+    "public_key",
+    "registry_key",
+    "label",
+    "client_version",
+    "protocol_version",
+  ]);
   const publicKeyRaw = requiredString(body.public_key, "public_key", 64);
   let publicKey: Uint8Array;
   try {
@@ -66,6 +79,35 @@ export async function registerDevice(
   if ((request.headers.get("x-orax-device") ?? "") !== id) {
     throw new ApiError(409, "conflict", "X-Orax-Device does not match the public key");
   }
+
+  // The registry key, when the device offers one.
+  //
+  // It is what the signature is checked against, and it is a different key
+  // from the identity above: the identity is what every machine that ever
+  // paired with this one trusts, so a device that signed its API calls with
+  // it would hand a leaked identity to whoever could then take the wheel
+  // everywhere.
+  //
+  // A device that sends none keeps working: the Worker falls back to the
+  // identity, so the separation is adopted one device at a time.
+  let registryKey: Uint8Array | null = null;
+  if (body.registry_key !== undefined && body.registry_key !== null) {
+    const raw_registry = requiredString(body.registry_key, "registry_key", 64);
+    try {
+      registryKey = b64urlDecode(raw_registry);
+    } catch {
+      throw new ApiError(400, "bad_request", "registry_key is not valid base64url");
+    }
+    if (registryKey.length !== 32) {
+      throw new ApiError(400, "bad_request", "registry_key must be 32 bytes");
+    }
+    // The registry key must not BE the identity: that is the whole point of
+    // having two.
+    if (registryKey.length === publicKey.length && registryKey.every((b, i) => b === publicKey[i])) {
+      throw new ApiError(400, "bad_request", "registry_key must not be the device's own identity key");
+    }
+  }
+
   const label = optionalString(body.label, "label", MAX_LABEL_CHARS);
   const clientVersion = optionalString(
     body.client_version,
@@ -75,26 +117,46 @@ export async function registerDevice(
   const protocolVersion = optionalInt(body.protocol_version, "protocol_version", 1, 255) ?? 1;
 
   const bodyHash = await sha256Hex(raw.bytes);
-  const auth = await verifySignature(publicKey, request, bodyHash);
+  // The registration is signed with the IDENTITY, which the Worker can
+  // already derive from the submitted public key, and it OFFERS a registry
+  // key in the same body.
+  //
+  // Signing it with the registry key would be a chicken and an egg: the
+  // Worker only learns that key from this very request, so it would have
+  // nothing to check the signature against. What the signature proves here is
+  // that the caller holds the identity, which is what makes the offered
+  // registry key trustworthy: it can only be the key the holder of the
+  // identity chose.
+  const { auth } = await verifySignature(publicKey, request, bodyHash);
   await consumeNonce(env, auth.nonce, id);
 
   const now = nowSeconds();
   const number = await deviceNumber(publicKey);
   const existing = await env.DB.prepare(
-    `SELECT ${VIEW_COLUMNS} FROM devices WHERE id = ?`,
+    `SELECT ${VIEW_COLUMNS}, registry_key FROM devices WHERE id = ?`,
   )
     .bind(id)
-    .first<DeviceRow>();
+    .first<DeviceRow & { registry_key: ArrayBuffer | null }>();
   if (existing !== null) {
     if (existing.revoked_at !== null) {
       throw new ApiError(403, "forbidden", "This device was revoked");
     }
     // Older rows registered before 0003 get their number backfilled here.
     await env.DB.prepare(
-      "UPDATE devices SET label = ?, client_version = ?, protocol_version = ?, number = COALESCE(number, ?), updated_at = ? WHERE id = ?",
+      "UPDATE devices SET label = ?, client_version = ?, protocol_version = ?, number = COALESCE(number, ?), updated_at = ?, last_seen_at = ?, registry_key = COALESCE(?, registry_key) WHERE id = ?",
     )
-      .bind(label, clientVersion, protocolVersion, number, now, id)
+      .bind(
+        label,
+        clientVersion,
+        protocolVersion,
+        number,
+        now,
+        now,
+        registryKey,
+        id,
+      )
       .run();
+    await audit(env, "device.refreshed", id);
     return jsonResponse(
       deviceView({
         ...existing,
@@ -109,11 +171,24 @@ export async function registerDevice(
   const fingerprint = await sha256Hex(publicKey);
   await env.DB.prepare(
     `INSERT INTO devices
-       (id, public_key, fingerprint, number, label, client_version, protocol_version, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       (id, public_key, fingerprint, number, label, client_version, protocol_version, created_at, updated_at, last_seen_at, registry_key)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   )
-    .bind(id, publicKey, fingerprint, number, label, clientVersion, protocolVersion, now, now)
+    .bind(
+      id,
+      publicKey,
+      fingerprint,
+      number,
+      label,
+      clientVersion,
+      protocolVersion,
+      now,
+      now,
+      now,
+      registryKey,
+    )
     .run();
+  await audit(env, "device.registered", id);
   return jsonResponse(
     deviceView({
       id,
@@ -122,6 +197,7 @@ export async function registerDevice(
       protocol_version: protocolVersion,
       client_version: clientVersion,
       created_at: now,
+      last_seen_at: now,
       revoked_at: null,
     }),
     201,
@@ -176,9 +252,11 @@ export async function revokeDevice(
   await env.DB.prepare(
     "UPDATE devices SET revoked_at = ?, updated_at = ? WHERE id = ? AND revoked_at IS NULL",
   )
-    .bind(now, now, id)
-    .run();
+  .bind(now, now, id)
+  .run();
   // Pending codes for a revoked device must not outlive the revocation.
   await env.DB.prepare("DELETE FROM signal_codes WHERE host_id = ?").bind(id).run();
+  await audit(env, "device.revoked", id);
   return emptyResponse(204);
 }
+

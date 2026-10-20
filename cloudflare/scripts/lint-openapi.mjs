@@ -40,7 +40,9 @@ for (const ref of refs) {
 const expected = [
   "/healthz",
   "/v1/devices",
+  "/v1/devices/by-number/{number}",
   "/v1/devices/{id}",
+  "/v1/devices/{id}/address",
   "/v1/devices/{id}/revoke",
   "/v1/signals",
   "/v1/signals/resolve",

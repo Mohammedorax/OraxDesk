@@ -32,7 +32,7 @@ async fn deskvnc_driver_receives_boundary_frames_and_obeys_host_consent() {
     timeout(Duration::from_secs(20), async {
         let inputs = Arc::new(AtomicUsize::new(0));
         let count = inputs.clone();
-        let mut host = boundary_session::host(HostOptions { relay: false, relay_url: None, bind_ip: None }, move || Ok(Box::new(Fake(count))));
+        let mut host = boundary_session::host(HostOptions { relay: false, ..Default::default() }, move || Ok(Box::new(Fake(count))));
         let ticket = loop { if let Some(Event::Invitation(ticket)) = host.events.recv().await { break ticket; } };
         let driver = BoundaryDriver::default();
         let id = driver.prepare(ticket, "DeskVNC helper".into()).unwrap();
@@ -82,8 +82,7 @@ async fn a_pairing_reaches_deskvnc_with_the_machine_id_and_its_lasting_identity(
         let mut host = boundary_session::host(
             HostOptions {
                 relay: false,
-                relay_url: None,
-                bind_ip: None,
+                ..Default::default()
             },
             || Ok(Box::new(Fake(Arc::new(AtomicUsize::new(0))))),
         );

@@ -65,6 +65,9 @@ repository = "https://github.com/psmux/DeskVNC"
 tokio = { version = "1", features = ["rt-multi-thread", "net", "io-util", "sync", "time", "macros"] }
 tokio-util = { version = "0.7", features = ["rt"] }
 futures = "0.3"
+# The stream type iroh's address lookup resolves into. `futures` has its own
+# Stream trait, and it is not the one iroh's resolver wants.
+n0-future = "0.3"
 
 # errors / logging
 thiserror = "2"

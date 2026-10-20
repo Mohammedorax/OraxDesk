@@ -147,7 +147,13 @@ impl ProtocolDriver for BoundaryDriver {
                             name,
                             options.credentials.password.clone().filter(|p| !p.is_empty()),
                             key,
-                            HostOptions::default(),
+                            // The helper looks machines up in the registry
+                            // as well as in iroh's public directory, so a
+                            // machine that only ever published to a registry
+                            // of its own is still reachable. A helper
+                            // publishes nothing: it is not a machine anyone
+                            // connects to.
+                            HostOptions::default().with_directory_from_env(None),
                         )
                     }
                     None => bail!("This support invitation is no longer available. Paste a new invitation in the Library"),

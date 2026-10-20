@@ -1,5 +1,6 @@
 import { sweep } from "./cleanup";
 import { invitationKeyStatus } from "./crypto";
+import { fetchAddress, publishAddress } from "./directory";
 import { getDevice, getDeviceByNumber, registerDevice, revokeDevice } from "./devices";
 import { sha256Hex } from "./encoding";
 import type { Env } from "./env";
@@ -11,7 +12,7 @@ import {
   readBody,
   requireJsonContentType,
 } from "./http";
-import { resolveLimiter } from "./ratelimit";
+import { resolveLimiter, directoryLimiter, registerLimiter } from "./ratelimit";
 import { createSignal, resolveSignal, revokeSignal } from "./signals";
 
 export default {
@@ -32,6 +33,22 @@ async function handle(request: Request, env: Env): Promise<Response> {
     if (method === "GET" && path === "/healthz") return await health(env);
 
     if (method === "POST" && path === "/v1/devices") {
+      // Registration is the one endpoint with no limit of its own, and every
+      // registration writes a device row that nothing ever deletes. An
+      // anonymous caller could fill the table with keys it had minted a
+      // moment earlier.
+      //
+      // The limiter is per isolate, so this is a speed bump rather than a
+      // quota: the real bound is the edge rate limiting in front of the
+      // Worker, which is not configured in this repository and is therefore
+      // an operational assumption rather than something this code can rely
+      // on. What this does is make the cheap abuse expensive.
+      const ip = request.headers.get("cf-connecting-ip") ?? "unknown";
+      if (!registerLimiter.allow(ip)) {
+        throw new ApiError(429, "rate_limited", "Too many registrations from this address", {
+          "retry-after": "60",
+        });
+      }
       requireJsonContentType(request);
       const raw = await readBody(request);
       return await registerDevice(env, request, parseObject(raw), raw);
@@ -40,6 +57,15 @@ async function handle(request: Request, env: Env): Promise<Response> {
     if (path.startsWith("/v1/devices/by-number/")) {
       const number = path.slice("/v1/devices/by-number/".length);
       if (method === "GET" && !number.includes("/")) {
+        // The nine digit number is a BILLION values read one at a time with
+        // no authentication, so this is the one endpoint where a flood is
+        // cheap. It gets the tightest window of the three.
+        const ip = request.headers.get("cf-connecting-ip") ?? "unknown";
+        if (!directoryLimiter.allow(ip)) {
+          throw new ApiError(429, "rate_limited", "Too many lookups from this address", {
+            "retry-after": "60",
+          });
+        }
         return await getDeviceByNumber(env, number);
       }
     }
@@ -54,6 +80,24 @@ async function handle(request: Request, env: Env): Promise<Response> {
         requireJsonContentType(request);
         const raw = await readBody(request);
         return await revokeDevice(env, request, id, await sha256Hex(raw.bytes));
+      }
+      // The device directory: where a machine is, so a helper can reach it by
+      // its id alone. The address is ADDRESS data, never session data.
+      if (method === "POST" && rest.endsWith("/address")) {
+        const id = rest.slice(0, -"/address".length);
+        requireJsonContentType(request);
+        const raw = await readBody(request);
+        return await publishAddress(
+          env,
+          request,
+          id,
+          parseObject(raw),
+          await sha256Hex(raw.bytes),
+        );
+      }
+      if (method === "GET" && rest.endsWith("/address")) {
+        const id = rest.slice(0, -"/address".length);
+        return await fetchAddress(env, id);
       }
     }
 

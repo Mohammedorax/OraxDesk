@@ -1,4 +1,5 @@
 import { authenticate } from "./auth";
+import { audit } from "./audit";
 import {
   CODE_DIGITS,
   CODE_TTL_DEFAULT,
@@ -140,6 +141,7 @@ export async function createSignal(
       )
         .bind(code, ciphertext, nonce, auth.id, auth.nonce, now, expiresAt, revokeHash, keyId)
         .run();
+      await audit(env, "signal.created", auth.id, `code ${code.slice(0, 4)}`);
       return jsonResponse(
         { code, expires_at: expiresAt, revoke_token: hexEncode(revokeToken) },
         201,
@@ -162,20 +164,38 @@ export async function resolveSignal(
   rejectUnknownKeys(body, ["code"]);
   const code = normalizeCode(requiredString(body.code, "code", 32));
   const now = nowSeconds();
-  const updated = await env.DB.prepare(
+  // The row is READ FIRST and the guarded UPDATE comes after it.
+  //
+  // The other order looks safer and is not: consume, then read. Between the
+  // two statements a revoke, a device revocation or the sweeper can delete
+  // the row, and the code has then been consumed and the helper gets a 404.
+  // The session is lost and the code is gone, and neither side can tell
+  // what happened. Reading first means the invitation is in hand before
+  // anything can take the code away, and the guarded UPDATE afterwards is
+  // what decides who gets it.
+  const row = await env.DB.prepare(
+    "SELECT ciphertext, nonce, expires_at, key_id, host_id FROM signal_codes WHERE code = ?",
+  )
+    .bind(code)
+    .first<{
+      ciphertext: ArrayBuffer;
+      nonce: ArrayBuffer;
+      expires_at: number;
+      key_id: string;
+      host_id: string;
+    }>();
+  if (row === null) throw new ApiError(404, "not_found", NOT_FOUND);
+  if (row.expires_at <= now) throw new ApiError(404, "not_found", NOT_FOUND);
+
+  // Exactly one caller wins this. The statement is atomic on its own, so
+  // two resolves of the same code cannot both see a change of one.
+  const claimed = await env.DB.prepare(
     "UPDATE signal_codes SET consumed_at = ? WHERE code = ? AND consumed_at IS NULL AND expires_at > ?",
   )
     .bind(now, code, now)
     .run();
-  if (updated.meta.changes !== 1) {
-    throw new ApiError(404, "not_found", NOT_FOUND);
-  }
-  const row = await env.DB.prepare(
-    "SELECT ciphertext, nonce, expires_at, key_id FROM signal_codes WHERE code = ?",
-  )
-    .bind(code)
-    .first<{ ciphertext: ArrayBuffer; nonce: ArrayBuffer; expires_at: number; key_id: string }>();
-  if (row === null) throw new ApiError(404, "not_found", NOT_FOUND);
+  if (claimed.meta.changes !== 1) throw new ApiError(404, "not_found", NOT_FOUND);
+
   const openingKey = selectInvitationKey(
     {
       current: env.INVITATION_KEY,
@@ -198,6 +218,7 @@ export async function resolveSignal(
     // Tampered or sealed under another key: fail closed, never 500.
     throw new ApiError(404, "not_found", NOT_FOUND);
   }
+  await audit(env, "signal.resolved", row.host_id, `code ${code.slice(0, 4)}`);
   return jsonResponse({ invitation });
 }
 
@@ -217,6 +238,16 @@ export async function revokeSignal(
     throw new ApiError(400, "bad_request", "revoke_token must be 64 hex characters");
   }
   const hash = await sha256(token);
-  await env.DB.prepare("DELETE FROM signal_codes WHERE revoke_hash = ?").bind(hash).run();
+  const removed = await env.DB.prepare(
+    "DELETE FROM signal_codes WHERE revoke_hash = ?",
+  )
+    .bind(hash)
+    .run();
+  if (removed.meta.changes > 0) {
+    // Which host the withdrawn code belonged to is not in the row any more, so
+    // the trail names the revocation without a device. The code itself is not
+    // written down: it is a capability, and this table outlives it.
+    await audit(env, "signal.revoked", null, "code withdrawn");
+  }
   return emptyResponse(204);
 }

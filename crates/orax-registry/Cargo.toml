@@ -10,11 +10,27 @@ base64.workspace = true
 getrandom.workspace = true
 hex.workspace = true
 iroh.workspace = true
+# The directory resolves into a boxed stream. The stream type iroh's address
+# lookup wants is `futures_lite`'s, which is not the one `futures` has, and
+# `n0-future` is where iroh's comes from.
+n0-future.workspace = true
 reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+
+# The registry key lives in the OS keychain, so it is not in a file beside
+# the peer-to-peer identity. The platform store is chosen per target, the
+# same way `vnc-store` chooses it.
+[target.'cfg(target_os = "windows")'.dependencies]
+keyring = { workspace = true, features = ["windows-native-keyring-store"] }
+[target.'cfg(target_os = "macos")'.dependencies]
+keyring = { workspace = true, features = ["apple-native-keyring-store"] }
+[target.'cfg(not(any(target_os = "windows", target_os = "macos")))'.dependencies]
+keyring = { workspace = true, features = ["zbus-secret-service-keyring-store"] }
 
 [dev-dependencies]
 # The live test drives the async client, so it needs a runtime of its own.

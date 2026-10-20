@@ -1,6 +1,6 @@
 import { AUTH_MAX_SKEW_SECONDS, NONCE_TTL_SECONDS } from "./constants";
 import { verifyEd25519 } from "./crypto";
-import { b64urlDecode, nowSeconds, utf8 } from "./encoding";
+import { b64urlDecode, blobBytes, nowSeconds, utf8 } from "./encoding";
 import type { Env } from "./env";
 import { ApiError } from "./http";
 import { isEndpointId } from "./id";
@@ -9,8 +9,23 @@ import { isEndpointId } from "./id";
  * Domain-separated canonical string. The device key already signs iroh
  * handshakes, so the API must sign a string that can never be mistaken for one
  * of those messages.
+ *
+ * The ORIGIN is part of what is signed. Without it, a signature captured at
+ * one registry verifies at any other registry for the same method and path,
+ * which means a device that was pointed at one registry could have its
+ * request replayed at another, and an invitation meant for one registry could
+ * be read by another.
  */
-export const AUTH_PREFIX = "orax-device-auth-v1";
+export const AUTH_PREFIX = "orax-device-auth-v2";
+
+/**
+ * The prefix of the previous version, accepted only during the rollout.
+ *
+ * See [`legacyCanonicalString`]: a v2 Worker cannot read a v1 signature, and
+ * a v1 Worker cannot read a v2 one, so both are accepted for a bounded time
+ * and every v1 acceptance is announced.
+ */
+export const LEGACY_AUTH_PREFIX = "orax-device-auth-v1";
 
 export interface AuthHeaders {
   id: string;
@@ -43,7 +58,18 @@ export function readAuthHeaders(request: Request): AuthHeaders {
   return { id, timestamp: Number(timestampRaw), nonce, signature };
 }
 
+/**
+ * The origin a request came in on, as `scheme://host[:port]`.
+ *
+ * The default port is left out, and so it is on the client side, so the two
+ * agree on what the origin is.
+ */
+export function requestOrigin(request: Request): string {
+  return new URL(request.url).origin;
+}
+
 export function canonicalString(
+  origin: string,
   method: string,
   path: string,
   bodySha256Hex: string,
@@ -52,6 +78,7 @@ export function canonicalString(
 ): string {
   return [
     AUTH_PREFIX,
+    origin,
     method.toUpperCase(),
     path,
     bodySha256Hex,
@@ -60,24 +87,83 @@ export function canonicalString(
   ].join("\n");
 }
 
+/**
+ * The v1 canonical string: the same fields, without the origin.
+ *
+ * It is not a fallback the protocol wants to keep. It is a migration window.
+ * A v2 Worker cannot read a v1 client's signature, so a Worker that only
+ * knows v2 refuses every client that has not been updated; a Worker that
+ * only knows v1 accepts a signature that can be replayed at another
+ * registry. Accepting both for a bounded time, and saying so every time a v1
+ * signature is accepted, is the honest way across that: a window with no
+ * signal is a window with no end.
+ */
+export function legacyCanonicalString(
+  method: string,
+  path: string,
+  bodySha256Hex: string,
+  timestamp: number,
+  nonce: string,
+): string {
+  return [
+    LEGACY_AUTH_PREFIX,
+    method.toUpperCase(),
+    path,
+    bodySha256Hex,
+    String(timestamp),
+    nonce,
+  ].join("\n");
+}
+
+/**
+ * The canonical string, whichever version the client used.
+ *
+ * The version is RETURNED, because the caller has to know which one was
+ * accepted: the window exists so an operator can watch the old clients drain.
+ */
 export async function verifySignature(
   publicKey: Uint8Array,
   request: Request,
   bodySha256Hex: string,
-): Promise<AuthHeaders> {
+): Promise<{ auth: AuthHeaders; version: 1 | 2 }> {
   const auth = readAuthHeaders(request);
   const now = nowSeconds();
   if (Math.abs(now - auth.timestamp) > AUTH_MAX_SKEW_SECONDS) {
     throw unauthorized("Request timestamp is outside the allowed window");
   }
-  const path = new URL(request.url).pathname;
-  const message = utf8(
-    canonicalString(request.method, path, bodySha256Hex, auth.timestamp, auth.nonce),
+  const url = new URL(request.url);
+  const v2 = utf8(
+    canonicalString(
+      requestOrigin(request),
+      request.method,
+      url.pathname,
+      bodySha256Hex,
+      auth.timestamp,
+      auth.nonce,
+    ),
   );
-  if (!(await verifyEd25519(publicKey, message, auth.signature))) {
-    throw unauthorized("Signature does not verify");
+  if (await verifyEd25519(publicKey, v2, auth.signature)) {
+    return { auth, version: 2 };
   }
-  return auth;
+  // The legacy form, so a client that has not been updated yet is not
+  // locked out during the rollout. Every acceptance is announced, because the
+  // window is only allowed to be open for as long as it takes to drain.
+  const v1 = utf8(
+    legacyCanonicalString(
+      request.method,
+      url.pathname,
+      bodySha256Hex,
+      auth.timestamp,
+      auth.nonce,
+    ),
+  );
+  if (await verifyEd25519(publicKey, v1, auth.signature)) {
+    console.warn(
+      "auth: a v1 signature was accepted; the migration window is still open",
+    );
+    return { auth, version: 1 };
+  }
+  throw unauthorized("Signature does not verify");
 }
 
 /** One use per nonce, so a captured request cannot be replayed. */
@@ -119,18 +205,51 @@ export async function authenticate(
 ): Promise<AuthenticatedDevice> {
   const auth = readAuthHeaders(request);
   const row = await env.DB.prepare(
-    "SELECT public_key, revoked_at FROM devices WHERE id = ?",
+    "SELECT public_key, registry_key, revoked_at FROM devices WHERE id = ?",
   )
     .bind(auth.id)
-    .first<{ public_key: ArrayBuffer; revoked_at: number | null }>();
+    .first<{
+      public_key: ArrayBuffer;
+      registry_key: ArrayBuffer | null;
+      revoked_at: number | null;
+    }>();
   if (row === null) throw unauthorized("This device is not registered");
   if (row.revoked_at !== null) {
     throw new ApiError(403, "forbidden", "This device was revoked");
   }
-  const publicKey = new Uint8Array(row.public_key);
-  await verifySignature(publicKey, request, bodySha256Hex);
+  // The signature is checked against the REGISTRY key when the device has
+  // one, and against the identity when it does not. A device that offered a
+  // registry key at registration is held to it, so a key that was rotated
+  // away cannot be used for anything.
+  const registryBytes =
+    row.registry_key === null ? null : blobBytes(row.registry_key);
+  const signingKey =
+    registryBytes !== null && registryBytes.length === 32
+      ? registryBytes
+      : blobBytes(row.public_key);
+  await verifySignature(signingKey, request, bodySha256Hex);
   if (options.consumeNonce !== false) {
     await consumeNonce(env, auth.nonce, auth.id);
   }
-  return { id: auth.id, publicKey, nonce: auth.nonce };
+  // The device was here just now.
+  //
+  // This is not a heartbeat: it happens on a request the device chose to
+  // make, so the cost is one row update per authenticated call, and a device
+  // that never calls the registry is never written about. It is the only
+  // liveness signal the registry has, and the column existed from the first
+  // migration without ever being written.
+  //
+  // A failure to record it does not fail the request: the call itself is
+  // what the device asked for, and liveness is a report about it rather than
+  // a precondition for it.
+  try {
+    await env.DB.prepare(
+      "UPDATE devices SET last_seen_at = ? WHERE id = ?",
+    )
+      .bind(nowSeconds(), auth.id)
+      .run();
+  } catch (error) {
+    console.error(`audit: could not record last seen: ${(error as Error).name}`);
+  }
+  return { id: auth.id, publicKey: signingKey, nonce: auth.nonce };
 }

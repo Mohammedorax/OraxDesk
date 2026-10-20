@@ -66,8 +66,7 @@ async fn an_agent_runs_commands_and_moves_files_only_while_the_person_allows_it(
         let mut host = boundary_session::host(
             HostOptions {
                 relay: false,
-                relay_url: None,
-                bind_ip: None,
+                ..Default::default()
             },
             || Ok(Box::new(Still)),
         );
@@ -225,8 +224,7 @@ async fn nothing_runs_when_the_person_only_allowed_viewing() {
         let mut host = boundary_session::host(
             HostOptions {
                 relay: false,
-                relay_url: None,
-                bind_ip: None,
+                ..Default::default()
             },
             || Ok(Box::new(Still)),
         );

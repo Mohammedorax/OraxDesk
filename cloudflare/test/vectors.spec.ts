@@ -9,14 +9,29 @@ import { endpointId } from "../src/id";
 // fail before a session is attempted.
 describe("wire vectors", () => {
   it("canonical string is exactly as specified", () => {
-    expect(canonicalString("POST", "/v1/signals", "abc123", 1_700_000_000, "nonce")).toBe(
-      "orax-device-auth-v1\nPOST\n/v1/signals\nabc123\n1700000000\nnonce",
+    expect(
+      canonicalString(
+        "https://registry.example.com",
+        "POST",
+        "/v1/signals",
+        "abc123",
+        1_700_000_000,
+        "nonce",
+      ),
+    ).toBe(
+      "orax-device-auth-v2\nhttps://registry.example.com\nPOST\n/v1/signals\nabc123\n1700000000\nnonce",
     );
   });
 
   it("lowercases the method so a client cannot sign a different verb", () => {
-    expect(canonicalString("post", "/v1/signals", "abc", 1, "n")).toBe(
-      canonicalString("POST", "/v1/signals", "abc", 1, "n"),
+    expect(
+      canonicalString("https://r.example", "post", "/v1/signals", "abc", 1, "n"),
+    ).toBe(canonicalString("https://r.example", "POST", "/v1/signals", "abc", 1, "n"));
+  });
+
+  it("binds the signature to the origin, so one registry cannot replay another's", () => {
+    expect(canonicalString("https://a.example", "POST", "/v1/signals", "abc", 1, "n")).not.toBe(
+      canonicalString("https://b.example", "POST", "/v1/signals", "abc", 1, "n"),
     );
   });
 

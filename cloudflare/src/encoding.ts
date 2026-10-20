@@ -50,6 +50,23 @@ export function nowSeconds(): number {
   return Math.floor(Date.now() / 1000);
 }
 
+/**
+ * A BLOB column as bytes.
+ *
+ * D1 hands a BLOB back in whichever shape its driver produced: an
+ * `ArrayBuffer` in one place, an array of byte values in another, and the two
+ * do not agree on what `byteLength` is. Normalising here means the callers
+ * never have to know, and a length check is a length check.
+ */
+export function blobBytes(value: ArrayBuffer | ArrayBufferView | number[]): Uint8Array {
+  if (value instanceof Uint8Array) return value;
+  if (Array.isArray(value)) return new Uint8Array(value);
+  if (ArrayBuffer.isView(value)) {
+    return new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
+  }
+  return new Uint8Array(value);
+}
+
 export function randomBytes(length: number): Uint8Array {
   return crypto.getRandomValues(new Uint8Array(length));
 }

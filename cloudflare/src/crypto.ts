@@ -115,9 +115,16 @@ export function currentInvitationKeyId(env: { INVITATION_KEY_ID?: string }): str
  * A stable nine-digit number for a device, derived from its public key.
  *
  * The same key always yields the same number, so it survives restarts and
- * re-registration without needing a lookup. Uniqueness is enforced by the
- * registry's unique index; a collision is astronomically unlikely below
- * millions of devices and fails loudly rather than silently merging devices.
+ * re-registration without needing a lookup.
+ *
+ * Uniqueness is enforced by the registry's unique index, and a collision
+ * fails loudly there rather than merging two devices. The space is a billion
+ * values, so the birthday bound says a collision becomes likely somewhere
+ * around thirty thousand registered devices, not the millions the first
+ * version of this comment claimed: with a billion values, a fifty percent
+ * chance of any collision at all arrives at about sqrt(1e9) devices. That is
+ * far beyond a personal deployment, but it is the number that matters if the
+ * registry ever grows into a service, and the number to widen when it does.
  */
 export async function deviceNumber(publicKey: Uint8Array): Promise<string> {
   const digest = await sha256(publicKey);

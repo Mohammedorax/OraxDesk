@@ -151,6 +151,18 @@ impl Access {
             self.password = None;
             return Ok(());
         };
+        self.password = Some(Self::hash_password(password)?);
+        Ok(())
+    }
+    /// The stored form of a password: `salt$hash`, both hex.
+    ///
+    /// Argon2id is deliberately slow, so a caller that must not hold a lock
+    /// across the work does the derivation here, off the runtime, and applies
+    /// the result with [`Access::apply_password_hash`]. Deriving and applying
+    /// in one step is what makes a whole-list snapshot-and-replace tempting,
+    /// and a snapshot taken before the derivation silently puts back whatever
+    /// changed while it ran.
+    pub fn hash_password(password: &str) -> Result<String> {
         ensure!(
             password.chars().count() >= MIN_PASSWORD,
             "Use at least {MIN_PASSWORD} characters for an unattended password"
@@ -158,8 +170,15 @@ impl Access {
         let mut salt = [0u8; 16];
         getrandom::fill(&mut salt).map_err(|e| anyhow!("Cannot make a salt: {e}"))?;
         let hash = derive(password, &salt)?;
-        self.password = Some(format!("{}${}", hex_encode(&salt), hex_encode(&hash)));
-        Ok(())
+        Ok(format!("{}${}", hex_encode(&salt), hex_encode(&hash)))
+    }
+    /// Apply an already-derived password, or remove it with `None`.
+    ///
+    /// Only the password is touched. Everything else in the access list is
+    /// whatever it is at the moment this is called, so a helper removed while
+    /// the derivation was running stays removed.
+    pub fn apply_password_hash(&mut self, stored: Option<String>) {
+        self.password = stored;
     }
     pub fn has_password(&self) -> bool {
         self.password.is_some()
@@ -319,7 +338,19 @@ where
     F: Fn() -> Result<Box<dyn Desktop>> + Send + Sync + 'static,
 {
     let machine = machine_id(&key);
-    let endpoint = session::endpoint_with(&options, Some(key), Lookup::Publish).await?;
+    // A machine with a registry of its own publishes there as well as to
+    // n0, so a deployment does not depend on somebody else's directory to
+    // find its own machines.
+    let lookup = if options.directory.is_some() {
+        Lookup::PublishDirectory
+    } else {
+        Lookup::Publish
+    };
+    // The signing key is NOT loaded here: the registry key lives in the
+    // keychain, and this crate is the protocol, not the credential store. The
+    // caller puts it in the options, and a machine with no registry publishes
+    // to n0 only, as it always did.
+    let endpoint = session::endpoint_with(&options, Some(key), lookup).await?;
     let _close = Closing(endpoint.clone());
     if options.relay
         && tokio::time::timeout(Duration::from_secs(12), endpoint.online())
@@ -693,7 +724,16 @@ async fn run_connect(
     worker
         .emit(Event::Status("Finding the computer".into()))
         .await?;
-    let endpoint = session::endpoint_with(&options, Some(key), Lookup::Resolve).await?;
+    // A helper looks the machine up in the registry as well as in n0, so a
+    // machine that only ever published to a registry of its own is still
+    // reachable. Neither source is the only one: a directory that is down
+    // must not make a machine unreachable.
+    let lookup = if options.directory.is_some() {
+        Lookup::ResolveDirectory
+    } else {
+        Lookup::Resolve
+    };
+    let endpoint = session::endpoint_with(&options, Some(key), lookup).await?;
     let _close = Closing(endpoint.clone());
     let connection = tokio::time::timeout(Duration::from_secs(30), endpoint.connect(target, wire::ALPN))
         .await

@@ -29,6 +29,7 @@ fn local() -> HostOptions {
         relay: false,
         relay_url: None,
         bind_ip: None,
+        directory: None,
     }
 }
 fn scratch(name: &str) -> PathBuf {

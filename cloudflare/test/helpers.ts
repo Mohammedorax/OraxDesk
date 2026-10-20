@@ -39,6 +39,19 @@ export interface SignOptions {
   timestamp?: number;
   nonce?: string;
   headers?: Record<string, string>;
+  /** The origin the request is signed for. Defaults to the test origin. */
+  origin?: string;
+  /**
+   * Where the request is actually SENT, when that is not the origin it was
+   * signed for.
+   *
+   * A request is always sent to the origin it was signed for otherwise, which
+   * is the whole point: the origin is what makes a signature useless
+   * anywhere else. This option exists to send a signature made for one
+   * registry to ANOTHER one, which is the replay the origin binding exists to
+   * stop.
+   */
+  sendTo?: string;
 }
 
 /** Builds a request signed exactly the way a client must sign it. */
@@ -53,7 +66,8 @@ export async function signedRequest(
   const bodyHash = await sha256Hex(bytes);
   const timestamp = options.timestamp ?? nowSeconds();
   const nonce = options.nonce ?? freshNonce();
-  const canonical = canonicalString(method, path, bodyHash, timestamp, nonce);
+  const origin = options.origin ?? "https://registry.test";
+  const canonical = canonicalString(origin, method, path, bodyHash, timestamp, nonce);
   const signature = new Uint8Array(
     await crypto.subtle.sign(
       { name: "Ed25519" },
@@ -69,7 +83,7 @@ export async function signedRequest(
     "x-orax-signature": b64urlEncode(signature),
     ...options.headers,
   };
-  return new Request(`https://registry.test${path}`, {
+  return new Request(`${options.sendTo ?? origin}${path}`, {
     method,
     headers,
     body: method === "GET" || bodyText === "" ? undefined : bodyText,

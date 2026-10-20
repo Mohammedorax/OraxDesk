@@ -70,6 +70,31 @@ pub struct HostOptions {
     pub relay_url: Option<String>,
     /// Restrict the host to an existing routed interface, with no public fallback.
     pub bind_ip: Option<std::net::IpAddr>,
+    /// Where the address of an UNATTENDED machine is published, and where a
+    /// helper looks one up.
+    ///
+    /// `None` means the public n0 directory, which is what every deployment
+    /// used before. `Some` points it at a registry the deployment controls,
+    /// which is the difference between depending on somebody else's
+    /// directory and owning one.
+    ///
+    /// It changes WHERE the address is published and nothing else. The
+    /// transport is still iroh's QUIC with its own hole punching, the
+    /// authorisation is still the machine's own access file, and no media
+    /// passes through it.
+    pub directory: Option<DirectoryOptions>,
+}
+
+/// How to reach the directory, and who to sign with.
+#[derive(Clone)]
+pub struct DirectoryOptions {
+    /// The registry's origin, as `https://host`.
+    pub url: String,
+    /// The key the registry calls are signed with, when the machine publishes.
+    ///
+    /// A helper that only looks up other machines has none, and publishes
+    /// nothing: a helper is not a machine anyone connects to.
+    pub signing_key: Option<iroh::SecretKey>,
 }
 impl Default for HostOptions {
     fn default() -> Self {
@@ -77,7 +102,31 @@ impl Default for HostOptions {
             relay: true,
             relay_url: None,
             bind_ip: None,
+            directory: None,
         }
+    }
+}
+
+impl HostOptions {
+    /// Point the address directory at the registry named by the environment.
+    ///
+    /// `ORAX_REGISTRY_URL` is the same variable the app already uses for the
+    /// registry, so there is one setting for it and not two. A deployment
+    /// that sets it gets its own directory; a deployment that does not keeps
+    /// publishing to n0 exactly as before.
+    ///
+    /// `signing_key` is the key the machine signs its publications with. A
+    /// helper that only looks other machines up passes none: a helper is not a
+    /// machine anyone connects to, so it publishes nothing.
+    pub fn with_directory_from_env(mut self, signing_key: Option<iroh::SecretKey>) -> Self {
+        if let Some(url) = std::env::var("ORAX_REGISTRY_URL")
+            .ok()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+        {
+            self.directory = Some(DirectoryOptions { url, signing_key });
+        }
+        self
     }
 }
 #[derive(Clone, Copy)]
@@ -294,6 +343,11 @@ pub(crate) enum Lookup {
     /// A helper finding an unattended machine by ID. Nothing is published
     /// about the helper.
     Resolve,
+    /// An unattended machine publishing to a registry the deployment controls,
+    /// instead of to the public n0 directory.
+    PublishDirectory,
+    /// A helper finding an unattended machine through that registry.
+    ResolveDirectory,
 }
 async fn endpoint(options: &HostOptions) -> Result<Endpoint> {
     endpoint_with(options, None, Lookup::Off).await
@@ -321,6 +375,22 @@ pub(crate) async fn endpoint_with(
         Lookup::Resolve => Endpoint::builder(presets::Minimal)
             .address_lookup(iroh::address_lookup::PkarrResolver::n0_dns())
             .address_lookup(iroh::address_lookup::DnsAddressLookup::n0_dns()),
+        // The same two, pointed at a registry the deployment controls.
+        Lookup::PublishDirectory | Lookup::ResolveDirectory => {
+            let directory = directory(options, key.clone(), lookup)?;
+            // The n0 publisher and resolver stay in place as well: a registry
+            // that is down, or a machine that has not published there yet,
+            // must not make the machine unreachable. The directory is an
+            // additional source, never the only one.
+            let mut builder = match lookup {
+                Lookup::PublishDirectory => Endpoint::builder(presets::N0),
+                _ => Endpoint::builder(presets::Minimal)
+                    .address_lookup(iroh::address_lookup::PkarrResolver::n0_dns())
+                    .address_lookup(iroh::address_lookup::DnsAddressLookup::n0_dns()),
+            };
+            builder = builder.address_lookup(directory);
+            builder
+        }
     };
     builder = builder
         .relay_mode(relay)
@@ -340,6 +410,37 @@ pub(crate) async fn endpoint_with(
             .bind_addr(std::net::SocketAddr::new(ip, 0))?;
     }
     Ok(builder.bind().await?)
+}
+/// Build the directory an endpoint publishes to, or looks up in.
+///
+/// A machine publishes with its registry key, so the directory can tell that
+/// the address belongs to the device that claims it. A helper only looks up,
+/// and publishes nothing: a helper is not a machine anyone connects to.
+fn directory(
+    options: &HostOptions,
+    key: Option<iroh::SecretKey>,
+    lookup: Lookup,
+) -> Result<orax_registry::directory::Directory> {
+    let Some(settings) = options.directory.as_ref() else {
+        anyhow::bail!("no directory is configured");
+    };
+    let client = orax_registry::Client::new(&settings.url)
+        .map_err(|error| anyhow::anyhow!("the registry is misconfigured: {error}"))?;
+    Ok(match lookup {
+        Lookup::PublishDirectory => {
+            let identity =
+                key.ok_or_else(|| anyhow::anyhow!("a machine needs its own key to publish"))?;
+            let registry = settings
+                .signing_key
+                .clone()
+                .ok_or_else(|| anyhow::anyhow!("the registry key is missing"))?;
+            orax_registry::directory::Directory::publisher(
+                client,
+                orax_registry::DeviceKeys::new(identity, registry),
+            )
+        }
+        _ => orax_registry::directory::Directory::reader(client),
+    })
 }
 pub fn validate_relay_url(value: &str) -> Result<()> {
     parse_relay_url(value).map(|_| ())
@@ -923,6 +1024,7 @@ mod relay_tests {
             relay: false,
             relay_url: None,
             bind_ip: Some(ip),
+            directory: None,
         })
         .await?;
         let _guard = EndpointGuard(endpoint.clone());

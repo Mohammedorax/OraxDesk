@@ -13,7 +13,7 @@
 
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use iroh::SecretKey;
-use orax_registry::{Client, Error};
+use orax_registry::{Client, DeviceKeys, Error};
 use serde_json::json;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -46,10 +46,17 @@ async fn live_registry_round_trip() {
     println!("health ok: {url}");
 
     // A fresh key is a fresh device; nothing is shared with any other run.
-    let key = SecretKey::generate();
-    let id = orax_registry::device_id(&key);
+    //
+    // TWO keys: the identity, which is the device's id, and the registry key,
+    // which is what the API calls are signed with. The point of the pair is
+    // that the identity is trusted by every machine that ever paired with
+    // this one, so a leak of it is a leak of all of them.
+    let identity = SecretKey::generate();
+    let registry = SecretKey::generate();
+    let id = orax_registry::device_id(&identity);
+    let keys = DeviceKeys::new(identity, registry);
     let record = client
-        .register(&key, Some("rust live test"), "live-test")
+        .register(&keys, Some("rust live test"), "live-test")
         .await
         .expect("register");
     assert_eq!(record.id, id);
@@ -57,14 +64,14 @@ async fn live_registry_round_trip() {
 
     // Registering again is idempotent.
     let again = client
-        .register(&key, Some("rust live test"), "live-test")
+        .register(&keys, Some("rust live test"), "live-test")
         .await
         .expect("re-register");
     assert_eq!(again.id, id);
 
     let printed = invitation(300);
     let code = client
-        .create_signal(&key, &printed, 120)
+        .create_signal(&keys, &printed, 120)
         .await
         .expect("create signal");
     assert_eq!(code.code.len(), 12);
@@ -83,7 +90,7 @@ async fn live_registry_round_trip() {
     }
 
     // Revocation is the cleanup path: the device and its codes disappear.
-    client.revoke(&key).await.expect("revoke");
+    client.revoke(&keys).await.expect("revoke");
     let record = client.lookup(&id).await.expect("lookup after revoke");
     assert!(record.revoked_at.is_some(), "device must read as revoked");
 

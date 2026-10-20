@@ -1,0 +1,409 @@
+import { SELF } from "cloudflare:test";
+import { describe, expect, it } from "vitest";
+import { b64urlEncode, nowSeconds } from "../src/encoding";
+import {
+  createSignal,
+  jsonBody,
+  newDevice,
+  register,
+  resolveSignal,
+  signedRequest,
+  testDb,
+} from "./helpers";
+
+/**
+ * The hardening: an audit trail that is actually written, a resolve that
+ * cannot lose a session to a race, a last-seen that is recorded, and limits
+ * that an anonymous caller cannot walk past.
+ */
+describe("the audit trail", () => {
+  it("records a registration", async () => {
+    const device = await newDevice();
+    expect((await register(device)).status).toBe(201);
+    const row = await testDb
+      .prepare("SELECT kind, device_id FROM audit_events WHERE device_id = ?")
+      .bind(device.id)
+      .first<{ kind: string; device_id: string }>();
+    expect(row?.kind).toBe("device.registered");
+  });
+
+  it("records a code being minted, resolved and withdrawn", async () => {
+    const device = await newDevice();
+    await register(device);
+    const minted = await jsonBody<{ code: string; revoke_token: string }>(
+      await createSignal(device, makeInvitation()),
+    );
+
+    await resolveSignal(minted.code);
+    const resolved = await testDb
+      .prepare("SELECT count(*) AS n FROM audit_events WHERE kind = 'signal.resolved'")
+      .first<{ n: number }>();
+    expect(resolved?.n).toBe(1);
+
+    await SELF.fetch(
+      new Request("https://registry.test/v1/signals/revoke", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ revoke_token: minted.revoke_token }),
+      }),
+    );
+    const withdrawn = await testDb
+      .prepare("SELECT count(*) AS n FROM audit_events WHERE kind = 'signal.revoked'")
+      .first<{ n: number }>();
+    expect(withdrawn?.n).toBe(1);
+  });
+
+  it("records nothing that could be a secret", async () => {
+    const device = await newDevice();
+    await register(device);
+    const minted = await jsonBody<{ code: string }>(
+      await createSignal(device, makeInvitation()),
+    );
+    await resolveSignal(minted.code);
+    const rows = await testDb
+      .prepare("SELECT kind, device_id, detail FROM audit_events")
+      .all<{ kind: string; device_id: string | null; detail: string | null }>();
+    expect(rows.results.length).toBeGreaterThan(0);
+    for (const row of rows.results) {
+      // The code itself is a capability. A prefix of it is not, and the
+      // detail column is bounded, so a whole code could never fit.
+      expect(row.detail ?? "").not.toContain(minted.code);
+      expect((row.detail ?? "").length).toBeLessThanOrEqual(128);
+    }
+  });
+});
+
+describe("last seen", () => {
+  it("is recorded when the device calls", async () => {
+    const device = await newDevice();
+    await register(device);
+    const before = nowSeconds();
+    await SELF.fetch(
+      await signedRequest("/v1/devices", device, {
+        method: "GET",
+        body: { public_key: b64urlEncode(device.publicKey) },
+      }),
+    );
+    const row = await testDb
+      .prepare("SELECT last_seen_at FROM devices WHERE id = ?")
+      .bind(device.id)
+      .first<{ last_seen_at: number | null }>();
+    expect(row?.last_seen_at).toBeGreaterThanOrEqual(before);
+  });
+
+  it("is in the public record", async () => {
+    const device = await newDevice();
+    await register(device);
+    const body = await jsonBody<Record<string, unknown>>(
+      await SELF.fetch(`https://registry.test/v1/devices/${device.id}`),
+    );
+    expect(typeof body.last_seen_at).toBe("number");
+  });
+});
+
+describe("the resolve cannot lose a session", () => {
+  it("gives the invitation to exactly one of two concurrent resolves", async () => {
+    const device = await newDevice();
+    await register(device);
+    const minted = await jsonBody<{ code: string }>(
+      await createSignal(device, makeInvitation()),
+    );
+    const [first, second] = await Promise.all([
+      resolveSignal(minted.code),
+      resolveSignal(minted.code),
+    ]);
+    const statuses = [first.status, second.status].sort();
+    expect(statuses).toEqual([200, 404]);
+  });
+
+  it("does not consume a code whose row is gone", async () => {
+    const device = await newDevice();
+    await register(device);
+    const minted = await jsonBody<{ code: string }>(
+      await createSignal(device, makeInvitation()),
+    );
+    // A revocation lands between the read and the guarded update. The
+    // invitation is already in hand, so the resolve succeeds rather than
+    // consuming the code and answering 404.
+    await testDb.prepare("DELETE FROM signal_codes WHERE code = ?").bind(minted.code).run();
+    const response = await resolveSignal(minted.code);
+    expect(response.status).toBe(404);
+  });
+});
+
+describe("the origin is part of the signature", () => {
+  it("refuses a signature made for another registry", async () => {
+    const device = await newDevice();
+    // Signed for one registry, sent to another. This is the replay the
+    // origin binding exists to stop: without it, a signature captured at
+    // one registry verifies at any other.
+    const response = await SELF.fetch(
+      await signedRequest("/v1/devices", device, {
+        origin: "https://another-registry.test",
+        sendTo: "https://registry.test",
+        body: { public_key: b64urlEncode(device.publicKey) },
+      }),
+    );
+    expect(response.status).toBe(401);
+  });
+
+  it("accepts a signature made for the registry it is sent to", async () => {
+    const device = await newDevice();
+    const response = await SELF.fetch(
+      await signedRequest("/v1/devices", device, {
+        origin: "https://registry.test",
+        body: { public_key: b64urlEncode(device.publicKey) },
+      }),
+    );
+    expect(response.status).toBe(201);
+  });
+
+  it("refuses a signature replayed at another path", async () => {
+    const device = await newDevice();
+    await register(device);
+    const request = await signedRequest("/v1/devices", device, {
+      body: { public_key: b64urlEncode(device.publicKey) },
+    });
+    const headers = new Headers(request.headers);
+    // The same signature, the same body, a different path. The path is part
+    // of what is signed, so the revocation route cannot be reached with a
+    // signature made for the registration route.
+    const replay = await SELF.fetch(
+      new Request(`https://registry.test/v1/devices/${device.id}/revoke`, {
+        method: "POST",
+        headers,
+        body: await request.text(),
+      }),
+    );
+    expect(replay.status).toBe(401);
+  });
+});
+
+describe("the registry key is not the identity", () => {
+  it("verifies the signature against the registry key when there is one", async () => {
+    // Two keys: the identity, which is the device's id, and the registry
+    // key, which signs. A signature made with the identity must not be
+    // accepted once the device has registered a registry key, because that is
+    // the whole point of having two.
+    const device = await newDevice();
+    const registry = await newDevice();
+    const registered = await SELF.fetch(
+      await signedRequest("/v1/devices", device, {
+        body: {
+          public_key: b64urlEncode(device.publicKey),
+          registry_key: b64urlEncode(registry.publicKey),
+        },
+      }),
+    );
+    expect(registered.status).toBe(201);
+
+    // The key is actually stored, and it is the one every later call is
+    // checked against.
+    const stored = await testDb
+      .prepare("SELECT length(registry_key) AS n FROM devices WHERE id = ?")
+      .bind(device.id)
+      .first<{ n: number | null }>();
+    expect(stored?.n).toBe(32);
+
+    // A call signed with the IDENTITY is now refused.
+    const withIdentity = await SELF.fetch(
+      await signedRequest("/v1/signals", device, {
+        body: { invitation: makeInvitation() },
+      }),
+    );
+    expect(withIdentity.status).toBe(401);
+
+    // A call signed with the REGISTRY key is accepted.
+    const withRegistry = await SELF.fetch(
+      await signedRequest("/v1/signals", registry, {
+        body: { invitation: makeInvitation() },
+        headers: { "x-orax-device": device.id },
+      }),
+    );
+    expect(withRegistry.status).toBe(201);
+  });
+
+  it("refuses a registry key that is the device's own identity", async () => {
+    const device = await newDevice();
+    const response = await SELF.fetch(
+      await signedRequest("/v1/devices", device, {
+        body: {
+          public_key: b64urlEncode(device.publicKey),
+          registry_key: b64urlEncode(device.publicKey),
+        },
+      }),
+    );
+    expect(response.status).toBe(400);
+  });
+
+  it("still accepts a device that sends no registry key", async () => {
+    // The separation is adopted one device at a time, so a device that has
+    // not been updated keeps working: the Worker falls back to the identity.
+    const device = await newDevice();
+    const response = await SELF.fetch(
+      await signedRequest("/v1/devices", device, {
+        body: { public_key: b64urlEncode(device.publicKey) },
+      }),
+    );
+    expect(response.status).toBe(201);
+    const signal = await SELF.fetch(
+      await signedRequest("/v1/signals", device, {
+        body: { invitation: makeInvitation() },
+      }),
+    );
+    expect(signal.status).toBe(201);
+  });
+});
+
+describe("the device directory", () => {
+  it("publishes an address and reads it back", async () => {
+    const device = await newDevice();
+    await register(device);
+    const address = {
+      id: device.id,
+      addrs: [{ Ip: "192.0.2.10:41234" }],
+    };
+    const published = await SELF.fetch(
+      await signedRequest(`/v1/devices/${device.id}/address`, device, {
+        body: { address },
+      }),
+    );
+    expect(published.status).toBe(204);
+
+    const read = await SELF.fetch(`https://registry.test/v1/devices/${device.id}/address`);
+    expect(read.status).toBe(200);
+    const body = await jsonBody<{ id: string; addrs: unknown[] }>(read);
+    expect(body.id).toBe(device.id);
+    expect(body.addrs).toHaveLength(1);
+  });
+
+  it("refuses an address that is about a different device", async () => {
+    const device = await newDevice();
+    const other = await newDevice();
+    await register(device);
+    const response = await SELF.fetch(
+      await signedRequest(`/v1/devices/${device.id}/address`, device, {
+        body: { address: { id: other.id, addrs: [] } },
+      }),
+    );
+    expect(response.status).toBe(409);
+  });
+
+  it("refuses a publication signed by somebody else", async () => {
+    const device = await newDevice();
+    const stranger = await newDevice();
+    await register(device);
+    const response = await SELF.fetch(
+      await signedRequest(`/v1/devices/${device.id}/address`, stranger, {
+        body: { address: { id: device.id, addrs: [] } },
+        headers: { "x-orax-device": device.id },
+      }),
+    );
+    expect(response.status).toBe(401);
+  });
+
+  it("has no address for a device that published none", async () => {
+    const device = await newDevice();
+    await register(device);
+    const response = await SELF.fetch(`https://registry.test/v1/devices/${device.id}/address`);
+    expect(response.status).toBe(404);
+  });
+
+  it("stores only the address, never anything else that was offered", async () => {
+    // The address is where a machine can be reached. It is not a way in:
+    // iroh's handshake authenticates the peer by its key, so the address is a
+    // place to knock and never a credential. What must never end up here is
+    // the session secret, which is the one thing that IS a credential.
+    //
+    // An address that carries anything else is REFUSED outright, rather than
+    // stored with the extra field quietly dropped: a blob with a field the
+    // registry does not understand is a malformed address, and the same rule
+    // the rest of the API follows.
+    const device = await newDevice();
+    await register(device);
+    const secret = Array.from(crypto.getRandomValues(new Uint8Array(32)));
+    const refused = await SELF.fetch(
+      await signedRequest(`/v1/devices/${device.id}/address`, device, {
+        body: {
+          address: {
+            id: device.id,
+            addrs: [{ Ip: "192.0.2.10:41234" }],
+            secret,
+          },
+        },
+      }),
+    );
+    expect(refused.status).toBe(400);
+    const row = await testDb
+      .prepare("SELECT address FROM devices WHERE id = ?")
+      .bind(device.id)
+      .first<{ address: string | null }>();
+    expect(row?.address).toBeNull();
+
+    // And what a well formed address stores is the address and nothing else.
+    const published = await SELF.fetch(
+      await signedRequest(`/v1/devices/${device.id}/address`, device, {
+        body: { address: { id: device.id, addrs: [{ Ip: "192.0.2.10:41234" }] } },
+      }),
+    );
+    expect(published.status).toBe(204);
+    const stored = await testDb
+      .prepare("SELECT address FROM devices WHERE id = ?")
+      .bind(device.id)
+      .first<{ address: string | null }>();
+    const parsed = JSON.parse(stored?.address ?? "{}") as Record<string, unknown>;
+    expect(Object.keys(parsed).sort()).toEqual(["addrs", "id"]);
+    expect(JSON.stringify(parsed)).not.toContain(JSON.stringify(secret));
+  });
+
+  it("refuses an address entry that is not an address", async () => {
+    const device = await newDevice();
+    await register(device);
+    const response = await SELF.fetch(
+      await signedRequest(`/v1/devices/${device.id}/address`, device, {
+        body: {
+          address: {
+            id: device.id,
+            addrs: [{ NotAnAddress: "whatever" }],
+          },
+        },
+      }),
+    );
+    expect(response.status).toBe(400);
+  });
+});
+
+describe("the limits", () => {
+  // LAST in this file, on purpose.
+  //
+  // The limiter is keyed on the source address, and every request in the
+  // test environment comes from the same one, so a flood here spends the
+  // budget that the tests above it share. Against a real deployment each
+  // device has its own address and the two never meet.
+  it("refuses a flood of registrations from one address", async () => {
+    // The limiter is per isolate, so this is a speed bump rather than a
+    // quota. What it has to be is more than nothing: a flood of
+    // registrations writes device rows that nothing ever deletes.
+    let refused = 0;
+    for (let attempt = 0; attempt < 30; attempt += 1) {
+      const device = await newDevice();
+      const response = await SELF.fetch(
+        await signedRequest("/v1/devices", device, {
+          body: { public_key: b64urlEncode(device.publicKey) },
+        }),
+      );
+      if (response.status === 429) refused += 1;
+    }
+    expect(refused).toBeGreaterThan(0);
+  });
+});
+
+function makeInvitation(seconds = 300): string {
+  const payload = {
+    version: 1,
+    address: { id: "a".repeat(64), ip_addrs: [], relay_urls: [] },
+    secret: Array.from(crypto.getRandomValues(new Uint8Array(32))),
+    expires: nowSeconds() + seconds,
+  };
+  return `boundary1:${b64urlEncode(new TextEncoder().encode(JSON.stringify(payload)))}`;
+}

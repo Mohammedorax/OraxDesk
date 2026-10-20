@@ -314,6 +314,14 @@ impl Model {
         };
         let (send, reply) = oneshot::channel();
         self.codes.message.clear();
+        // A registration that is still in flight is abandoned, not
+        // cancelled: its handle was about to be dropped, and dropping a
+        // `JoinHandle` detaches the task rather than stopping it, so the
+        // abandoned request kept running and registered a code nobody was
+        // waiting for. It is aborted before the new one starts.
+        if let Some((previous, _)) = self.codes.pending.take() {
+            previous.abort();
+        }
         let task = tokio::spawn(async move {
             let _ = send.send(client.register(ticket).await);
         });
@@ -362,15 +370,26 @@ impl Model {
             .take()
             .ok_or("Nobody is waiting for an answer")?;
         let allow = pending.tools && allow_tools && !matches!(decision, Approval::Deny);
-        if let Some(session) = &self.session {
-            // Set before the answer, so the grant the helper reads already
-            // says it.
-            session.set_tools(allow);
+        // The grant only exists if there is a session to grant it to, and
+        // only if the answer was actually delivered. The host worker denies
+        // the helper the moment the answer channel is dropped without a
+        // value, so a helper that was turned away must not keep showing as
+        // "tools allowed".
+        let delivered = match &self.session {
+            Some(session) => {
+                session.set_tools(allow);
+                pending.answer.send(decision).is_ok()
+            }
+            None => false,
+        };
+        if delivered {
+            self.tools_offered = pending.tools;
+            self.tools = allow;
+            self.approved_name = pending.name;
+        } else {
+            self.tools_offered = false;
+            self.tools = false;
         }
-        self.tools_offered = pending.tools;
-        self.tools = allow;
-        self.approved_name = pending.name;
-        let _ = pending.answer.send(decision);
         Ok(())
     }
     fn pair(&mut self) -> Result<(), String> {
@@ -378,13 +397,12 @@ impl Model {
         if self.session.is_none() {
             return Err("No helper is connected".into());
         }
-        self.access
-            .trust(&peer, &name, true)
-            .map_err(|e| format!("{e:#}"))?;
-        // What they may do later starts as what they may do now.
-        self.access.allow_tools(&peer, self.tools);
-        self.access.enabled = true;
-        self.save()?;
+        // The session is asked FIRST, so a pairing that cannot be offered
+        // does not leave the helper trusted in the stored access list. The
+        // order used to be the other way round, which wrote the helper into
+        // `access.json` and then failed to tell them, so the interface
+        // showed them as paired and the listener would let them in
+        // unattended without their ever knowing.
         self.session
             .as_ref()
             .ok_or("No helper is connected")?
@@ -393,6 +411,13 @@ impl Model {
                 boundary_provision::platform::computer_name(),
             )
             .map_err(|e| format!("{e:#}"))?;
+        self.access
+            .trust(&peer, &name, true)
+            .map_err(|e| format!("{e:#}"))?;
+        // What they may do later starts as what they may do now.
+        self.access.allow_tools(&peer, self.tools);
+        self.access.enabled = true;
+        self.save()?;
         self.start_listener();
         self.say(format!(
             "{name} can now connect to this computer any time. Remove them under Unattended access to stop it"
@@ -403,11 +428,21 @@ impl Model {
     // ---- unattended ----
 
     fn save(&mut self) -> Result<(), String> {
-        self.access.save(&self.access_path).map_err(|error| {
+        if let Err(error) = self.access.save(&self.access_path) {
             let message = format!("{error:#}");
             self.fail(message.clone());
-            message
-        })
+            // The in-memory access now says something the file does not, and
+            // the interface is built from the in-memory copy. Put the file's
+            // version back, so what the person is shown is what is stored:
+            // otherwise a helper they removed still shows as paired, and the
+            // NEXT successful save writes the in-memory copy and makes the
+            // removal real only after the fact.
+            if let Ok(stored) = Access::load(&self.access_path) {
+                self.access = stored;
+            }
+            return Err(message);
+        }
+        Ok(())
     }
     fn start_listener(&mut self) {
         let Some(key) = self.key.clone() else { return };
@@ -431,8 +466,28 @@ impl Model {
                 return;
             }
         }
+        // The address directory, when a registry is configured: the machine
+        // publishes its address there as well as to iroh's public directory,
+        // so a deployment does not depend on somebody else's directory to
+        // find its own machines.
+        let options = match crate::commands::registry::machine_directory_options() {
+            Ok(Some(directory)) => boundary_session::HostOptions {
+                relay: true,
+                relay_url: None,
+                bind_ip: None,
+                directory: Some(directory),
+            },
+            Ok(None) => boundary_session::HostOptions::default(),
+            // A registry that cannot be read is not a reason to refuse
+            // unattended access: the machine still publishes to n0, and the
+            // helper can still reach it.
+            Err(error) => {
+                tracing::warn!("the address directory is not configured: {error}");
+                boundary_session::HostOptions::default()
+            }
+        };
         self.listener = Some(unattended::listen(
-            boundary_session::HostOptions::default(),
+            options,
             key,
             self.access_path.clone(),
             move || boundary_platform::open(display),
@@ -984,17 +1039,30 @@ pub async fn support_set_password(
     support: Shared<'_>,
     password: Option<String>,
 ) -> Result<(), String> {
-    // Argon2 takes a moment, so it runs off the runtime's worker.
-    let mut access = support.model.lock().access.clone();
+    // Argon2 takes a moment, so it runs off the runtime's worker. Only the
+    // DERIVED HASH comes back.
+    //
+    // This used to snapshot the whole access list, derive the password
+    // against that copy, and then write the copy back over the live one.
+    // Anything that changed in between was silently reverted, and the
+    // reverting direction that mattered was the security one: a helper
+    // removed while the derivation ran was put back, and the next save
+    // persisted it, so the computer kept accepting a helper the person had
+    // just taken access away from.
     let removing = password.is_none();
-    access = tokio::task::spawn_blocking(move || {
-        access.set_password(password.as_deref()).map(|()| access)
-    })
-    .await
-    .map_err(|e| e.to_string())?
-    .map_err(|e| format!("{e:#}"))?;
+    let stored = match password {
+        None => None,
+        Some(password) => Some(
+            tokio::task::spawn_blocking(move || {
+                boundary_session::unattended::Access::hash_password(&password)
+            })
+            .await
+            .map_err(|e| e.to_string())?
+            .map_err(|e| format!("{e:#}"))?,
+        ),
+    };
     support.act(&app, |m| {
-        m.access = access;
+        m.access.apply_password_hash(stored);
         m.save()?;
         m.say(if removing {
             "Unattended password removed"
@@ -1010,10 +1078,25 @@ pub async fn support_set_autostart(
     support: Shared<'_>,
     enabled: bool,
 ) -> Result<(), String> {
-    support.act(&app, |m| {
-        autostart::set(AUTOSTART, enabled).map_err(|e| format!("{e:#}"))?;
-        m.autostart = enabled;
-        Ok(())
+    // The registry write is a child process and a wait for it, so it runs off
+    // the runtime's worker and OUTSIDE the model lock. The lock is what the
+    // support view is rebuilt under, every 150 ms, so holding it across a
+    // process launch makes the whole panel wait for `reg.exe`.
+    let written = tokio::task::spawn_blocking(move || autostart::set(AUTOSTART, enabled))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| format!("{e:#}"));
+    support.act(&app, |m| match written {
+        Ok(()) => {
+            m.autostart = enabled;
+            Ok(())
+        }
+        Err(message) => {
+            // The panel says what happened, rather than the command failing
+            // in the dark with the switch still showing the old state.
+            m.fail(message.clone());
+            Err(message)
+        }
     })
 }
 /// End one unattended helper's session.
@@ -1105,18 +1188,30 @@ pub async fn support_save_network(
     support: Shared<'_>,
     profile: Profile,
 ) -> Result<(), String> {
-    support.act(&app, |m| {
-        if m.session.is_some() {
-            return Err("End the session before changing how this computer connects".into());
+    if support.model.lock().session.is_some() {
+        return Err("End the session before changing how this computer connects".into());
+    }
+    profile.check_local().map_err(|e| e.to_string())?;
+    // The write is a temp file, an fsync and a rename, which is a disk wait
+    // and not something to do on a runtime worker while the model lock is
+    // held.
+    let wanted = profile.clone();
+    let written = tokio::task::spawn_blocking(move || boundary_provision::network::save(&profile))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| format!("Could not save settings: {e}"));
+    support.act(&app, |m| match written {
+        Ok(()) => {
+            m.network = wanted;
+            m.network_error = None;
+            m.status = "Connection settings saved".into();
+            m.error = false;
+            Ok(())
         }
-        profile.check_local().map_err(|e| e.to_string())?;
-        boundary_provision::network::save(&profile)
-            .map_err(|e| format!("Could not save settings: {e}"))?;
-        m.network = profile;
-        m.network_error = None;
-        m.status = "Connection settings saved".into();
-        m.error = false;
-        Ok(())
+        Err(message) => {
+            m.fail(message.clone());
+            Err(message)
+        }
     })
 }
 
@@ -1176,8 +1271,7 @@ mod tests {
             "Test helper".into(),
             boundary_session::HostOptions {
                 relay: false,
-                relay_url: None,
-                bind_ip: None,
+                ..Default::default()
             },
             None,
         );

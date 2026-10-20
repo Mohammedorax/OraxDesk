@@ -27,11 +27,13 @@ impl Profile {
                 relay: false,
                 relay_url: None,
                 bind_ip: Some(*address),
+                directory: None,
             },
             Self::Relay { url } => HostOptions {
                 relay: true,
                 relay_url: Some(url.clone()),
                 bind_ip: None,
+                directory: None,
             },
         }
     }

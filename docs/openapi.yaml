@@ -41,6 +41,15 @@ paths:
         Signed by the key being registered. The device id is derived from that
         key (`EndpointId`, 64 lower-case hex characters); the client cannot
         choose it.
+
+        The request may OFFER a `registry_key`, a second key used for every
+        call after this one. The peer-to-peer identity is trusted by every
+        machine that ever paired with this device, so signing API calls with
+        it would hand a leaked identity to whoever could then take the wheel
+        everywhere. A device that offers no `registry_key` is verified
+        against its identity, so the separation is adopted one device at a
+        time. The registration itself is always signed with the identity,
+        because the registry key is learned from this very request.
       parameters:
         - $ref: "#/components/parameters/Device"
         - $ref: "#/components/parameters/Timestamp"
@@ -56,6 +65,11 @@ paths:
               required: [public_key]
               properties:
                 public_key: { type: string, description: base64url of 32 bytes }
+                registry_key:
+                  type: string
+                  description: >-
+                    base64url of 32 bytes. The key every later call is signed
+                    with. Must not be the same as `public_key`.
                 label: { type: string, maxLength: 64 }
                 client_version: { type: string, maxLength: 32 }
                 protocol_version: { type: integer, minimum: 1, maximum: 255 }
@@ -76,6 +90,117 @@ paths:
         "409": { $ref: "#/components/responses/Conflict" }
         "413": { $ref: "#/components/responses/TooLarge" }
         "415": { $ref: "#/components/responses/UnsupportedMedia" }
+  /v1/devices/by-number/{number}:
+    get:
+      tags: [devices]
+      summary: The device behind a nine-digit number
+      description: >-
+        The number a person reads out, so a helper does not have to read a
+        sixty-four character id down the phone. The space is a billion
+        values read one at a time with no authentication, so this is the one
+        endpoint where a flood is cheap, and it is the most tightly limited
+        of them.
+
+        The number identifies a device. It is not a credential: connecting
+        still needs a code and the person's approval.
+      parameters:
+        - name: number
+          in: path
+          required: true
+          schema: { type: string, pattern: "^[0-9]{9}$" }
+      responses:
+        "200":
+          description: The device
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Device" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+  /v1/devices/{id}/address:
+    post:
+      tags: [devices]
+      summary: Publish this device's address, so a helper can find it by id
+      description: >-
+        The device directory: where a machine is, so a helper can reach it by
+        its id alone.
+
+        This is ADDRESS data, never session data. The screen, the mouse and the
+        keyboard never come near it: iroh's QUIC handshake authenticates the
+        peer by its key, so an address is a place to knock and never a way in.
+
+        Nothing here decides who may connect. That decision is the machine's
+        own, in its access file, and it is made when the connection arrives.
+      parameters:
+        - $ref: "#/components/parameters/Device"
+        - $ref: "#/components/parameters/Timestamp"
+        - $ref: "#/components/parameters/Nonce"
+        - $ref: "#/components/parameters/Signature"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [address]
+              properties:
+                address:
+                  type: object
+                  additionalProperties: false
+                  required: [id, addrs]
+                  properties:
+                    id: { type: string, pattern: "^[0-9a-f]{64}$" }
+                    addrs:
+                      type: array
+                      maxItems: 16
+                      items:
+                        oneOf:
+                          - type: object
+                            additionalProperties: false
+                            required: [Ip]
+                            properties:
+                              Ip: { type: string, description: "host and port" }
+                          - type: object
+                            additionalProperties: false
+                            required: [Relay]
+                            properties:
+                              Relay: { type: string, description: "https origin of a relay" }
+      responses:
+        "204": { description: Published }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+    get:
+      tags: [devices]
+      summary: The address a device published
+      description: >-
+        Public, like the address directory iroh already uses, and for the same
+        reason: the address is a place to knock, and the handshake is what
+        decides whether the knock is answered.
+
+        The nine digit number is a lookup key and NOT a secret: it resolves to
+        the id, and the id resolves to the address. That is the price of
+        reading a number down the phone, and it is why this endpoint is
+        limited.
+
+        An address that has gone stale is not an address: a device that
+        changed network and did not publish again would otherwise send a
+        helper to a place the machine is not any more.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, pattern: "^[0-9a-f]{64}$" }
+      responses:
+        "200":
+          description: The address
+          content:
+            application/json:
+              schema: { type: object }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
   /v1/devices/{id}:
     get:
       tags: [devices]
@@ -219,7 +344,10 @@ components:
       in: header
       required: true
       description: >-
-        ed25519 over `orax-device-auth-v1\nMETHOD\nPATH\nsha256hex(body)\ntimestamp\nnonce`
+        ed25519 over
+        `orax-device-auth-v2\nORIGIN\nMETHOD\nPATH\nsha256hex(body)\ntimestamp\nnonce`,
+        where ORIGIN is the `scheme://host[:port]` the request arrived on, so
+        a signature made for one registry does not verify at another.
       schema: { type: string }
   schemas:
     Device:
@@ -228,9 +356,18 @@ components:
       properties:
         id: { type: string, pattern: "^[0-9a-f]{64}$" }
         fingerprint: { type: string, pattern: "^[0-9a-f]{64}$" }
+        number:
+          type: [string, "null"]
+          description: The nine digit number shown on the device
         protocol_version: { type: integer }
         client_version: { type: [string, "null"] }
         created_at: { type: integer }
+        last_seen_at:
+          type: [integer, "null"]
+          description: >-
+            When the device last made an authenticated call. Written on the
+            call the device chose to make, not by a heartbeat, so a device that
+            never calls the registry is never written about.
         revoked_at: { type: [integer, "null"] }
     SignalCode:
       type: object
