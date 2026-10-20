@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-registry-resolve-code"
+description = "Enables the registry_resolve_code command without any pre-configured scope."
+commands.allow = ["registry_resolve_code"]
+
+[[permission]]
+identifier = "deny-registry-resolve-code"
+description = "Denies the registry_resolve_code command without any pre-configured scope."
+commands.deny = ["registry_resolve_code"]

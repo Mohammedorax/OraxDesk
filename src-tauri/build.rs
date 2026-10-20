@@ -53,6 +53,135 @@ fn stamp(key: &str, value: Option<String>) {
     );
 }
 
+/// The marker that opens the command list in this file.
+///
+/// Assembled from parts, so that the source of the function that looks for it
+/// does not itself contain it. Written out in full, the search would find
+/// this very line first and read the wrong list.
+const MANIFEST_MARKER: &str = concat!("AppManifest::new()", ".commands(&[");
+
+/// The lines between an opening marker and the line that closes it.
+///
+/// The block is found line by line, so a marker that also appears inside a
+/// string elsewhere in the file cannot open it in the wrong place, and the
+/// closing line is found by its shape rather than by a search for a closing
+/// bracket, so a comment in the middle of a list cannot end it early.
+fn block_lines(text: &str, marker: &str) -> Vec<String> {
+    let mut lines = Vec::new();
+    let mut inside = false;
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if !inside {
+            if !trimmed.contains(marker) {
+                continue;
+            }
+            inside = true;
+            let after = trimmed.split(marker).nth(1).unwrap_or("").trim();
+            if !after.is_empty() {
+                lines.push(after.to_string());
+            }
+            continue;
+        }
+        if trimmed.starts_with("])") {
+            break;
+        }
+        lines.push(trimmed.to_string());
+    }
+    lines
+}
+
+/// The command names in `generate_handler![...]`, from `src/lib.rs`.
+fn registered_commands(lib: &str) -> Vec<String> {
+    block_lines(lib, "generate_handler![")
+        .into_iter()
+        .filter(|l| l.contains("::"))
+        .filter_map(|l| {
+            l.trim_end_matches(',')
+                .rsplit("::")
+                .next()
+                .map(str::to_string)
+        })
+        .filter(|name| !name.is_empty())
+        .collect()
+}
+
+/// The command names this build script puts in the app manifest.
+fn manifest_commands(build: &str) -> Vec<String> {
+    block_lines(build, MANIFEST_MARKER)
+        .into_iter()
+        .filter_map(|l| {
+            let quoted = l.strip_prefix('"')?;
+            match quoted.strip_suffix("\",") {
+                Some(name) => Some(name.to_string()),
+                None => quoted.strip_suffix('"').map(str::to_string),
+            }
+        })
+        .collect()
+}
+
+/// Fails the build when the app's commands, the ACL manifest and the
+/// capability file disagree.
+///
+/// Tauri refuses a command that is registered but not granted, with "not
+/// allowed by ACL", and the webview only sees an empty answer. That happened
+/// twice before (`boundary_permission`, `agent_setup_agents`) and once more
+/// with the whole device registry, whose eight commands were registered in
+/// `generate_handler!` but never declared here, so no `allow-registry-*`
+/// permission was ever generated and the feature was dead in the shipped app
+/// while looking alive in the source.
+///
+/// This lives in the build script rather than only in a test because the
+/// build script runs for every build of the app, including the ones nobody
+/// runs the test suite on. The test in `tests/acl.rs` says the same thing
+/// with a better error message.
+fn check_acl_is_complete() {
+    let dir = std::env::var("CARGO_MANIFEST_DIR").unwrap_or_default();
+    // The check reads three files, so a change to any of them has to bring
+    // this build script back.
+    println!("cargo:rerun-if-changed=src/lib.rs");
+    println!("cargo:rerun-if-changed=build.rs");
+    println!("cargo:rerun-if-changed=capabilities/default.json");
+    let lib = std::fs::read_to_string(format!("{dir}/src/lib.rs")).unwrap_or_default();
+    let build = std::fs::read_to_string(format!("{dir}/build.rs")).unwrap_or_default();
+    let capability =
+        std::fs::read_to_string(format!("{dir}/capabilities/default.json")).unwrap_or_default();
+
+    let registered = registered_commands(&lib);
+    let manifest = manifest_commands(&build);
+    if registered.is_empty() || manifest.is_empty() {
+        // The source could not be read or the shape changed. Say so rather
+        // than passing a check that did not run.
+        panic!(
+            "could not read the command list out of src/lib.rs or build.rs; \
+             the ACL check cannot run and the build is not trustworthy"
+        );
+    }
+
+    let missing: Vec<_> = registered
+        .iter()
+        .filter(|c| !manifest.contains(c))
+        .cloned()
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "these commands are registered but not in the ACL manifest, so Tauri \
+         will refuse every call to them at run time: {missing:?}\n\
+         add them to the app manifest in build.rs"
+    );
+
+    let granted: Vec<_> = manifest
+        .iter()
+        .filter(|c| !capability.contains(&format!("\"allow-{}\"", c.replace('_', "-"))))
+        .cloned()
+        .collect();
+    assert!(
+        granted.is_empty(),
+        "these commands are in the ACL manifest but no capability grants them, \
+         so Tauri will refuse every call to them at run time: {granted:?}\n\
+         add \"allow-<command>\" to capabilities/default.json"
+    );
+}
+
 fn stamp_git_provenance() {
     // Re-stamp whenever the checked-out commit or the index changes, so the
     // hash and the dirty flag can never go stale in an incremental build.
@@ -106,6 +235,7 @@ fn main() {
         );
     }
     stamp_git_provenance();
+    check_acl_is_complete();
     tauri_build::try_build(tauri_build::Attributes::new().app_manifest(
         tauri_build::AppManifest::new().commands(&[
             // hosts / library
@@ -274,6 +404,26 @@ fn main() {
             // machine has, which is what the AI Agents panel's Set up button
             // runs.
             "agent_setup_agents",
+            // The optional device registry (Cloudflare Worker + D1). Main
+            // window only: a session window has no business registering this
+            // computer, minting a code, or reading the machine's own number.
+            //
+            // These were registered in `generate_handler!` but missing here,
+            // which means Tauri generated no `allow-registry-*` permission at
+            // all, so every call was refused at run time with "not allowed by
+            // ACL" and the whole feature was dead in the shipped app while
+            // looking alive in the source. `src-tauri/tests/acl.rs` exists to
+            // catch exactly that, but it is not in CI's test list.
+            "registry_health",
+            "registry_register_device",
+            "registry_register_helper",
+            "registry_create_code",
+            "registry_resolve_code",
+            "registry_lookup_number",
+            "registry_revoke_code",
+            // This computer's own endpoint id and nine-digit number. Derived
+            // from the machine key on disk, no network.
+            "machine_identity",
         ]),
     ))
     .expect("failed to run tauri-build");

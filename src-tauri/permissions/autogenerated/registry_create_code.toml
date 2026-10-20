@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-registry-create-code"
+description = "Enables the registry_create_code command without any pre-configured scope."
+commands.allow = ["registry_create_code"]
+
+[[permission]]
+identifier = "deny-registry-create-code"
+description = "Denies the registry_create_code command without any pre-configured scope."
+commands.deny = ["registry_create_code"]

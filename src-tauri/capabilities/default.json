@@ -153,6 +153,15 @@
     "allow-agent-register-with-claude",
     "allow-agent-setup-agents",
 
+    "allow-registry-health",
+    "allow-registry-register-device",
+    "allow-registry-register-helper",
+    "allow-registry-create-code",
+    "allow-registry-resolve-code",
+    "allow-registry-lookup-number",
+    "allow-registry-revoke-code",
+    "allow-machine-identity",
+
     {
       "identifier": "opener:allow-open-url",
       "allow": [{ "url": "x-apple.systempreferences:*" }]

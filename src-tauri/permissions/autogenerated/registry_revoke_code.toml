@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-registry-revoke-code"
+description = "Enables the registry_revoke_code command without any pre-configured scope."
+commands.allow = ["registry_revoke_code"]
+
+[[permission]]
+identifier = "deny-registry-revoke-code"
+description = "Denies the registry_revoke_code command without any pre-configured scope."
+commands.deny = ["registry_revoke_code"]

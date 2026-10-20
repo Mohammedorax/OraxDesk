@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-registry-register-helper"
+description = "Enables the registry_register_helper command without any pre-configured scope."
+commands.allow = ["registry_register_helper"]
+
+[[permission]]
+identifier = "deny-registry-register-helper"
+description = "Denies the registry_register_helper command without any pre-configured scope."
+commands.deny = ["registry_register_helper"]

@@ -60,6 +60,11 @@ jobs:
         # all without CI noticing. vnc-files was previously excluded,
         # so its Windows-only SSH agent code was never compiled by CI and a
         # break only surfaced during a release build.
+        #
+        # `deskvncviewer` is the app itself, and it is here for the same
+        # reason the ACL test below is: the crate is where the commands are
+        # registered, so it is where a command can be registered without a
+        # grant and be refused at run time.
         run: >
           cargo clippy
           -p remote-core -p remote-pixel -p limb-core
@@ -71,6 +76,7 @@ jobs:
           -p orax-registry
           -p boundary-session -p boundary-codes -p boundary-platform
           -p boundary-provision -p boundary-driver -p boundary
+          -p deskvncviewer
           --all-targets -- -D warnings
 
       - name: Test
@@ -85,6 +91,21 @@ jobs:
           -p orax-registry
           -p boundary-session -p boundary-codes -p boundary-platform
           -p boundary-provision -p boundary-driver -p boundary
+
+      - name: Test (app ACL)
+        # The app's own command list, the ACL manifest and the capability
+        # file have to agree, or Tauri refuses a command at run time with
+        # "not allowed by ACL" and the webview only ever sees an empty
+        # answer. That happened with the whole device registry: eight
+        # commands were registered but never declared, so no
+        # `allow-registry-*` permission was generated and the feature was
+        # dead in the shipped app while looking alive in the source.
+        #
+        # This crate was not in the list above, so the test that exists for
+        # exactly that was never run. `src-tauri/build.rs` now enforces the
+        # same invariant at build time; this runs the test as well, because
+        # the test explains what to do about it.
+        run: cargo test -p deskvncviewer --test acl
 
   legacy-tls:
     name: legacy-tls (${{ matrix.os }})

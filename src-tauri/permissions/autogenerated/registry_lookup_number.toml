@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-registry-lookup-number"
+description = "Enables the registry_lookup_number command without any pre-configured scope."
+commands.allow = ["registry_lookup_number"]
+
+[[permission]]
+identifier = "deny-registry-lookup-number"
+description = "Denies the registry_lookup_number command without any pre-configured scope."
+commands.deny = ["registry_lookup_number"]
