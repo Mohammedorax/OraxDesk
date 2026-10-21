@@ -513,6 +513,7 @@ jobs:
             "target/${{ matrix.bundle-target }}/release/bundle/nsis"/*-setup.exe \
             "target/${{ matrix.bundle-target }}/release/bundle/msi"/*.msi \
             "target/${{ matrix.bundle-target }}/release/bundle/deb"/*.deb \
+            "target/${{ matrix.bundle-target }}/release/bundle/rpm"/*.rpm \
             "target/${{ matrix.bundle-target }}/release/bundle/appimage"/*.AppImage \
             "target/${{ matrix.bundle-target }}/release/bundle/dmg"/*.dmg ; do
             for f in $p; do [ -e "$f" ] && cp "$f" dist/ ; done
@@ -658,7 +659,7 @@ jobs:
           # Name the platforms rather than counting files, so a partial upload
           # is caught here instead of by whoever downloads the gap.
           missing=0
-          for want in 'DeskVNC-Support-macOS.zip' 'DeskVNC-Support-Windows.zip' 'DeskVNC-Support-Linux-x86_64.tar.gz' '.dmg' '.msi' '-setup.exe' '.deb' '.AppImage'; do
+          for want in 'DeskVNC-Support-macOS.zip' 'DeskVNC-Support-Windows.zip' 'DeskVNC-Support-Linux-x86_64.tar.gz' '.dmg' '.msi' '-setup.exe' '.deb' '.rpm' '.AppImage'; do
             if ! grep -qF "$want" /tmp/assets.txt; then
               echo "::error::release $TAG is missing an asset matching '$want'"
               missing=1
