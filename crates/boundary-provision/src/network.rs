@@ -20,8 +20,21 @@ pub enum Profile {
     },
 }
 impl Profile {
+    /// The options this network profile means.
+    ///
+    /// The address directory is added on top, and it comes from the
+    /// environment rather than from the profile: `ORAX_REGISTRY_URL` is the
+    /// same variable the desktop app uses, so a deployment that points its
+    /// machines at a registry of its own has this app pointed there too.
+    ///
+    /// It is added as a READER. A helper looks a machine up in the directory
+    /// as well as in n0, so a machine that only ever published to the
+    /// deployment's own directory is still findable. A machine that HOSTS
+    /// from this app cannot publish there, because the registry key lives in
+    /// the desktop app's keychain and not here, and the publish path falls
+    /// back to n0 rather than failing.
     pub fn options(&self) -> HostOptions {
-        match self {
+        let base = match self {
             Self::Automatic => HostOptions::default(),
             Self::Private { address } => HostOptions {
                 relay: false,
@@ -35,7 +48,8 @@ impl Profile {
                 bind_ip: None,
                 directory: None,
             },
-        }
+        };
+        base.with_directory_from_env(None)
     }
     pub fn validate(&self) -> Result<()> {
         match self {

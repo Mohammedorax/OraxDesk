@@ -129,6 +129,14 @@ struct Model {
     access: Access,
     listener: Option<Listener>,
     claim: Option<std::fs::File>,
+    /// The address directory's settings, resolved once and held.
+    ///
+    /// They are read from the OS keychain, and a keychain read can take
+    /// seconds on Linux, so they are resolved OFF the model lock before the
+    /// listener starts and then simply read from here. A field that is
+    /// resolved while the lock is held is a field that can freeze the whole
+    /// support panel.
+    directory: Option<boundary_session::DirectoryOptions>,
     /// Every helper in unattended right now; up to the listener's limit.
     active: Vec<Active>,
     next_active: u64,
@@ -232,6 +240,7 @@ impl Model {
         let mut model = Self {
             display: displays.first().map(|d| d.id),
             displays,
+            directory: None,
             screen_permission: boundary_platform::screen_permission(),
             input_permission: boundary_platform::input_permission(),
             permission_check: Instant::now(),
@@ -319,8 +328,24 @@ impl Model {
         // `JoinHandle` detaches the task rather than stopping it, so the
         // abandoned request kept running and registered a code nobody was
         // waiting for. It is aborted before the new one starts.
-        if let Some((previous, _)) = self.codes.pending.take() {
-            previous.abort();
+        //
+        // UNLESS it has already finished. A finished task's answer is sitting
+        // in the reply channel with nobody to read it, and aborting it threw
+        // the answer away: the code existed at the service and the person was
+        // told nothing. So a completed registration is drained and its lease
+        // is kept, and only a registration that is genuinely still running is
+        // aborted.
+        if let Some((previous, mut reply)) = self.codes.pending.take() {
+            if previous.is_finished() {
+                if let Ok(result) = reply.try_recv() {
+                    match result {
+                        Ok(lease) => self.codes.lease = Some(lease),
+                        Err(error) => self.codes.message = error.to_string(),
+                    }
+                }
+            } else {
+                previous.abort();
+            }
         }
         let task = tokio::spawn(async move {
             let _ = send.send(client.register(ticket).await);
@@ -383,7 +408,16 @@ impl Model {
             None => false,
         };
         if delivered {
-            self.tools_offered = pending.tools;
+            // The tools are only OFFERED if the helper was not turned away.
+            //
+            // A helper that was DENIED must not keep a live toggle that says
+            // "this helper may run commands", because flipping it would set
+            // the grant on a session the person refused. The worker's own
+            // tools flag is reset at the start of the next approval, so the
+            // refusal is not exploitable today; the panel showing a control
+            // that means nothing is still wrong, and the control is what a
+            // person reads to decide whether the helper is trusted.
+            self.tools_offered = pending.tools && allow;
             self.tools = allow;
             self.approved_name = pending.name;
         } else {
@@ -470,21 +504,19 @@ impl Model {
         // publishes its address there as well as to iroh's public directory,
         // so a deployment does not depend on somebody else's directory to
         // find its own machines.
-        let options = match crate::commands::registry::machine_directory_options() {
-            Ok(Some(directory)) => boundary_session::HostOptions {
+        //
+        // The settings were resolved OFF the lock when they were read, and
+        // they are only READ here. Resolving them under the lock would mean
+        // an OS keychain round trip on the poll task's runtime worker, with
+        // the whole support panel waiting for it.
+        let options = match self.directory.clone() {
+            Some(directory) => boundary_session::HostOptions {
                 relay: true,
                 relay_url: None,
                 bind_ip: None,
                 directory: Some(directory),
             },
-            Ok(None) => boundary_session::HostOptions::default(),
-            // A registry that cannot be read is not a reason to refuse
-            // unattended access: the machine still publishes to n0, and the
-            // helper can still reach it.
-            Err(error) => {
-                tracing::warn!("the address directory is not configured: {error}");
-                boundary_session::HostOptions::default()
-            }
+            None => boundary_session::HostOptions::default(),
         };
         self.listener = Some(unattended::listen(
             options,
@@ -850,6 +882,25 @@ pub fn install(app: &AppHandle) {
     app.manage(support.clone());
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
+        // The address directory's settings are read ONCE, here, before the
+        // poll loop starts, and off the model's lock.
+        //
+        // They come from the OS keychain, and on Linux that is a round trip
+        // to the secret service which can take seconds. Reading it under the
+        // lock, from the poll task, would freeze the whole support panel
+        // while the keychain answered, and it would do it on a runtime
+        // worker the rest of the app needs.
+        match crate::commands::registry::machine_directory_options_off_lock().await {
+            Ok(directory) => {
+                support.model.lock().directory = directory;
+            }
+            // A registry that cannot be read is not a reason to refuse
+            // unattended access: the machine still publishes to n0, and the
+            // helper can still reach it.
+            Err(error) => {
+                tracing::warn!("the address directory is not configured: {error}");
+            }
+        }
         loop {
             support.refresh(&app);
             tokio::time::sleep(Duration::from_millis(150)).await;
@@ -1195,6 +1246,11 @@ pub async fn support_save_network(
     // The write is a temp file, an fsync and a rename, which is a disk wait
     // and not something to do on a runtime worker while the model lock is
     // held.
+    //
+    // It is also a window: the session check happened before it, and a
+    // session can START while the disk is busy. The check is therefore made
+    // again when the result is applied, under the lock, so the profile is
+    // never written over a live session.
     let wanted = profile.clone();
     let written = tokio::task::spawn_blocking(move || boundary_provision::network::save(&profile))
         .await
@@ -1202,6 +1258,15 @@ pub async fn support_save_network(
         .map_err(|e| format!("Could not save settings: {e}"));
     support.act(&app, |m| match written {
         Ok(()) => {
+            // The session may have started while the settings were being
+            // written. Applying them over a live session would change how the
+            // computer connects while somebody is connected to it.
+            if m.session.is_some() {
+                let message =
+                    "End the session before changing how this computer connects".to_string();
+                m.fail(message.clone());
+                return Err(message);
+            }
             m.network = wanted;
             m.network_error = None;
             m.status = "Connection settings saved".into();

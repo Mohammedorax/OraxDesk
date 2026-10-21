@@ -638,6 +638,20 @@ impl OpeningClaim {
         self.released = true;
         self.windows.lock().remove(&self.id);
     }
+
+    /// Keep the claim.
+    ///
+    /// The claim is what makes a second connect gesture find the first one,
+    /// and it is released when the connect ENDS. A connect that is waiting on
+    /// a person has not ended: the machine is opening, a fingerprint dialog
+    /// is on the screen, and a second gesture in that window would otherwise
+    /// find nothing and open a SECOND window for the same machine.
+    ///
+    /// The approval that answers the dialog comes back through this same
+    /// command, and its claim removes the entry when it is done.
+    fn hold(&mut self) {
+        self.released = true;
+    }
 }
 
 impl Drop for OpeningClaim {
@@ -1385,13 +1399,18 @@ pub async fn connect_session(
                 key_type,
                 fingerprint,
             } => {
+                // The connect is not over: a person is being asked whether to
+                // trust this key. The claim is held so a second gesture in
+                // this window finds the machine that is already opening
+                // instead of opening a second window for it.
+                claim.hold();
                 return Ok(SessionConnectOutcome::SshHostKeyPrompt {
                     host,
                     port,
                     key_type,
                     fingerprint,
                     gateway: true,
-                })
+                });
             }
             TunnelOutcome::HostKeyChanged {
                 host,
@@ -1399,13 +1418,17 @@ pub async fn connect_session(
                 expected,
                 actual,
             } => {
+                // The same, for a key that CHANGED: that one is a hard stop,
+                // and the person has to decide, so the machine is still
+                // opening.
+                claim.hold();
                 return Ok(SessionConnectOutcome::SshHostKeyChanged {
                     host,
                     port,
                     expected,
                     actual,
                     gateway: true,
-                })
+                });
             }
         }
     }
@@ -1420,6 +1443,11 @@ pub async fn connect_session(
         if let Some(question) =
             decide_ssh_host_key(&app, &options, accept_ssh_host_key.as_deref()).await
         {
+            // A direct SSH session asking about its host key is also a connect
+            // that has not ended, so the claim is held for the same reason as
+            // the tunnel's: a second gesture must find the machine that is
+            // already opening.
+            claim.hold();
             return Ok(question);
         }
     }
