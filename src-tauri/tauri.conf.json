@@ -6,7 +6,7 @@
   "build": {
     "beforeDevCommand": "npm run dev --prefix ../ui",
     "devUrl": "http://localhost:5173",
-    "beforeBuildCommand": "npm run build --prefix ../ui",
+    "beforeBuildCommand": "npm run build --prefix ../ui && node ../scripts/stage-sidecar.mjs",
     "beforeBundleCommand": "cargo build --release -p dvv",
     "frontendDist": "../ui/dist"
   },
@@ -37,6 +37,7 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "externalBin": ["binaries/dvv"],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

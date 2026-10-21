@@ -3,7 +3,6 @@
     "beforeBundleCommand": null
   },
   "bundle": {
-    "externalBin": ["binaries/dvv"],
     "macOS": {
       "files": {
         "MacOS/dvv": null

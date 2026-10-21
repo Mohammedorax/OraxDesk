@@ -246,6 +246,14 @@ cargo tauri dev      # development, with hot reload
 cargo tauri build    # production bundle
 ```
 
+The bundle carries the `dvv` sidecar, which is what lets an AI agent reach
+this computer. The build stages it for the target it is building for and
+**fails rather than quietly shipping without it**: an installer with no
+sidecar is a viewer and nothing else, and nothing about it says so.
+
+The installers are unsigned. Windows will say "Windows protected your PC"
+the first time, and the release workflow signs them properly.
+
 ## Support and commercial use
 
 DeskVNC is free and open source and stays that way. It is built and maintained
