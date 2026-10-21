@@ -400,6 +400,18 @@ export function QuickConnect({
           aria-expanded={showList}
           aria-controls="quick-connect-list"
           aria-autocomplete="list"
+          /*
+            The option the arrow keys have reached.
+            
+            The combobox pattern keeps the DOM focus in the text field and
+            points at the active option with `aria-activedescendant`, so a
+            screen reader says which row is highlighted. Without it the field
+            announced only what was typed, and the person had no idea which
+            of the suggestions Enter would take.
+          */
+          aria-activedescendant={
+            showList && selected >= 0 ? `quick-connect-option-${selected}` : undefined
+          }
           aria-invalid={invalid}
           value={value}
           onChange={(e) => {
@@ -434,9 +446,22 @@ export function QuickConnect({
                 ) : null}
                 <button
                   data-index={i}
+                  id={`quick-connect-option-${i}`}
                   type="button"
                   role="option"
                   aria-selected={i === selected}
+                  /*
+                    Out of the tab order.
+                    
+                    The options live inside a listbox, and the combobox
+                    pattern says the list is reached with the arrow keys
+                    while the focus stays in the field. A focusable option
+                    puts every row in the tab order, so a keyboard user
+                    tabbed through the whole list instead of through the
+                    field, and the highlight the field had nothing to do
+                    with.
+                  */
+                  tabIndex={-1}
                   className={classNames(
                     "flex w-full items-center gap-3 rounded-md px-3 py-2 text-start",
                     i === selected ? "bg-accent text-accent-fg" : "text-primary hover:bg-inset",

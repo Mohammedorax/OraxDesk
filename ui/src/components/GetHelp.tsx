@@ -407,12 +407,19 @@ function UnattendedSettings({ view, run }: { view: SupportView; run: Run }): Rea
   const setNewPassword = () => {
     setLocal("");
     if (password !== confirm) {
-      setLocal("The two passwords differ");
+      setLocal(t("gethelp.passwordsDiffer"));
       return;
     }
-    run(() => support.setPassword(password));
-    setPassword("");
-    setConfirm("");
+    // The boxes are cleared only once the write has SUCCEEDED. They used to
+    // be emptied the moment the write was asked for, so a keychain that
+    // refused threw away a password the person could not see and could not
+    // write down again.
+    run(() =>
+      support.setPassword(password).then(() => {
+        setPassword("");
+        setConfirm("");
+      }),
+    );
   };
   return (
     <section className="flex flex-col gap-2 text-sm">
@@ -502,7 +509,15 @@ function UnattendedSettings({ view, run }: { view: SupportView; run: Run }): Rea
           value={confirm}
           onChange={(event) => setConfirm(event.target.value)}
         />
-        <button type="button" className="btn-secondary" disabled={password === ""} onClick={setNewPassword}>
+        <button
+          type="button"
+          className="btn-secondary"
+          // Both boxes, not just the first: a password that was typed once
+          // and never repeated is not a password anybody can set, and the
+          // button said it was ready.
+          disabled={password === "" || confirm === ""}
+          onClick={setNewPassword}
+        >
           Set password
         </button>
         {u.hasPassword ? (

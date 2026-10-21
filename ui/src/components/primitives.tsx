@@ -111,6 +111,15 @@ export interface MenuItem {
   label: string;
   danger?: boolean;
   disabled?: boolean;
+  /**
+   * Why this item is disabled, in words.
+   *
+   * A greyed-out row with no reason is a dead end: the person cannot tell
+   * whether the app has forgotten something, whether they have to do
+   * something first, or whether the row is simply broken. The reason is
+   * shown as a tooltip and read out by a screen reader.
+   */
+  disabledReason?: string;
   separatorAbove?: boolean;
   onSelect: () => void;
 }
@@ -169,6 +178,11 @@ export function ContextMenu({
             type="button"
             role="menuitem"
             disabled={item.disabled}
+            // The reason is in the tooltip for a mouse, and in the text for
+            // a screen reader: a disabled row is skipped by the tab order, so
+            // the tooltip alone would never be read by the people who most
+            // need to be told.
+            title={item.disabled ? item.disabledReason : undefined}
             className={classNames(
               "block w-full rounded-sm px-2.5 py-1.5 text-start text-sm",
               item.disabled
@@ -184,6 +198,9 @@ export function ContextMenu({
             }}
           >
             {item.label}
+            {item.disabled && item.disabledReason ? (
+              <span className="sr-only"> — {item.disabledReason}</span>
+            ) : null}
           </button>
         </div>
       ))}

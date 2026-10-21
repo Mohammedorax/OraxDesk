@@ -58,7 +58,7 @@ import {
   type PrefChanged,
 } from "../lib/prefs";
 import { useAgentActivity } from "../state/AgentActivityContext";
-import { useT, type MessageKey } from "../lib/i18n";
+import { useI18n, type Lang, type MessageKey } from "../lib/i18n";
 import { IconMonitor, IconStop, IconTerminal, IconX } from "./icons";
 
 /**
@@ -101,14 +101,44 @@ function useStatusHidden(): boolean {
   return hidden;
 }
 
-/** Short and absolute, so a glance reads it: "4s", "1m 20s". */
-function age(from: number, now: number): string {
+/**
+ * Short and absolute, so a glance reads it: "4s", "1m 20s".
+ *
+ * The units are the app's own, not Latin letters: a card in an Arabic
+ * interface that says "4s" is a card in a language nobody is reading.
+ */
+function age(from: number, now: number, t: WallTranslate, lang: Lang): string {
   if (!from) return "";
   const s = Math.max(0, Math.round((now - from) / 1000));
-  if (s < 60) return `${s}s`;
+  const count = new Intl.NumberFormat(lang);
+  // The unit letters are in the catalogue, because "s" and "m" are English
+  // and this app's default language is Arabic, and the numbers are counted
+  // out in the language too rather than in the browser's.
+  if (s < 60) return `${count.format(s)} ${t("wall.unitSecond")}`;
   const m = Math.floor(s / 60);
-  if (m < 60) return `${m}m ${s % 60}s`;
-  return `${Math.floor(m / 60)}h ${m % 60}m`;
+  if (m < 60) {
+    return `${count.format(m)} ${t("wall.unitMinute")} ${count.format(s % 60)} ${t("wall.unitSecond")}`;
+  }
+  return `${count.format(Math.floor(m / 60))} ${t("wall.unitHour")} ${count.format(m % 60)} ${t("wall.unitMinute")}`;
+}
+
+/**
+ * The same age, in words, for a screen reader.
+ *
+ * `Intl.NumberFormat` in the "unit" style is what says "4 seconds" and
+ * "1 minute" with the right plural in each language, which a hand-built
+ * string cannot do: English wants "1 minute" and Arabic wants a singular
+ * form of its own.
+ */
+function ageInWords(from: number, now: number, lang: Lang): string {
+  if (!from) return "";
+  const s = Math.max(0, Math.round((now - from) / 1000));
+  const unit = (n: number, u: "second" | "minute" | "hour"): string =>
+    new Intl.NumberFormat(lang, { style: "unit", unit: u, unitDisplay: "long" }).format(n);
+  if (s < 60) return unit(s, "second");
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${unit(m, "minute")} ${unit(s % 60, "second")}`;
+  return `${unit(Math.floor(m / 60), "hour")} ${unit(m % 60, "minute")}`;
 }
 
 /** The subset of the translator the wall needs. */
@@ -243,12 +273,14 @@ function Card({
   onGo,
   onStop,
   t,
+  lang,
 }: {
   entry: AgentActivity;
   now: number;
   onGo: () => void;
   onStop: () => void;
   t: WallTranslate;
+  lang: Lang;
 }): ReactNode {
   const holder = entry.holder;
   const driven = holder?.kind === "agent";
@@ -303,8 +335,23 @@ function Card({
         <span className="shrink-0 text-tertiary" aria-hidden="true">
           {entry.machine?.protocol === "ssh" ? <IconTerminal size={10} /> : <IconMonitor size={10} />}
         </span>
+        {/*
+          The age, twice: the short one for the eye and the same thing in
+          words for a screen reader.
+
+          The short one is a code, not a word. A screen reader reads the
+          letters out one at a time, so "4s" is announced as "four S" and
+          "1m 20s" as "one M twenty S": a number with a letter glued to it
+          rather than a time. The visible run is therefore hidden from it, and
+          the words beside it are what actually get read.
+        */}
         <span className="mono shrink-0 text-[9px] tabular-nums text-tertiary">
-          {age(holder?.since ?? entry.preempted?.at ?? 0, now)}
+          <span aria-hidden="true">
+            {age(holder?.since ?? entry.preempted?.at ?? 0, now, t, lang)}
+          </span>
+          <span className="sr-only">
+            {ageInWords(holder?.since ?? entry.preempted?.at ?? 0, now, lang)}
+          </span>
         </span>
         {driven ? (
           <button
@@ -357,7 +404,7 @@ export function AgentWall({
   const now = useSecondsTick(wall.length > 0);
   const scroller = useRef<HTMLDivElement>(null);
   const hidden = useStatusHidden();
-  const t = useT();
+  const { t, lang } = useI18n();
   /** "Stop all" asks first: it takes the lease back from every agent at once. */
   const [confirmingStopAll, setConfirmingStopAll] = useState(false);
   const cancelStopAll = useRef<HTMLButtonElement>(null);
@@ -557,6 +604,7 @@ export function AgentWall({
               onGo={() => onShowSession(entry.sessionId)}
               onStop={() => stopAgent(entry.sessionId)}
               t={t}
+              lang={lang}
             />
           ))}
         </div>

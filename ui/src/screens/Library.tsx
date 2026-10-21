@@ -45,6 +45,7 @@ import {
   saveGroupLayout,
 } from "../lib/groupLayout";
 import { classNames, describeError, formatBps, fuzzyMatch, modKeyLabel, timeAgo } from "../lib/util";
+import { useI18n } from "../lib/i18n";
 import { formatTarget } from "../lib/address";
 import { Sidebar, type SidebarSelection } from "../components/Sidebar";
 import { useHostDragSelect, type DropTarget } from "../hooks/useHostDragSelect";
@@ -135,6 +136,7 @@ export function Library({
   /** Is the library the pane on screen, or is a session tab in front of it? */
   const inFront = activeTabId === null;
   const { push } = useToasts();
+  const { t } = useI18n();
 
   const [selection, setSelection] = useState<SidebarSelection>({ kind: "all" });
   const [search, setSearch] = useState("");
@@ -1259,6 +1261,11 @@ export function Library({
       {
         label: "Wake (Wake-on-LAN)",
         disabled: !host.wolMac,
+        // A greyed-out row with no reason is a dead end: the person cannot
+        // tell whether the app has forgotten something, whether there is
+        // something to do first, or whether the row is simply broken. This
+        // host has no MAC address, and that is the whole reason.
+        disabledReason: host.wolMac ? undefined : t("library.wakeNeedsMac"),
         onSelect: () => {
           // The message waits for the packet to have been sent. The Rust side
           // refuses when the host has no MAC address stored, and the old code
@@ -1319,7 +1326,7 @@ export function Library({
         },
       },
     ],
-    [allowMultiple, tabbed, connectHost, editHost, saveHost, deleteHost, wakeHost, refreshThumbnail, push],
+    [allowMultiple, tabbed, connectHost, editHost, saveHost, deleteHost, wakeHost, refreshThumbnail, push, t],
   );
 
   // ------------------------------------------------------------ render
@@ -1330,9 +1337,19 @@ export function Library({
   return (
     <div className="flex h-full flex-col bg-canvas">
       {/* Top bar */}
-      <header className="flex items-center gap-3 border-b border-subtle bg-surface/80 px-4 py-2.5">
+      {/*
+        It wraps.
+        
+        The bar is a single row of eight fixed controls and a search field,
+        and it used not to wrap: below about 900 pixels it ran off the side
+        of the window with nothing to scroll to, so the buttons at the end
+        of it could not be reached at all. Wrapping puts the last of them on
+        a second row, which is a smaller thing to ask of a person than a
+        control they cannot see.
+      */}
+      <header className="flex flex-wrap items-center gap-3 border-b border-subtle bg-surface/80 px-4 py-2.5">
         <h1 className="mr-1 text-sm font-semibold tracking-tight text-primary">DeskVNCViewer</h1>
-        <div className="relative max-w-md flex-1">
+        <div className="relative min-w-56 max-w-md flex-1">
           <IconSearch size={15} className="pointer-events-none absolute start-2.5 top-1/2 -translate-y-1/2 text-tertiary" />
           <input
             ref={searchRef}
@@ -1813,6 +1830,7 @@ function HostListView({
   showProtocol?: boolean;
 }): ReactNode {
   const { forKey } = useSessions();
+  const { t, lang } = useI18n();
   return (
     <div className="select-none overflow-x-auto rounded-md border border-subtle bg-surface">
       <table className="w-full border-collapse text-sm">
@@ -1833,7 +1851,18 @@ function HostListView({
               key={h.id}
               data-host-id={h.id}
               tabIndex={0}
-              aria-selected={selectedIds.has(h.id)}
+              /*
+                No `aria-selected` on this row.
+
+                `aria-selected` is only valid inside a grid or a treegrid, and
+                this is a plain table: the attribute meant nothing to a screen
+                reader and meant something FALSE to a validator. The table
+                keeps its table semantics rather than pretending to be a grid
+                it does not implement the keyboard model of, and the state is
+                carried by the row's own name instead, so a selected row says
+                so. `aria-current` is the state that IS valid on a row.
+              */
+              aria-current={selectedIds.has(h.id) ? "true" : undefined}
               className={classNames(
                 "cursor-default border-b border-subtle last:border-b-0",
                 selectedIds.has(h.id) ? "bg-accent/12" : "hover:bg-inset/60",
@@ -1852,6 +1881,9 @@ function HostListView({
                     aria-label={h.online ? "Online" : "Offline or unknown"}
                   />
                   <span className="font-medium text-primary">{h.friendlyName}</span>
+                  {selectedIds.has(h.id) ? (
+                    <span className="sr-only"> {t("library.rowSelected")}</span>
+                  ) : null}
                 </span>
               </td>
               <td className="mono px-3 py-2 text-secondary">
@@ -1864,14 +1896,14 @@ function HostListView({
               <td className="px-3 py-2">
                 <span className="flex gap-1">
                   {h.tags.map((tid) => {
-                    const t = tags.find((x) => x.id === tid);
-                    return t ? (
+                    const tag = tags.find((x) => x.id === tid);
+                    return tag ? (
                       <span
                         key={tid}
                         className="rounded-pill px-1.5 py-px text-2xs font-medium text-white"
-                        style={{ background: t.color }}
+                        style={{ background: tag.color }}
                       >
-                        {t.name}
+                        {tag.name}
                       </span>
                     ) : null;
                   })}
@@ -1881,7 +1913,7 @@ function HostListView({
                 <td className="px-3 py-2 text-secondary">{protocolLabel(h.protocol)}</td>
               ) : null}
               <td className="px-3 py-2 text-secondary">{osLabel(h.osHint)}</td>
-              <td className="px-3 py-2 text-secondary">{timeAgo(h.lastConnected)}</td>
+              <td className="px-3 py-2 text-secondary">{timeAgo(h.lastConnected, t, lang)}</td>
             </tr>
           ))}
         </tbody>

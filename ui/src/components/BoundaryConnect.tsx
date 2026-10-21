@@ -1,13 +1,19 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { BoundaryProviderSetup } from "./BoundaryProviderSetup";
 import { Dialog } from "./primitives";
 import { mustInvoke, openSessionWindow, readClipboard } from "../lib/tauri";
 import { rememberRegistryUrl, rememberedRegistryUrl, registry } from "../lib/support";
-import { describeError } from "../lib/util";
-import { useT } from "../lib/i18n";
+import { classNames, describeError } from "../lib/util";
+import { useI18n } from "../lib/i18n";
 import { useHosts } from "../state/HostsContext";
 
 const NAME_KEY = "deskvnc.boundary.helperName";
+
+/**
+ * The two ways into the support window: to somebody who asked for help, and
+ * to a computer that can be reached unattended.
+ */
+type Mode = "invite" | "machine";
 
 /** Read a remembered value, tolerating storage that is blocked. */
 function remembered(key: string): string {
@@ -53,10 +59,10 @@ function looksLikeNumber(text: string): boolean {
  * Rust validates and owns the invitation; it never enters a URL.
  */
 export function BoundaryConnect() {
-  const t = useT();
+  const { t, dir } = useI18n();
   const { saveHost, savePassword } = useHosts();
   const [open, setOpen] = useState(false);
-  const [mode, setMode] = useState<"invite" | "machine">("invite");
+  const [mode, setMode] = useState<Mode>("invite");
   const [invitation, setInvitation] = useState("");
   const [codeService, setCodeService] = useState("");
   const [registryUrl, setRegistryUrl] = useState(rememberedRegistryUrl());
@@ -67,6 +73,11 @@ export function BoundaryConnect() {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [pasted, setPasted] = useState(false);
+  /**
+   * The two mode tabs, so the arrow keys can put the focus on the one they
+   * move to. See the tab list below.
+   */
+  const tabRefs = useRef<Partial<Record<Mode, HTMLButtonElement | null>>>({});
 
   const reset = () => {
     setOpen(false);
@@ -105,10 +116,14 @@ export function BoundaryConnect() {
     let resolved = typed;
     const url = registryUrl.trim();
     if (/^[0-9\s-]+$/.test(typed)) {
-      if (url !== "") {
-        rememberRegistryUrl(url);
-        resolved = await registry.resolveCode(url, typed);
-      }
+      // A bare number is NOT an invitation, and sending it as one made the
+      // backend answer with something nobody could act on. The machine mode
+      // already refuses a number with no registry to look it up in, and this
+      // is the same refusal: say what is missing instead of asking the far
+      // side to make sense of digits.
+      if (url === "") throw new Error(t("support.registryUrlRequired"));
+      await rememberRegistryUrl(url);
+      resolved = await registry.resolveCode(url, typed);
     }
     await mustInvoke("connect_boundary", {
       invitation: resolved,
@@ -123,8 +138,8 @@ export function BoundaryConnect() {
     let target = machineId.trim().toLowerCase();
     if (/^[0-9 ]+$/.test(target) && target.replaceAll(" ", "").length === 9) {
       const url = registryUrl.trim();
-      if (url === "") throw new Error("Enter the registry URL to look up a number");
-      rememberRegistryUrl(url);
+      if (url === "") throw new Error(t("support.registryUrlRequired"));
+      await rememberRegistryUrl(url);
       let record: { id: string };
       try {
         record = await registry.lookupNumber(url, target);
@@ -140,7 +155,10 @@ export function BoundaryConnect() {
       target = record.id;
     }
     const saved = await saveHost({
-      friendlyName: machineName.trim() || "Boundary computer",
+      // The fallback name is a NAME the person will read in their own library
+      // for ever, so it is a sentence in the app's language and not an
+      // English string left in an Arabic list.
+      friendlyName: machineName.trim() || t("support.defaultMachineName"),
       address: target,
       port: 0,
       protocol: "boundary",
@@ -170,15 +188,67 @@ export function BoundaryConnect() {
       ? invitation.trim() !== ""
       : looksLikeMachineId(machineId) ||
         (/^[0-9 ]+$/.test(machineId.trim()) && machineId.replaceAll(" ", "").length === 9 && registryUrl.trim() !== ""));
-  const tab = (value: "invite" | "machine", label: string) => (
+
+  /**
+   * The two ways in, as a tab list.
+   *
+   * They were two plain buttons, so nothing said which one was in force: a
+   * screen reader announced "Help someone now, button" and "A computer I can
+   * reach, button" and left the person to work out which half of the form
+   * they were looking at. The tab pattern is the one that fits two mutually
+   * exclusive modes of the same form, and it says so out loud.
+   *
+   * The panel is ONE element that both tabs point at, and it is labelled by
+   * whichever tab is in force. Only the panel that is in front is rendered:
+   * the provider setup in the invitation half polls the shell for as long as
+   * it is mounted, and mounting it behind a hidden panel would keep a poll
+   * running for a form the person cannot see.
+   */
+  const tab = (value: Mode, label: string) => (
     <button
       type="button"
+      role="tab"
+      id={`boundary-mode-tab-${value}`}
+      aria-selected={mode === value}
+      aria-controls="boundary-mode-panel"
+      // The tab pattern keeps ONE tab in the tab order and moves between them
+      // with the arrow keys, so a keyboard user does not tab past the whole
+      // strip to reach the second half of the form.
+      tabIndex={mode === value ? 0 : -1}
+      ref={(element) => {
+        tabRefs.current[value] = element;
+      }}
       onClick={() => { setMode(value); setError(""); }}
-      className={`flex-1 rounded px-3 py-1.5 text-sm ${mode === value ? "bg-accent text-accent-fg" : "border border-subtle text-primary hover:bg-inset"}`}
+      className={classNames(
+        "flex-1 rounded px-3 py-1.5 text-sm",
+        mode === value
+          ? "bg-accent text-accent-fg"
+          : "border border-subtle text-primary hover:bg-inset",
+      )}
     >
       {label}
     </button>
   );
+
+  /**
+   * The arrow keys move between the tabs, in the direction the tabs are
+   * actually drawn. The list is right to left in Arabic, so the arrow that
+   * means "onwards" is the one that points that way; a keyboard that moved
+   * the wrong way would put the focus on the other side of the screen from
+   * where the eye is.
+   */
+  const onTabKeyDown = (e: React.KeyboardEvent<HTMLDivElement>): void => {
+    const forward = dir === "rtl" ? "ArrowLeft" : "ArrowRight";
+    const back = dir === "rtl" ? "ArrowRight" : "ArrowLeft";
+    let next: Mode;
+    if (e.key === forward || e.key === "End") next = "machine";
+    else if (e.key === back || e.key === "Home") next = "invite";
+    else return;
+    e.preventDefault();
+    setMode(next);
+    setError("");
+    tabRefs.current[next]?.focus();
+  };
 
   return <>
     <button type="button" className="rounded-md border border-subtle px-3 py-1.5 text-sm text-primary hover:bg-inset" onClick={() => void show()} title="Connect to someone who asked you for help">{t("support.helpSomeone")}</button>
@@ -200,8 +270,22 @@ export function BoundaryConnect() {
         <div>
           <p className="mt-2 text-sm text-secondary">Help someone over the internet, with nothing to set up on either network.</p>
         </div>
-        <div className="flex gap-2">{tab("invite", t("support.helpSomeoneNow"))}{tab("machine", t("support.reachComputer"))}</div>
+        <div
+          className="flex gap-2"
+          role="tablist"
+          aria-label={t("support.connectMode")}
+          onKeyDown={onTabKeyDown}
+        >
+          {tab("invite", t("support.helpSomeoneNow"))}
+          {tab("machine", t("support.reachComputer"))}
+        </div>
         <label className="text-sm">{t("support.yourName")}<input autoFocus required maxLength={80} value={name} onChange={(event) => setName(event.target.value)} className="mt-1 w-full rounded border border-subtle bg-inset p-2" /></label>
+        <div
+          role="tabpanel"
+          id="boundary-mode-panel"
+          aria-labelledby={`boundary-mode-tab-${mode}`}
+          className="flex flex-col gap-4"
+        >
         {mode === "invite" ? <>
           <ol className="list-decimal space-y-1 pl-5 text-sm text-secondary">
             <li>In DeskVNC they press <strong>Get help</strong>. Without DeskVNC, they download <strong>DeskVNC Support</strong> from the DeskVNC releases page and open it. Nothing is installed.</li>
@@ -224,6 +308,7 @@ export function BoundaryConnect() {
           <label className="text-sm">{t("support.libraryName")}<input maxLength={80} value={machineName} onChange={(event) => setMachineName(event.target.value)} placeholder="Mum's laptop" className="mt-1 w-full rounded border border-subtle bg-inset p-2" /></label>
           <label className="text-sm">{t("support.unattendedPassword")}<input type="password" autoComplete="off" value={password} onChange={(event) => setPassword(event.target.value)} className="mt-1 w-full rounded border border-subtle bg-inset p-2" /><span className="mt-1 block text-xs text-secondary">{t("support.unattendedPasswordHint")}</span></label>
         </>}
+        </div>
         {error && <p role="alert" className="text-sm text-red-500">{error}</p>}
         <div className="flex justify-end gap-2"><button type="button" disabled={busy} onClick={close} className="rounded border border-subtle px-4 py-2">{t("support.cancel")}</button><button disabled={busy || !ready} type="submit" className="rounded bg-accent px-4 py-2 text-accent-fg disabled:opacity-50">{busy ? t("support.opening") : mode === "invite" ? t("support.connect") : t("support.saveAndConnect")}</button></div>
       </form>

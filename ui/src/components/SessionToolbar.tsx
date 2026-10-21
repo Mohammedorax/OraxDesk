@@ -1,8 +1,9 @@
 /** Floating pill session toolbar (PRD/05 §2): draggable anywhere in the window
  *  and docking flush when dropped near an edge, never able to leave the
- *  viewport, auto-fades to a chevron after 3s idle or when collapsed by hand,
- *  recalled by hover-at-edge or Ctrl/Cmd+Shift+M, which also puts it away
- *  again. Its position is remembered and shared by every mounted toolbar. */
+ *  viewport, auto-fades to a chevron after 3s of pointer OR key idle or when
+ *  collapsed by hand, recalled by hover-at-edge or Ctrl/Cmd+Shift+M, which
+ *  also puts it away again. Its position is remembered and shared by every
+ *  mounted toolbar. */
 import {
   useCallback,
   useEffect,
@@ -341,8 +342,8 @@ export function SessionToolbar(props: SessionToolbarProps): ReactNode {
   /**
    * True while the pointer is over the toolbar.
    *
-   * Auto-hide is driven by `pointermove`, so a pointer RESTING on the
-   * toolbar generates no events and the thing collapsed out from under the
+   * Auto-hide is driven by activity, and a pointer RESTING on the toolbar
+   * generates no events at all, so the thing collapsed out from under the
    * cursor, which is the one moment it is obviously wanted.
    */
   const hovering = useRef(false);
@@ -351,8 +352,8 @@ export function SessionToolbar(props: SessionToolbarProps): ReactNode {
     window.clearTimeout(idleTimer.current);
     idleTimer.current = window.setTimeout(() => {
       // Still in the grace period after the session opened: leave the bar
-      // where it is. The pointer moving re-arms this, and so does the timer
-      // below when the grace period ends.
+      // where it is. Activity re-arms this, and so does the timer below when
+      // the grace period ends.
       if (freshRef.current) return;
       if (!pinned && !dragging.current && !hovering.current) collapse();
     }, IDLE_MS);
@@ -371,13 +372,22 @@ export function SessionToolbar(props: SessionToolbarProps): ReactNode {
   // Only the focused pane's toolbar watches the pointer. A toolbar belonging to
   // any other pane is not drawn at all, and one that still ran this would reset
   // an idle timer on every mouse move for a bar nobody can see.
+  //
+  // The keyboard is watched as well as the pointer, and it has to be: auto-hide
+  // is armed by activity, and a person who works the keyboard alone never
+  // generates a `pointermove` at all. Their bar folded away three seconds
+  // after the session opened and the only way back was the Ctrl/Cmd+Shift+M
+  // chord, which is a thing they have to be told about and cannot discover.
+  // A key press is activity, so it re-arms the timer like any other.
   useEffect(() => {
     if (!owns) return;
     armIdle();
     const wake = (): void => armIdle();
     window.addEventListener("pointermove", wake);
+    window.addEventListener("keydown", wake);
     return () => {
       window.removeEventListener("pointermove", wake);
+      window.removeEventListener("keydown", wake);
       window.clearTimeout(idleTimer.current);
     };
   }, [armIdle, owns]);

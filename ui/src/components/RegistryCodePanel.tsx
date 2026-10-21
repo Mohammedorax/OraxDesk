@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { writeClipboard } from "../lib/tauri";
 import { rememberRegistryUrl, rememberedRegistryUrl, registry } from "../lib/support";
-import { useT } from "../lib/i18n";
+import { useI18n } from "../lib/i18n";
 
 /**
  * The optional Orax registry panel on the person being helped: publish the
@@ -12,7 +12,7 @@ import { useT } from "../lib/i18n";
  * with the Worker's key and lives for minutes.
  */
 export function RegistryCodePanel({ invitation }: { invitation: string }): ReactNode {
-  const t = useT();
+  const { t, lang } = useI18n();
   const [url, setUrl] = useState(rememberedRegistryUrl());
   const [code, setCode] = useState<string | null>(null);
   const [revokeToken, setRevokeToken] = useState<string | null>(null);
@@ -68,7 +68,11 @@ export function RegistryCodePanel({ invitation }: { invitation: string }): React
       const result = await registry.createCode(target, invitation);
       setCode(result.code);
       setRevokeToken(result.revoke_token);
-      const until = new Date(result.expires_at * 1000).toLocaleTimeString();
+      // The app's language, not the browser's. The panel is read out to the
+      // person being helped, and a time written in the browser's locale on
+      // a machine whose system is in another language is a time nobody can
+      // read out loud.
+      const until = new Date(result.expires_at * 1000).toLocaleTimeString(lang);
       setMessage(t("registry.ready", { time: until }));
     } catch (err) {
       setError(t("registry.failed", { reason: String(err) }));

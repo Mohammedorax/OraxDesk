@@ -26,8 +26,10 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { safeInvoke, safeListen } from "../lib/tauri";
+import { safeInvoke, safeListen, mustInvoke } from "../lib/tauri";
 import { mockAgentFrames, mockAgentsEnabled, mockPlaneStatus } from "../lib/mock";
+import { useT } from "../lib/i18n";
+import { useToasts } from "./ToastContext";
 import {
   AGENT_ACTIVITY_EVENT,
   AGENT_LEASES_COMMAND,
@@ -120,6 +122,9 @@ export function AgentActivityProvider({ children }: { children: ReactNode }): Re
    * anything, which is also what it says forever when it is switched off.
    */
   const [reported, setReported] = useState<PlaneStatus | null>(null);
+  /** The translator, for the one sentence this file has to say out loud. */
+  const t = useT();
+  const { push } = useToasts();
 
   // Read inside callbacks and timers registered once, which must not close
   // over a snapshot the events themselves are changing.
@@ -261,24 +266,51 @@ export function AgentActivityProvider({ children }: { children: ReactNode }): Re
    * The store then ignores what the plane says about this session for a very
    * short window, because an event minted before the click cannot know about
    * it. See `HANDOVER_MUTE_MS`.
+   *
+   * The command is sent with `mustInvoke` and NOT with `safeInvoke`, which is
+   * what every other context in this folder uses for a write the user asked
+   * for. `safeInvoke` swallowed the failure and resolved with a fallback, so
+   * the wall said the agent had been stopped while it was still driving the
+   * machine, and nothing was ever put back. The handover is therefore ROLLED
+   * BACK when the command fails, and the failure is said out loud.
    */
-  const revoke = useCallback((sessionId: string, reason: RevokeReason): void => {
-    if (!drivenByAgent(stateRef.current[sessionId])) return;
-    const now = Date.now();
-    setState((prev) => applyHandover(prev, sessionId, SELF, now));
-    void safeInvoke(AGENT_REVOKE_COMMAND, { sessionId, reason }, null);
-    // The notice retires on a schedule rather than against a ticking clock, so
-    // watching an agent work costs no re-renders at all.
-    //
-    // The timer is kept so it can be cleared when the provider goes away: it
-    // used to outlive the window and fire a state update into a component
-    // that was no longer there.
-    const timer = window.setTimeout(() => {
-      timers.current.delete(timer);
-      setState((prev) => clearNotice(prev, sessionId, Date.now()));
-    }, PREEMPT_NOTICE_MS + 50);
-    timers.current.add(timer);
-  }, []);
+  const revoke = useCallback(
+    (sessionId: string, reason: RevokeReason): void => {
+      const before = stateRef.current[sessionId];
+      if (!before || !drivenByAgent(before)) return;
+      const now = Date.now();
+      setState((prev) => applyHandover(prev, sessionId, SELF, now));
+      // The pretend plane has no shell to ask and `mustInvoke` outside Tauri
+      // always refuses, so the mock branch asks nobody: there is no plane
+      // there to refuse.
+      if (!mockAgentsEnabled()) {
+        void mustInvoke(AGENT_REVOKE_COMMAND, { sessionId, reason }).catch((err: unknown) => {
+          // The agent still holds the lease, so the wall has to say so. The
+          // entry is put back exactly as it was, rather than half-reverted:
+          // a card that says "you took the wheel" over an agent that is
+          // still driving is a card that is lying about the machine.
+          setState((prev) => {
+            if (!prev[sessionId]) return prev;
+            return { ...prev, [sessionId]: before };
+          });
+          console.error("[agents] the revocation failed:", err);
+          push("danger", t("wall.revokeFailed", { name: before.holder?.name ?? "" }));
+        });
+      }
+      // The notice retires on a schedule rather than against a ticking clock, so
+      // watching an agent work costs no re-renders at all.
+      //
+      // The timer is kept so it can be cleared when the provider goes away: it
+      // used to outlive the window and fire a state update into a component
+      // that was no longer there.
+      const timer = window.setTimeout(() => {
+        timers.current.delete(timer);
+        setState((prev) => clearNotice(prev, sessionId, Date.now()));
+      }, PREEMPT_NOTICE_MS + 50);
+      timers.current.add(timer);
+    },
+    [push, t],
+  );
 
   const takeWheel = useCallback(
     (sessionId: string): void => revoke(sessionId, "took-the-wheel"),

@@ -1,4 +1,5 @@
 /** Small shared utilities: color hashing, formatting, fuzzy matching, mnemonics. */
+import type { Lang, Translate } from "./i18n";
 
 /**
  * A failure, as a sentence to show a person.
@@ -31,19 +32,30 @@ export function colorFromId(id: string): string {
   return `oklch(0.55 0.11 ${hue})`;
 }
 
-export function timeAgo(ts: number | null): string {
-  if (!ts) return "never";
-  const s = Math.max(1, Math.floor(Date.now() / 1000 - ts));
-  if (s < 60) return "just now";
-  const m = Math.floor(s / 60);
-  if (m < 60) return `${m}m ago`;
-  const h = Math.floor(m / 60);
-  if (h < 24) return `${h}h ago`;
-  const d = Math.floor(h / 24);
-  if (d < 30) return `${d}d ago`;
-  const mo = Math.floor(d / 30);
-  if (mo < 12) return `${mo}mo ago`;
-  return `${Math.floor(mo / 12)}y ago`;
+/**
+ * How long ago something happened, in the app's language.
+ *
+ * The sentence comes from `Intl.RelativeTimeFormat`, in the language the app
+ * is in: a library that says "3m ago" to somebody whose whole interface is
+ * in Arabic is a library that has not been translated, and the app's default
+ * language IS Arabic. The one thing Intl cannot say is the "never" that
+ * stands for a host that has never been connected, and that is in the
+ * catalogue with everything else.
+ */
+export function timeAgo(ts: number | null, t: Translate, lang: Lang): string {
+  if (!ts) return t("util.never");
+  const seconds = Math.max(1, Math.floor(Date.now() / 1000 - ts));
+  const relative = new Intl.RelativeTimeFormat(lang, { numeric: "auto" });
+  if (seconds < 60) return relative.format(-seconds, "second");
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return relative.format(-minutes, "minute");
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return relative.format(-hours, "hour");
+  const days = Math.floor(hours / 24);
+  if (days < 30) return relative.format(-days, "day");
+  const months = Math.floor(days / 30);
+  if (months < 12) return relative.format(-months, "month");
+  return relative.format(-Math.floor(months / 12), "year");
 }
 
 export function formatBps(bps: number): string {

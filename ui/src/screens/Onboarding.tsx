@@ -3,6 +3,7 @@ import { useState, type ReactNode } from "react";
 import { useSettings, type ThemeChoice } from "../state/SettingsContext";
 import { useDiscovery } from "../state/DiscoveryContext";
 import { classNames } from "../lib/util";
+import { useT } from "../lib/i18n";
 import { IconMonitor, IconZap, IconLock } from "../components/icons";
 
 export function Onboarding({
@@ -12,14 +13,42 @@ export function Onboarding({
   onDone: () => void;
   onAddDiscovered: (id: string) => void;
 }): ReactNode {
+  const t = useT();
   const [step, setStep] = useState(0);
   const { settings, update } = useSettings();
   const { discovered, scan, startScan } = useDiscovery();
   const [ranDiscovery, setRanDiscovery] = useState(false);
+  /**
+   * Why the scan could not be started, or null when it could.
+   *
+   * "Nothing found yet" and "the scan never ran" are different sentences, and
+   * the second one is the truthful one when the command failed: a panel that
+   * says nothing was found after a scan that never started is telling the
+   * person their network is empty when what is empty is the search.
+   */
+  const [scanError, setScanError] = useState("");
 
   const finish = (): void => {
     update({ onboarded: true });
     onDone();
+  };
+
+  /**
+   * Start the search, and remember that it could not be started.
+   *
+   * The context resets the scan state itself when the command fails, so the
+   * spinner stops. The failure is not swallowed: it is held in state and
+   * shown in the panel below, because this screen has no toast of its own
+   * and a panel that says "nothing found" after a scan that never ran is a
+   * lie about the network.
+   */
+  const runScan = (): void => {
+    setRanDiscovery(true);
+    setScanError("");
+    void startScan().catch((err: unknown) => {
+      console.error("[onboarding] the network scan could not be started:", err);
+      setScanError(t("onboarding.scanFailed"));
+    });
   };
 
   return (
@@ -50,21 +79,21 @@ export function Onboarding({
             <div>
               <p className="mb-2 text-xs font-medium text-secondary">Appearance</p>
               <div className="flex gap-2" role="radiogroup" aria-label="Theme">
-                {(["system", "light", "dark"] as ThemeChoice[]).map((t) => (
+                {(["system", "light", "dark"] as ThemeChoice[]).map((theme) => (
                   <button
-                    key={t}
+                    key={theme}
                     type="button"
                     role="radio"
-                    aria-checked={settings.theme === t}
+                    aria-checked={settings.theme === theme}
                     className={classNames(
                       "flex-1 rounded-md border px-3 py-2 text-sm capitalize",
-                      settings.theme === t
+                      settings.theme === theme
                         ? "border-accent bg-accent/10 font-medium text-primary"
                         : "border-subtle text-secondary hover:border-strong",
                     )}
-                    onClick={() => update({ theme: t })}
+                    onClick={() => update({ theme })}
                   >
-                    {t === "system" ? "Follow System" : t}
+                    {theme === "system" ? "Follow System" : theme}
                   </button>
                 ))}
               </div>
@@ -87,17 +116,7 @@ export function Onboarding({
                 <button
                   type="button"
                   className="btn-primary"
-                  onClick={() => {
-                    setRanDiscovery(true);
-                    // The context resets the scan state itself when the
-                    // command fails, so the spinner stops and the message
-                    // below says that nothing was found yet. The failure is
-                    // not swallowed: it is reported to the console, because
-                    // this screen has no toast of its own.
-                    void startScan().catch((err: unknown) => {
-                      console.error("[onboarding] the network scan could not be started:", err);
-                    });
-                  }}
+                  onClick={runScan}
                 >
                   <IconZap size={14} /> Find computers on my network
                 </button>
@@ -109,9 +128,25 @@ export function Onboarding({
                     <div className="indeterminate-bar h-0.5 w-1/3 bg-accent" />
                   </div>
                 ) : null}
-                {discovered.length === 0 ? (
+                {scanError !== "" ? (
+                  <>
+                    <p role="alert" className="text-center text-xs text-danger">
+                      {scanError}
+                    </p>
+                    {/*
+                      A way back. The scan button is gone once it has been
+                      pressed, so a failure with nothing to press left the
+                      person looking at an error they could not act on.
+                    */}
+                    <div className="mt-2 flex justify-center">
+                      <button type="button" className="btn-secondary" onClick={runScan}>
+                        <IconZap size={14} /> {t("onboarding.scanRetry")}
+                      </button>
+                    </div>
+                  </>
+                ) : discovered.length === 0 ? (
                   <p className="text-center text-xs text-tertiary">
-                    {scan.running ? "Scanning your network…" : "Nothing found yet, some computers don't advertise themselves. You can add one manually later."}
+                    {scan.running ? t("onboarding.scanning") : t("onboarding.scanNothing")}
                   </p>
                 ) : (
                   <ul className="max-h-40 space-y-1 overflow-y-auto">
