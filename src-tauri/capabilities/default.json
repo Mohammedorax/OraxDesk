@@ -129,6 +129,7 @@
     "allow-files-cancel",
     "allow-files-local-home",
     "allow-files-local-list",
+    "allow-files-local-grant-root",
     "allow-files-local-mkdir",
     "allow-files-local-rename",
     "allow-files-local-remove",
@@ -154,6 +155,7 @@
     "allow-agent-setup-agents",
 
     "allow-registry-health",
+    "allow-registry-set-origin",
     "allow-registry-register-device",
     "allow-registry-register-helper",
     "allow-registry-create-code",

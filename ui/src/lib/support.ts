@@ -10,6 +10,17 @@
 import { useEffect, useState } from "react";
 import { mustInvoke, safeInvoke, safeListen } from "./tauri";
 
+/**
+ * Tell the app which registry this computer talks to.
+ *
+ * The app stores it, and every registry command checks the origin it is given
+ * against that stored one. It is why a compromised webview cannot point the
+ * signed calls at a host of its own.
+ */
+export function setRegistryOrigin(url: string): Promise<null> {
+  return mustInvoke<null>("registry_set_origin", { url });
+}
+
 export type NetworkProfile =
   | { mode: "Automatic" }
   | { mode: "Private"; address: string }
@@ -155,12 +166,27 @@ export function rememberedRegistryUrl(): string {
   }
 }
 
-export function rememberRegistryUrl(url: string): void {
+/**
+ * Remember the registry URL, in the webview and in the app.
+ *
+ * The APP's copy is the one that matters: every registry call is signed with
+ * this computer's registry key, so the origin it is sent to decides who sees
+ * a signature made with a secret. The webview's copy is a convenience for
+ * the field; the commands check against the app's, so a compromised webview
+ * cannot point the signed calls somewhere else.
+ *
+ * It returns a promise because the app's copy has to be stored BEFORE the
+ * call that uses it, and a fire-and-forget would be a race.
+ */
+export function rememberRegistryUrl(url: string): Promise<void> {
   try {
     localStorage.setItem(REGISTRY_URL_KEY, url.trim());
   } catch {
     // Blocked storage: the setting lasts until DeskVNC quits.
   }
+  return setRegistryOrigin(url.trim())
+    .then(() => undefined)
+    .catch(() => undefined);
 }
 
 export interface RegistryHealth {

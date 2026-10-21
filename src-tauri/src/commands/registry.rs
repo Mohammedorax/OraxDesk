@@ -5,9 +5,29 @@
 //! keeps using the shared code service (or a full invitation), exactly as
 //! before; a failing registry call is reported as an error the caller can fall
 //! back from, never a panic and never a blocked window.
+//!
+//! # The origin is the app's decision, not the webview's
+//!
+//! Every call here is signed with this device's REGISTRY key, so the origin
+//! it is sent to decides who sees a signature made with a secret. The URL used
+//! to live in the webview's local storage, which meant a compromised webview
+//! could point every signed call at a host of its choosing and collect the
+//! signatures there.
+//!
+//! So the origin is stored by the APP, in the same store as every other
+//! setting, and a command that names a different one is refused. Changing it
+//! is an explicit act that goes through [`registry_set_origin`] and is
+//! remembered, and the environment variable still wins for a deployment that
+//! wants to fix it for everybody.
 
 use boundary_session::unattended::{load_or_create_key, SecretKey};
 use orax_registry::{keys, Client, DeviceKeys, RegistryKey};
+use tauri::State;
+
+use crate::state::AppState;
+
+/// The setting the registry origin is stored under.
+const REGISTRY_ORIGIN_KEY: &str = "registry_origin";
 
 /// This computer's lasting identity, the same key Boundary already uses.
 fn machine_key() -> Result<SecretKey, String> {
@@ -73,6 +93,21 @@ pub fn machine_directory_options() -> Result<Option<boundary_session::DirectoryO
     }))
 }
 
+/// The same, read OFF the runtime and off any lock.
+///
+/// The registry key lives in the OS keychain, and a keychain read is a
+/// round trip to the secret service on Linux, which can take seconds. Doing
+/// that while holding the support model's lock blocks the whole support
+/// panel, and doing it on an async worker blocks a worker the runtime needs.
+///
+/// So the caller awaits this off the lock, and the answer is then held.
+pub async fn machine_directory_options_off_lock(
+) -> Result<Option<boundary_session::DirectoryOptions>, String> {
+    tokio::task::spawn_blocking(machine_directory_options)
+        .await
+        .map_err(|error| error.to_string())?
+}
+
 fn client(url: &str) -> Result<Client, String> {
     Client::new(url).map_err(|error| error.to_string())
 }
@@ -113,6 +148,68 @@ pub fn configured_url() -> Option<String> {
         .filter(|value| !value.is_empty())
 }
 
+/// The origin the app will actually talk to.
+///
+/// The environment wins, because a deployment that fixes it for everybody
+/// should not have it overridden by a setting made on one machine. Otherwise
+/// it is the stored one, and the webview cannot move it.
+async fn stored_origin(state: &AppState) -> Result<Option<String>, String> {
+    if let Some(url) = configured_url() {
+        return Ok(Some(url));
+    }
+    let store = state.store.clone();
+    super::blocking(move || store.get_setting(REGISTRY_ORIGIN_KEY))
+        .await
+        .map(|value| {
+            value
+                .map(|v| v.trim().to_string())
+                .filter(|v| !v.is_empty())
+        })
+        .map_err(|error| error.to_string())
+}
+
+/// The origin a command is allowed to use.
+///
+/// The named origin must be the one the app has, and it must be named at
+/// all: a call that says nothing is refused rather than quietly sent
+/// somewhere the app did not choose.
+async fn origin(state: &AppState, named: &str) -> Result<String, String> {
+    let chosen = stored_origin(state).await?;
+    let Some(chosen) = chosen else {
+        return Err("no registry origin has been set".into());
+    };
+    let named = named.trim();
+    if !named.is_empty() && !named.eq_ignore_ascii_case(&chosen) {
+        return Err(format!(
+            "this registry is not the one this computer is set up for ({chosen})"
+        ));
+    }
+    Ok(chosen)
+}
+
+/// Remember the registry origin this computer talks to.
+///
+/// The webview asks for this when the person types a registry URL, and the
+/// app keeps it. That is the only way the origin changes, and it is the
+/// reason the other commands can refuse an origin the app did not choose.
+#[tauri::command]
+pub async fn registry_set_origin(state: State<'_, AppState>, url: String) -> Result<(), String> {
+    let url = url.trim().to_string();
+    if url.is_empty() {
+        let store = state.store.clone();
+        return super::blocking(move || store.set_setting(REGISTRY_ORIGIN_KEY, ""))
+            .await
+            .map_err(|error| error.to_string());
+    }
+    // Validated the same way every other origin is, so a stored origin is
+    // one the client can actually use.
+    Client::new(&url).map_err(|error| error.to_string())?;
+    let store = state.store.clone();
+    super::blocking(move || store.set_setting(REGISTRY_ORIGIN_KEY, &url))
+        .await
+        .map_err(|error| error.to_string())
+}
+
 /// Resolve a code through a known registry origin. Used by the connect path so
 /// the fallback logic lives in one place.
 pub async fn resolve_code(url: &str, code: &str) -> Result<String, String> {
@@ -125,8 +222,11 @@ pub async fn resolve_code(url: &str, code: &str) -> Result<String, String> {
 /// Whether the configured registry is up and has its sealing key, so the UI can
 /// tell a user why codes are unavailable instead of showing a dead button.
 #[tauri::command]
-pub async fn registry_health(url: String) -> Result<orax_registry::Health, String> {
-    client(&url)?
+pub async fn registry_health(
+    state: State<'_, AppState>,
+    url: String,
+) -> Result<orax_registry::Health, String> {
+    client(&origin(&state, &url).await?)?
         .health()
         .await
         .map_err(|error| error.to_string())
@@ -135,14 +235,16 @@ pub async fn registry_health(url: String) -> Result<orax_registry::Health, Strin
 /// Host side: publish an invitation and return its code and revoke token.
 #[tauri::command]
 pub async fn registry_create_code(
+    state: State<'_, AppState>,
     url: String,
     invitation: String,
     ttl_seconds: Option<u32>,
 ) -> Result<orax_registry::SignalCode, String> {
+    let origin = origin(&state, &url).await?;
     let keys = tokio::task::spawn_blocking(machine_keys)
         .await
         .map_err(|error| error.to_string())??;
-    client(&url)?
+    client(&origin)?
         .create_signal(&keys, &invitation, ttl_seconds.unwrap_or(600))
         .await
         .map_err(|error| error.to_string())
@@ -150,8 +252,12 @@ pub async fn registry_create_code(
 
 /// Helper side: turn a typed code into the invitation to connect with.
 #[tauri::command]
-pub async fn registry_resolve_code(url: String, code: String) -> Result<String, String> {
-    client(&url)?
+pub async fn registry_resolve_code(
+    state: State<'_, AppState>,
+    url: String,
+    code: String,
+) -> Result<String, String> {
+    client(&origin(&state, &url).await?)?
         .resolve_signal(&code)
         .await
         .map_err(|error| error.to_string())
@@ -161,10 +267,11 @@ pub async fn registry_resolve_code(url: String, code: String) -> Result<String, 
 /// device's endpoint id, which is what an unattended connection needs.
 #[tauri::command]
 pub async fn registry_lookup_number(
+    state: State<'_, AppState>,
     url: String,
     number: String,
 ) -> Result<orax_registry::DeviceRecord, String> {
-    client(&url)?
+    client(&origin(&state, &url).await?)?
         .lookup_by_number(&number)
         .await
         .map_err(|error| error.to_string())
@@ -172,8 +279,12 @@ pub async fn registry_lookup_number(
 
 /// Host side: withdraw a code before it is used.
 #[tauri::command]
-pub async fn registry_revoke_code(url: String, revoke_token: String) -> Result<(), String> {
-    client(&url)?
+pub async fn registry_revoke_code(
+    state: State<'_, AppState>,
+    url: String,
+    revoke_token: String,
+) -> Result<(), String> {
+    client(&origin(&state, &url).await?)?
         .revoke_signal(&revoke_token)
         .await
         .map_err(|error| error.to_string())
@@ -182,12 +293,16 @@ pub async fn registry_revoke_code(url: String, revoke_token: String) -> Result<(
 /// Register this computer under its existing key, so the registry knows it.
 /// Idempotent: registering again only refreshes the metadata.
 #[tauri::command]
-pub async fn registry_register_device(url: String) -> Result<orax_registry::DeviceRecord, String> {
+pub async fn registry_register_device(
+    state: State<'_, AppState>,
+    url: String,
+) -> Result<orax_registry::DeviceRecord, String> {
+    let origin = origin(&state, &url).await?;
     let keys = tokio::task::spawn_blocking(machine_keys)
         .await
         .map_err(|error| error.to_string())??;
     let computer = boundary_provision::platform::computer_name();
-    client(&url)?
+    client(&origin)?
         .register(&keys, Some(computer.as_str()), env!("CARGO_PKG_VERSION"))
         .await
         .map_err(|error| error.to_string())
@@ -196,12 +311,16 @@ pub async fn registry_register_device(url: String) -> Result<orax_registry::Devi
 /// Register this helper under its lasting key. Separate from the machine
 /// registration because a helper is a different device with its own key.
 #[tauri::command]
-pub async fn registry_register_helper(url: String) -> Result<orax_registry::DeviceRecord, String> {
+pub async fn registry_register_helper(
+    state: State<'_, AppState>,
+    url: String,
+) -> Result<orax_registry::DeviceRecord, String> {
+    let origin = origin(&state, &url).await?;
     let keys = tokio::task::spawn_blocking(helper_keys)
         .await
         .map_err(|error| error.to_string())??;
     let computer = boundary_provision::platform::computer_name();
-    client(&url)?
+    client(&origin)?
         .register(&keys, Some(computer.as_str()), env!("CARGO_PKG_VERSION"))
         .await
         .map_err(|error| error.to_string())

@@ -59,6 +59,18 @@ pub struct FilesState {
     sessions: Mutex<HashMap<String, Arc<FilesEntry>>>,
     host_keys: Arc<Mutex<HostKeyStore>>,
     pin_path: PathBuf,
+    /// The folders the local pane may change things in.
+    ///
+    /// A destructive local operation is confined to these, and they are only
+    /// added by the USER choosing a folder in the native dialog. The home
+    /// directory is always one of them, because that is where the pane opens
+    /// and where a person's own files are.
+    ///
+    /// The reason is the blast radius. A webview that could name any path
+    /// could name the one that ends the machine, and the grant is the only
+    /// thing between "the user is tidying up in their documents folder" and
+    /// "the system directory is gone".
+    local_roots: Mutex<Vec<PathBuf>>,
 }
 
 impl FilesState {
@@ -84,7 +96,36 @@ impl FilesState {
             sessions: Mutex::new(HashMap::new()),
             host_keys: Arc::new(Mutex::new(host_keys)),
             pin_path,
+            local_roots: Mutex::new(Vec::new()),
         }
+    }
+
+    /// Add a folder the local pane may change things in.
+    ///
+    /// The path is one the user chose in the native dialog, so it is a
+    /// decision and not a request.
+    pub fn grant_local_root(&self, path: PathBuf) {
+        let mut roots = self.local_roots.lock();
+        if !roots.iter().any(|root| root == &path) {
+            roots.push(path);
+        }
+    }
+
+    /// The folders the local pane may change things in, plus the home
+    /// directory, which is always one of them.
+    ///
+    /// The home directory is included rather than being granted, because it
+    /// is where the pane opens: a user who has not granted anything can still
+    /// do the ordinary thing in their own files, and can still not touch
+    /// anything else.
+    fn local_roots_with_home(&self, home: Option<PathBuf>) -> Vec<PathBuf> {
+        let mut roots = self.local_roots.lock().clone();
+        if let Some(home) = home {
+            if !roots.iter().any(|root| root == &home) {
+                roots.push(home);
+            }
+        }
+        roots
     }
 
     fn entry(&self, session_id: &str) -> Result<Arc<FilesEntry>, String> {
@@ -609,6 +650,39 @@ pub async fn files_local_home(app: AppHandle) -> Result<String, String> {
     Ok(home.to_string_lossy().to_string())
 }
 
+/// Grant a folder the local pane may change things in.
+///
+/// The user picks it in the NATIVE dialog, which is the whole point: the
+/// grant is a decision, and a decision that the webview could forge is not
+/// one. The dialog is opened in Rust so that the chosen path lands in the
+/// state without passing through the webview at all.
+#[tauri::command]
+pub async fn files_local_grant_root(
+    app: AppHandle,
+    state: State<'_, FilesState>,
+) -> Result<String, String> {
+    use tauri_plugin_dialog::DialogExt;
+    let (tx, rx) = std::sync::mpsc::channel();
+    app.dialog()
+        .file()
+        .set_title("Choose a folder you may change")
+        .pick_folder(move |chosen| {
+            let _ = tx.send(chosen);
+        });
+    // The dialog is modal and the answer comes back on its own thread.
+    let chosen = tokio::task::spawn_blocking(move || rx.recv())
+        .await
+        .map_err(|e| e.to_string())?;
+    let Ok(Some(chosen)) = chosen else {
+        return Err("no folder was chosen".into());
+    };
+    let path = chosen
+        .into_path()
+        .map_err(|e| format!("that folder is not a path on this machine: {e}"))?;
+    state.grant_local_root(path.clone());
+    Ok(path.to_string_lossy().to_string())
+}
+
 /// List a local directory. Narrow by design: the Tauri fs plugin stays off
 /// (PRD/08 §4), so this is the only local read path the webview has.
 #[tauri::command]
@@ -633,25 +707,39 @@ pub async fn files_local_list(
 }
 
 #[tauri::command]
-pub async fn files_local_mkdir(path: String) -> Result<(), String> {
-    let path = guard_local_path(&path)?;
+pub async fn files_local_mkdir(
+    app: AppHandle,
+    state: State<'_, FilesState>,
+    path: String,
+) -> Result<(), String> {
+    let path = guard_local_mutation(&path, &state, &app)?;
     tokio::fs::create_dir(&path)
         .await
         .map_err(|e| format!("{}: {e}", path.display()))
 }
 
 #[tauri::command]
-pub async fn files_local_rename(from: String, to: String) -> Result<(), String> {
-    let from = guard_local_path(&from)?;
-    let to = guard_local_path(&to)?;
+pub async fn files_local_rename(
+    app: AppHandle,
+    state: State<'_, FilesState>,
+    from: String,
+    to: String,
+) -> Result<(), String> {
+    let from = guard_local_mutation(&from, &state, &app)?;
+    let to = guard_local_mutation(&to, &state, &app)?;
     tokio::fs::rename(&from, &to)
         .await
         .map_err(|e| format!("{}: {e}", from.display()))
 }
 
 #[tauri::command]
-pub async fn files_local_remove(path: String, recursive: Option<bool>) -> Result<(), String> {
-    let path = guard_local_path(&path)?;
+pub async fn files_local_remove(
+    app: AppHandle,
+    state: State<'_, FilesState>,
+    path: String,
+    recursive: Option<bool>,
+) -> Result<(), String> {
+    let path = guard_local_mutation(&path, &state, &app)?;
     let meta = tokio::fs::symlink_metadata(&path)
         .await
         .map_err(|e| format!("{}: {e}", path.display()))?;
@@ -1228,6 +1316,46 @@ fn guard_local_path(path: &str) -> Result<PathBuf, String> {
     }
     if path.file_name().is_none() {
         return Err("path must name a file or directory".into());
+    }
+    Ok(path)
+}
+
+/// A local mutation, confined to a folder the user granted.
+///
+/// The old guard checked only that the path was absolute and was not a
+/// filesystem root, which stopped a malformed request and nothing else. A
+/// request could name ANY absolute path, so a webview that was compromised —
+/// or simply wrong — could remove a directory tree anywhere on the machine,
+/// including one the operating system needs.
+///
+/// The confinement is to the granted roots: the home directory, which is
+/// where the pane opens, and any folder the user picked in the native
+/// dialog. The grant is the point. A check the webview can satisfy on its
+/// own is not a check.
+///
+/// The comparison is on the path's COMPONENTS and not on its string, so
+/// `/home/alice-backup` is not inside `/home/alice` just because it starts
+/// with the same characters, and a trailing separator does not make
+/// `/home/alice/` a different directory from `/home/alice`.
+fn guard_local_mutation(
+    path: &str,
+    state: &FilesState,
+    app: &AppHandle,
+) -> Result<PathBuf, String> {
+    let path = guard_local_path(path)?;
+    let home = app.path().home_dir().ok();
+    let roots = state.local_roots_with_home(home);
+    if roots.is_empty() {
+        return Err("no folder has been granted for local changes".into());
+    }
+    let inside = roots
+        .iter()
+        .any(|root| path.starts_with(root) && path.as_path() != root.as_path());
+    if !inside {
+        return Err(format!(
+            "{} is not in a folder you have allowed changes in",
+            path.display()
+        ));
     }
     Ok(path)
 }

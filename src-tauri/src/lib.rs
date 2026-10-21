@@ -180,8 +180,18 @@ pub fn run() {
                     // Release the keyboard FIRST: whatever else fails, the user
                     // must not be left with a grab held by a window that is
                     // going away.
+                    //
+                    // The SESSIONS are not torn down here. `CloseRequested`
+                    // fires BEFORE the webview can refuse the close, and the
+                    // session view refuses it: it holds the close so it can
+                    // take an exit thumbnail first, and the thumbnail needs
+                    // the session to still be there. Tearing the session
+                    // down at this point made the capture a race it always
+                    // lost, and the thumbnail was silently dropped.
+                    //
+                    // The teardown happens on `Destroyed`, which is the moment
+                    // the window is genuinely gone.
                     commands::capture::release_for_window(window.app_handle(), window.label());
-                    shutdown_window(window);
                 }
                 // Capture is only ever held while the window that asked for it
                 // is focused (PRD/06 §3). Blur disarms; focus re-arms if the
@@ -200,9 +210,11 @@ pub fn run() {
                     }
                 }
                 // A destroyed window can never re-arm, so drop the intent too.
-                // The teardown runs here as well as on `CloseRequested`: a
-                // window can be destroyed without ever asking to close (the
-                // session view calls `destroy()` when `close()` fails), and
+                //
+                // The teardown runs HERE and not on `CloseRequested`, because
+                // this is the moment the window is genuinely gone: a window
+                // can be destroyed without ever asking to close (the session
+                // view calls `destroy()` when `close()` fails), and
                 // `CloseRequested` never fires for a window that was destroyed
                 // outright. Without this, the file-transfer queue and the
                 // remote shell of a destroyed window stayed alive with no
@@ -269,6 +281,7 @@ pub fn run() {
             commands::registry::registry_resolve_code,
             commands::registry::registry_lookup_number,
             commands::registry::machine_identity,
+            commands::registry::registry_set_origin,
             commands::registry::registry_revoke_code,
             // get help (this computer shared over Boundary)
             commands::support::support_state,
@@ -339,6 +352,7 @@ pub fn run() {
             commands::files::files_cancel,
             commands::files::files_local_home,
             commands::files::files_local_list,
+            commands::files::files_local_grant_root,
             commands::files::files_local_mkdir,
             commands::files::files_local_rename,
             commands::files::files_local_remove,

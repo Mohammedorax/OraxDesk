@@ -23,6 +23,7 @@ import {
 } from "../hooks/useFiles";
 import { usePaneVisible } from "./Pane";
 import { pickLocalDirectory, pickLocalFiles } from "../lib/tauri";
+import { useT } from "../lib/i18n";
 import { classNames, fingerprintMnemonic } from "../lib/util";
 import {
   IconAlert,
@@ -88,6 +89,7 @@ function formatWhen(ts: number | null): string {
 // ------------------------------------------------------------------- panel
 
 export function FilePanel({ files, hostName, onClose }: FilePanelProps): ReactNode {
+  const t = useT();
   const [focused, setFocused] = useState<Pane>("local");
   const [renaming, setRenaming] = useState<{ pane: Pane; path: string; name: string } | null>(null);
   const [creating, setCreating] = useState<{ pane: Pane; name: string } | null>(null);
@@ -281,6 +283,22 @@ export function FilePanel({ files, hostName, onClose }: FilePanelProps): ReactNo
             <IconTrash size={13} className="mr-1 inline" />
             Delete
           </button>
+          {/*
+            The local pane may only change things in a folder the user has
+            allowed, and the home directory is allowed by default. A second
+            drive, or a folder of project files, is not: the user picks it
+            here, in the NATIVE dialog, and the grant is a decision rather
+            than a request.
+          */}
+          {focused === "local" ? (
+            <button
+              type="button"
+              className="btn-secondary px-2.5 py-1 text-xs"
+              onClick={() => void files.allowLocal()}
+            >
+              {t("files.allowFolder")}
+            </button>
+          ) : null}
           <span className="flex-1" />
           <span className="text-2xs text-tertiary">
             Enter opens · Backspace goes up · Ctrl/⌘+A selects all · F2 renames · Del removes

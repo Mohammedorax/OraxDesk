@@ -17,6 +17,7 @@ import {
   filesDisconnect,
   filesDownload,
   filesList,
+  filesLocalGrantRoot,
   filesLocalHome,
   filesLocalList,
   filesLocalMkdir,
@@ -95,6 +96,10 @@ export interface FilesApi {
   navigate: (pane: Pane, path: string) => void;
   goUp: (pane: Pane) => void;
   refresh: (pane: Pane) => void;
+  /** Open the local pane on a folder the user has just allowed. */
+  loadLocal: (path: string) => Promise<void>;
+  /** Let the user allow a folder the local pane may change things in. */
+  allowLocal: () => Promise<void>;
   setSelection: (pane: Pane, paths: string[]) => void;
   setSort: (pane: Pane, key: SortKey) => void;
   setShowHidden: (pane: Pane, show: boolean) => void;
@@ -220,6 +225,17 @@ export function useFiles(sessionId: string, enabled: boolean): FilesApi {
 
   // ------------------------------------------------------------- listings
 
+  /**
+   * Let the user allow a folder the local pane may change things in.
+   *
+   * The dialog is the NATIVE one and it is opened by the backend, so the
+   * folder that comes back is one the user clicked and not one the webview
+   * named. The pane then opens in it, because a folder the user has just
+   * allowed is the folder they are working in.
+   *
+   * Without it the pane could only change things in the home directory, and a
+   * second drive would be out of reach.
+   */
   const loadLocal = useCallback(async (path: string): Promise<void> => {
     setLocal((p) => ({ ...p, loading: true, error: null }));
     try {
@@ -236,6 +252,26 @@ export function useFiles(sessionId: string, enabled: boolean): FilesApi {
       setLocal((p) => ({ ...p, loading: false, error: describe(err) }));
     }
   }, []);
+
+  /**
+   * Let the user allow a folder the local pane may change things in.
+   *
+   * The dialog is the NATIVE one and it is opened by the backend, so the
+   * folder that comes back is one the user clicked and not one the webview
+   * named. The pane then opens in it, because a folder the user has just
+   * allowed is the folder they are working in.
+   *
+   * Without it the pane could only change things in the home directory, and a
+   * second drive would be out of reach.
+   */
+  const allowLocal = useCallback(async (): Promise<void> => {
+    try {
+      const dir = await filesLocalGrantRoot();
+      if (dir) await loadLocal(dir);
+    } catch (err) {
+      setLocal((p) => ({ ...p, error: describe(err) }));
+    }
+  }, [loadLocal]);
 
   const loadRemote = useCallback(
     async (path: string): Promise<void> => {
@@ -496,6 +532,8 @@ export function useFiles(sessionId: string, enabled: boolean): FilesApi {
     navigate,
     goUp,
     refresh,
+    loadLocal,
+    allowLocal,
     setSelection,
     setSort,
     setShowHidden,

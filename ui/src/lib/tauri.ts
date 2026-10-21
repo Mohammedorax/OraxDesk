@@ -586,6 +586,18 @@ export function filesLocalList(path?: string | null): Promise<LocalEntry[]> {
   return mustInvoke<LocalEntry[]>("files_local_list", { path: path ?? null });
 }
 
+/**
+ * Allow the local pane to change things inside a folder.
+ *
+ * The folder is picked in the NATIVE dialog, which is the point: the grant
+ * is a decision the user makes, and a decision the webview could forge is not
+ * one. Without it the pane could only change things in the home directory,
+ * and a second drive would be out of reach.
+ */
+export function filesLocalGrantRoot(): Promise<string> {
+  return mustInvoke<string>("files_local_grant_root", undefined);
+}
+
 export function filesLocalMkdir(path: string): Promise<null> {
   return mustInvoke<null>("files_local_mkdir", { path });
 }
