@@ -8,13 +8,29 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
-const MIGRATION_PATH = fileURLToPath(
-  new URL("../migrations/0001_init.sql", import.meta.url),
-);
-const MIGRATION = readFileSync(MIGRATION_PATH, "utf8");
+const MIGRATIONS_DIR = fileURLToPath(new URL("../migrations/", import.meta.url));
+
+/**
+ * EVERY migration, in order.
+ *
+ * The tests used to apply 0001 alone, which meant the columns and the
+ * indexes that came after it were never exercised by a single offline test:
+ * `signal_codes.key_id` (0002), `devices.number` (0003), `devices.registry_key`
+ * (0004) and `devices.address` (0005). The "no table can hold screen or
+ * media data" test looked at the schema of 0001 and said nothing about the
+ * schema that actually exists.
+ *
+ * A migration that is not tested is a migration that can break the database
+ * and nobody finds out until it is applied.
+ */
+const MIGRATIONS = readdirSync(MIGRATIONS_DIR)
+  .filter((name) => name.endsWith(".sql"))
+  .sort()
+  .map((name) => ({ name, sql: readFileSync(MIGRATIONS_DIR + name, "utf8") }));
+const MIGRATION = MIGRATIONS.map((m) => m.sql).join("\n");
 
 const CODE = "123456789012";
 const HOST_ID = "b".repeat(64);
@@ -109,7 +125,17 @@ function indexNames(db) {
 
 test("migration applies and is safe to re-run", () => {
   const db = open();
-  db.exec(MIGRATION); // second application must be a no-op, not an error
+  // The FIRST migration is idempotent by design: it creates tables and
+  // indexes, and creating one that exists is a no-op.
+  //
+  // The later ones are not, and they do not need to be. They add columns,
+  // and SQLite has no `ADD COLUMN IF NOT EXISTS`, so a second application
+  // would fail. `wrangler d1 migrations apply` does not re-apply a
+  // migration: it tracks which ones have run and runs each exactly once.
+  //
+  // So this test applies 0001 twice, and the test after it applies the whole
+  // set once and checks the schema that results.
+  db.exec(MIGRATIONS[0].sql); // second application must be a no-op, not an error
 
   const version = db
     .prepare("SELECT value FROM schema_meta WHERE key = 'schema_version'")
@@ -149,6 +175,63 @@ test("migration never drops data", () => {
   assert.doesNotMatch(MIGRATION, /\bDROP\s+(TABLE|INDEX)\b/i);
   assert.doesNotMatch(MIGRATION, /\bTRUNCATE\b/i);
   assert.doesNotMatch(MIGRATION, /\bDELETE\s+FROM\b/i);
+});
+
+test("the whole set of migrations produces the schema the Worker expects", () => {
+  // Every migration, applied once, in order. This is the schema that exists
+  // in production, and it is the one every other test in this file runs
+  // against, because `open()` applies the same set.
+  const db = open();
+
+  const columns = (table) =>
+    db
+      .prepare(`SELECT name FROM pragma_table_info('${table}')`)
+      .all()
+      .map((row) => row.name);
+
+  // 0003: the nine digit number a device is looked up by.
+  assert.ok(columns("devices").includes("number"), "devices.number is missing");
+  // 0002: the key id, for rotating the sealing key.
+  assert.ok(columns("signal_codes").includes("key_id"), "signal_codes.key_id is missing");
+  // 0004: the registry key, which is not the identity.
+  assert.ok(
+    columns("devices").includes("registry_key"),
+    "devices.registry_key is missing",
+  );
+  // 0005: where a device is, for the directory.
+  assert.ok(columns("devices").includes("address"), "devices.address is missing");
+  assert.ok(columns("devices").includes("address_at"), "devices.address_at is missing");
+
+  const indexes = indexNames(db);
+  for (const index of [
+    "devices_number_idx",
+    "devices_registry_key_idx",
+    "devices_address_idx",
+  ]) {
+    assert.ok(indexes.includes(index), `missing index ${index}`);
+  }
+
+  // The constraints that make the new columns safe.
+  const db2 = open();
+  assert.throws(
+    () =>
+      db2
+        .prepare(
+          `INSERT INTO devices
+             (id, public_key, fingerprint, created_at, updated_at, registry_key)
+           VALUES (?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          "d".repeat(64),
+          Buffer.alloc(32, 9),
+          "f".repeat(64),
+          NOW,
+          NOW,
+          Buffer.alloc(16, 3), // not 32 bytes
+        ),
+    /CHECK/i,
+    "a registry key of the wrong length must be refused",
+  );
 });
 
 // --- device identity -------------------------------------------------------

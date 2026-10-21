@@ -132,7 +132,7 @@ export function CommandPalette({
                 data-index={i}
                 role="option"
                 aria-selected={i === selected}
-                className={`flex w-full items-center gap-3 rounded-md px-3 py-2 text-left ${
+                className={`flex w-full items-center gap-3 rounded-md px-3 py-2 text-start ${
                   i === selected ? "bg-accent text-accent-fg" : "text-primary hover:bg-inset"
                 }`}
                 onPointerMove={() => setSelected(i)}

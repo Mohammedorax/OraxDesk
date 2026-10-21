@@ -1,4 +1,8 @@
-import { AUTH_MAX_SKEW_SECONDS, NONCE_TTL_SECONDS } from "./constants";
+import {
+  AUTH_MAX_SKEW_SECONDS,
+  LEGACY_AUTH_ACCEPT_UNTIL,
+  NONCE_TTL_SECONDS,
+} from "./constants";
 import { verifyEd25519 } from "./crypto";
 import { b64urlDecode, blobBytes, nowSeconds, utf8 } from "./encoding";
 import type { Env } from "./env";
@@ -148,6 +152,19 @@ export async function verifySignature(
   // The legacy form, so a client that has not been updated yet is not
   // locked out during the rollout. Every acceptance is announced, because the
   // window is only allowed to be open for as long as it takes to drain.
+  //
+  // And the window CLOSES. A v1 signature has no origin in it, so a
+  // signature captured at one registry verifies at another, which is the
+  // replay the v2 form exists to stop. Accepting it for ever would be
+  // accepting that replay for ever, and an operator needs a way to end it.
+  // The deadline is a number rather than a flag, so the window has an end
+  // that is written down.
+  if (nowSeconds() > LEGACY_AUTH_ACCEPT_UNTIL) {
+    console.warn(
+      "auth: a v1 signature was refused because the migration window has closed",
+    );
+    throw unauthorized("Signature does not verify");
+  }
   const v1 = utf8(
     legacyCanonicalString(
       request.method,

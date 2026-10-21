@@ -1,5 +1,14 @@
 /** Add/Edit host dialog with progressive disclosure (PRD/11 §3.3). */
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import {
+  cloneElement,
+  isValidElement,
+  useEffect,
+  useId,
+  useMemo,
+  useState,
+  type ReactElement,
+  type ReactNode,
+} from "react";
 import type {
   HostGroup,
   HostProfile,
@@ -45,6 +54,7 @@ import { parseConnectTarget } from "../lib/address";
 import { Dialog, Select } from "./primitives";
 import { IconChevronDown, IconChevronRight } from "./icons";
 import { classNames } from "../lib/util";
+import { useT } from "../lib/i18n";
 
 export interface HostDraft {
   id?: string;
@@ -1005,7 +1015,7 @@ export function HostDialog({
             without opening it.
           */}
           {blockers.length > 0 ? (
-            <p className="mr-auto self-center text-xs text-danger" role="alert">
+            <p className="me-auto self-center text-xs text-danger" role="alert">
               {blockers.join(" · ")}
             </p>
           ) : null}
@@ -1901,21 +1911,58 @@ function Field({
   optional?: boolean;
   children: ReactNode;
 }): ReactNode {
+  // The label is a label for the CONTROL and for nothing else.
+  //
+  // The label used to WRAP the control, the hint and the error together, so
+  // the control's accessible name was all three: the address field was
+  // announced as "Address, 192.168.1.42, or a name like office. A number
+  // after the colon under 100 is a screen number, so :1 is screen 1 on port
+  // 5901; 100 and above is a port." A name that long is a name nobody reads.
+  //
+  // So the label is associated with the control, and the hint and the error
+  // are DESCRIPTIONS of it: a screen reader reads the name, then says the
+  // description on request, and the error is announced when it appears.
+  const id = useId();
+  const t = useT();
+  const hintId = `${id}-hint`;
+  const errorId = `${id}-error`;
+  const describedBy =
+    [error ? errorId : null, hint ? hintId : null].filter(Boolean).join(" ") || undefined;
+  const control = isValidElement(children)
+    ? cloneElement(children as ReactElement<Record<string, unknown>>, {
+        id: (children.props as { id?: string }).id ?? id,
+        "aria-describedby": describedBy,
+        "aria-invalid": error ? true : undefined,
+        "aria-required": required ? true : undefined,
+      })
+    : children;
   return (
-    <label className="block">
-      <span className="mb-1 block text-xs font-medium text-secondary">
+    <div className="block">
+      <label htmlFor={id} className="mb-1 block text-xs font-medium text-secondary">
         {label}
-        {required ? <span className="ms-1 text-danger">*</span> : null}
-        {optional ? <span className="ms-1 text-tertiary">(optional)</span> : null}
-      </span>
-      {children}
+        {/*
+          The asterisk is for the eye. The requirement is announced by
+          `aria-required` on the control, which is what a screen reader can
+          act on, and a star on its own tells a person using a screen reader
+          nothing at all.
+        */}
+        {required ? (
+          <span className="ms-1 text-danger" aria-hidden="true">
+            *
+          </span>
+        ) : null}
+        {optional ? <span className="ms-1 text-tertiary">{t("field.optional")}</span> : null}
+      </label>
+      {control}
       {error ? (
-        <span className="mt-1 block text-xs text-danger" role="alert">
+        <span id={errorId} className="mt-1 block text-xs text-danger" role="alert">
           {error}
         </span>
       ) : hint ? (
-        <span className="mt-1 block text-xs text-tertiary">{hint}</span>
+        <span id={hintId} className="mt-1 block text-xs text-tertiary">
+          {hint}
+        </span>
       ) : null}
-    </label>
+    </div>
   );
 }

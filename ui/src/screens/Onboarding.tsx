@@ -145,7 +145,7 @@ export function Onboarding({
                   <li key={d.id}>
                     <button
                       type="button"
-                      className="flex w-full items-center gap-2.5 rounded-md border border-subtle px-3 py-2 text-left text-sm text-primary hover:border-accent"
+                      className="flex w-full items-center gap-2.5 rounded-md border border-subtle px-3 py-2 text-start text-sm text-primary hover:border-accent"
                       onClick={() => {
                         update({ onboarded: true });
                         onAddDiscovered(d.id);

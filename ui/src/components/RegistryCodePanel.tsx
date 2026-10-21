@@ -161,7 +161,19 @@ export function RegistryCodePanel({ invitation }: { invitation: string }): React
         ) : null}
       </div>
       {code ? (
-        <p className="mono mt-2 select-all text-center text-2xl font-semibold tracking-wider">{grouped}</p>
+        // The code is read out loud to the person who will use it, so the
+        // order of the groups is not a detail. In an Arabic paragraph the
+        // spaces between them are bidi neutrals and take the paragraph's
+        // direction, so "1234 5678 9012" is displayed as "9012 5678 1234".
+        // The run is isolated and pinned left to right, so the digits read in
+        // the order they are in.
+        <p
+          dir="ltr"
+          style={{ unicodeBidi: "isolate" }}
+          className="mono mt-2 select-all text-center text-2xl font-semibold tracking-wider"
+        >
+          {grouped}
+        </p>
       ) : null}
       {message ? <p className="mt-1 text-xs text-secondary">{message}</p> : null}
       {error ? <p role="alert" className="mt-1 text-sm text-danger">{error}</p> : null}

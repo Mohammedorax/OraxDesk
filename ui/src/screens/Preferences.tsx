@@ -234,7 +234,7 @@ export function Preferences({ onClose }: { onClose: () => void }): ReactNode {
               type="button"
               aria-current={tab === t ? "true" : undefined}
               className={classNames(
-                "block w-full rounded-sm px-2.5 py-1.5 text-left text-sm",
+                "block w-full rounded-sm px-2.5 py-1.5 text-start text-sm",
                 tab === t ? "bg-accent/15 font-medium text-primary" : "text-secondary hover:bg-inset",
               )}
               onClick={() => setTab(t)}
@@ -756,7 +756,7 @@ function Toggle({
           className={classNames(
             // Anchored with an explicit left/top so the knob can never depend
             // on inherited padding or the border the "off" state adds.
-            "absolute left-0.5 top-1/2 h-4 w-4 -translate-y-1/2 rounded-full bg-white shadow transition-transform",
+            "absolute start-0.5 top-1/2 h-4 w-4 -translate-y-1/2 rounded-full bg-white shadow transition-transform",
             value ? "translate-x-4" : "translate-x-0",
           )}
         />

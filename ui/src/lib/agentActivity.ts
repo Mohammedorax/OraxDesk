@@ -601,20 +601,28 @@ export function drivenCount(state: AgentState): number {
   return Object.values(state).filter(drivenByAgent).length;
 }
 
-/** What to call a holder on screen, making no claim we cannot support. */
-export function holderLabel(holder: LeaseHolder | null): string {
-  if (!holder) return "Nobody";
+/**
+ * What to call a holder on screen, making no claim we cannot support.
+ *
+ * The wording is in the catalogue, because the wall is the surface a person
+ * reads at a glance and the app's default language is Arabic. What is
+ * translated is the WORD; what is decided here is the SHAPE, and the shape is
+ * a rule rather than a preference: a holder whose kind we do not recognise is
+ * called a driver, never a person.
+ */
+export function holderLabel(holder: LeaseHolder | null, t: Translate): string {
+  if (!holder) return t("wall.holderNone");
   switch (holder.kind) {
     case "agent":
-      return `Agent ${holder.name}`;
+      return t("wall.holderAgent", { name: holder.name });
     case "service":
-      return `Service ${holder.name}`;
+      return t("wall.holderService", { name: holder.name });
     case "human":
       return holder.name;
     default:
       // Said as plainly as it is known: something is driving, and we are not
       // going to guess what.
-      return `Driver ${holder.name}`;
+      return t("wall.holderDriver", { name: holder.name });
   }
 }
 
@@ -720,9 +728,13 @@ export function intentPhraseKey(kind: string): MessageKey | null {
   return null;
 }
 
-/** How a remote excerpt is introduced, so its origin is never in doubt. */
-export function remoteLabel(remote: RemoteText): string {
-  return remote.source === "terminal" ? "remote terminal" : "remote screen";
+/**
+ * How a remote excerpt is introduced, so its origin is never in doubt.
+ *
+ * The wording is in the catalogue, for the same reason the holder's is.
+ */
+export function remoteLabel(remote: RemoteText, t: Translate): string {
+  return remote.source === "terminal" ? t("wall.remoteTerminal") : t("wall.remoteScreen");
 }
 
 // ------------------------------------------------------------------- plane
@@ -993,12 +1005,28 @@ export function planeStatusLine(plane: PlaneView, t: Translate): string {
       ? t("wall.planeIdleOne")
       : t("wall.planeIdleMany", { agents: plane.agents });
   }
-  const of = plane.sessions > 0 ? ` of ${plane.sessions}` : "";
-  const driving = t(
-    plane.agents === 1 ? "wall.planeDrivingOne" : "wall.planeDrivingMany",
-    { agents: plane.agents, driving: plane.driving },
-  );
-  return `${driving}${of}`;
+  // The session count is part of the SENTENCE and not an English fragment
+  // appended to a translated one. "2 agents driving 5 of 11" cannot be
+  // rearranged by a reader's system, and appending " of 3" to an Arabic
+  // sentence leaves a line of English in the middle of it.
+  //
+  // The count is only in the sentence when there IS one: a build that does
+  // not report live sessions says nothing about them, rather than saying
+  // "of 0", which is a number about a thing it does not know.
+  const one = plane.agents === 1;
+  const key =
+    plane.sessions > 0
+      ? one
+        ? "wall.planeDrivingOneOf"
+        : "wall.planeDrivingManyOf"
+      : one
+        ? "wall.planeDrivingOne"
+        : "wall.planeDrivingMany";
+  return t(key, {
+    agents: plane.agents,
+    driving: plane.driving,
+    sessions: plane.sessions,
+  });
 }
 
 /** The same thing at length, for the tooltip and the screen reader. */

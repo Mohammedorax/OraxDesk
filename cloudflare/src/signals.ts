@@ -141,7 +141,7 @@ export async function createSignal(
       )
         .bind(code, ciphertext, nonce, auth.id, auth.nonce, now, expiresAt, revokeHash, keyId)
         .run();
-      await audit(env, "signal.created", auth.id, `code ${code.slice(0, 4)}`);
+      await audit(env, "signal.created", auth.id);
       return jsonResponse(
         { code, expires_at: expiresAt, revoke_token: hexEncode(revokeToken) },
         201,
@@ -169,10 +169,15 @@ export async function resolveSignal(
   // The other order looks safer and is not: consume, then read. Between the
   // two statements a revoke, a device revocation or the sweeper can delete
   // the row, and the code has then been consumed and the helper gets a 404.
-  // The session is lost and the code is gone, and neither side can tell
-  // what happened. Reading first means the invitation is in hand before
-  // anything can take the code away, and the guarded UPDATE afterwards is
-  // what decides who gets it.
+  // The session is lost and the code is gone, and neither side can tell what
+  // happened.
+  //
+  // Reading first means the code is not CONSUMED on the way to finding out
+  // that it was already gone. It does not mean the resolve succeeds: if the
+  // row was deleted before this read, there is nothing to read and the
+  // helper gets a 404 like any other unknown code. What it buys is that a
+  // code deleted between the read and the UPDATE is not marked consumed on
+  // the way out, and a code deleted before the read never was.
   const row = await env.DB.prepare(
     "SELECT ciphertext, nonce, expires_at, key_id, host_id FROM signal_codes WHERE code = ?",
   )
@@ -218,7 +223,7 @@ export async function resolveSignal(
     // Tampered or sealed under another key: fail closed, never 500.
     throw new ApiError(404, "not_found", NOT_FOUND);
   }
-  await audit(env, "signal.resolved", row.host_id, `code ${code.slice(0, 4)}`);
+  await audit(env, "signal.resolved", row.host_id);
   return jsonResponse({ invitation });
 }
 

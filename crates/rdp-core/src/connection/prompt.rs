@@ -20,14 +20,132 @@
 //! ask, which is the bug this module was written to fix
 //! (`crates/rdp-core/src/connection/mod.rs:262`).
 
-use std::sync::atomic::AtomicBool;
-use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use remote_core::ClientCommand;
 use tokio::sync::mpsc;
+use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 
 use super::credentials::Ask;
+
+/// How long the connection has been waiting on a person, and for how long.
+///
+/// The connect budget is not a countdown of wall-clock time: the time a
+/// person spends typing a password is not the connect stalling, and a
+/// connect that gave up on a slow typist would be the worst possible
+/// answer to a prompt that asked for one.
+///
+/// So the budget counts the time the connect was WORKING, and the time the
+/// person was answering is added back to it. Two things are needed for that
+/// and a boolean is not one of them:
+///
+///   * whether a prompt is on screen right now, so the timer knows to
+///     re-arm instead of failing, and
+///   * how long the person has been answering in total, so the budget can
+///     be recomputed from one start instant.
+///
+/// A flag alone gives the first and not the second, and a flag that is
+/// cleared on some paths and not others leaves the budget paused forever.
+/// So the pause is a value with a guard, and the guard is what makes it
+/// honest: it ends the pause when it is dropped, on every path, including
+/// an error and a cancellation.
+#[derive(Clone, Default)]
+pub struct WaitState(Arc<WaitInner>);
+
+#[derive(Default)]
+struct WaitInner {
+    /// True while a prompt is on screen and unanswered.
+    waiting: AtomicBool,
+    /// Nanoseconds of the pauses that have ended.
+    ended_nanos: AtomicU64,
+    /// When the pause that is running now started, if one is.
+    running_since: Mutex<Option<Instant>>,
+}
+
+impl WaitState {
+    /// Is a prompt on screen right now?
+    pub fn is_waiting(&self) -> bool {
+        self.0.waiting.load(Ordering::Relaxed)
+    }
+
+    /// How long the person has been answering, in total.
+    ///
+    /// A pause that is running counts up to now, so the budget can be
+    /// recomputed at the instant the timer fires rather than at the instant
+    /// the person finally answers.
+    pub fn paused(&self) -> Duration {
+        let ended = Duration::from_nanos(self.0.ended_nanos.load(Ordering::Relaxed));
+        let running = match *self
+            .0
+            .running_since
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+        {
+            Some(since) => since.elapsed(),
+            None => Duration::ZERO,
+        };
+        ended + running
+    }
+
+    /// The connect budget, recomputed from one start instant.
+    ///
+    /// The deadline is `start + budget + everything the person spent`. The
+    /// same start for every attempt, so a second attempt after a refused
+    /// password does not buy a second budget.
+    pub fn deadline(&self, start: Instant, budget: Duration) -> Instant {
+        start + budget + self.paused()
+    }
+
+    /// Begin a pause. The pause ends when the returned guard is dropped.
+    pub fn begin(&self) -> Waiting {
+        let mut running = self
+            .0
+            .running_since
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        if running.is_none() {
+            *running = Some(Instant::now());
+        }
+        self.0.waiting.store(true, Ordering::Relaxed);
+        Waiting {
+            state: self.clone(),
+        }
+    }
+
+    /// End a pause and add it to the total.
+    fn end(&self) {
+        let mut running = self
+            .0
+            .running_since
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        if let Some(since) = running.take() {
+            let nanos = since.elapsed().as_nanos().min(u64::MAX as u128) as u64;
+            self.0.ended_nanos.fetch_add(nanos, Ordering::Relaxed);
+        }
+        self.0.waiting.store(false, Ordering::Relaxed);
+    }
+}
+
+/// A pause that ends when it is dropped.
+///
+/// Dropping it is the only way the pause ends, and a guard is dropped on
+/// every path out of a function: a returned error, a cancellation, a
+/// dismissed dialog. That is what stops the budget being left paused
+/// forever, which a bare flag and a hand-written `store(false, …)` on the
+/// happy path cannot promise.
+pub struct Waiting {
+    state: WaitState,
+}
+
+impl Drop for Waiting {
+    fn drop(&mut self) {
+        self.state.end();
+    }
+}
 
 /// What the sequence needs to raise a prompt and wait for its answer.
 ///
@@ -52,19 +170,34 @@ pub struct Prompt<'a> {
     /// TCP connection. `crate::session::connect::establish` owns it and reads
     /// it after an attempt fails.
     pub ask: &'a mut Ask,
-    /// Whether a prompt is on screen and unanswered.
-    ///
-    /// The connect budget is paused while this is true: the person typing a
-    /// password is not the connect stalling, and a connect that gave up on a
-    /// slow typist would be the worst possible answer to a prompt that asked
-    /// for one.
+    /// The connect budget's view of the person.
     ///
     /// Shared rather than kept in [`Ask`], because the attempt holds `ask`
     /// mutably for as long as it runs and the budget is read from outside it.
-    pub waiting: Arc<AtomicBool>,
+    pub wait: WaitState,
 }
 
-impl Prompt<'_> {
+impl<'a> Prompt<'a> {
+    /// A prompt with a fresh budget state.
+    ///
+    /// The constructor exists so that the state is never left out: a field
+    /// that every construction site has to remember is a field that some
+    /// construction site will forget, and a forgotten one does not compile
+    /// but a wrong one does.
+    pub fn new(
+        commands: &'a mut mpsc::Receiver<ClientCommand>,
+        cancel: &'a CancellationToken,
+        ask: &'a mut Ask,
+        wait: WaitState,
+    ) -> Self {
+        Self {
+            commands,
+            cancel,
+            ask,
+            wait,
+        }
+    }
+
     /// Lend the prompt on to a gate that takes it by value.
     ///
     /// The lifetime is the borrow's rather than `'a`, which is what makes a
@@ -74,7 +207,7 @@ impl Prompt<'_> {
             commands: self.commands,
             cancel: self.cancel,
             ask: self.ask,
-            waiting: Arc::clone(&self.waiting),
+            wait: self.wait.clone(),
         }
     }
 }
@@ -96,15 +229,47 @@ mod tests {
         let (tx, mut commands) = mpsc::channel(4);
         let cancel = CancellationToken::new();
         let mut ask = Ask::new();
-        let mut prompt = Prompt {
-            commands: &mut commands,
-            cancel: &cancel,
-            ask: &mut ask,
-        };
+        let mut prompt = Prompt::new(&mut commands, &cancel, &mut ask, WaitState::default());
 
         assert_eq!(consume(prompt.reborrow()), 4);
         assert_eq!(consume(prompt.reborrow()), 4);
         assert_eq!(consume(prompt), 4);
         drop(tx);
+    }
+
+    #[test]
+    fn a_pause_is_measured_and_ends_when_its_guard_is_dropped() {
+        let state = WaitState::default();
+        assert!(!state.is_waiting());
+        assert_eq!(state.paused(), Duration::ZERO);
+
+        let guard = state.begin();
+        assert!(state.is_waiting());
+        // The pause is running, so it counts up to now.
+        assert!(state.paused() > Duration::ZERO);
+
+        drop(guard);
+        assert!(!state.is_waiting());
+        // And it is still counted: the person spent that time.
+        let spent = state.paused();
+        assert!(spent > Duration::ZERO);
+        std::thread::sleep(Duration::from_millis(5));
+        assert_eq!(
+            state.paused(),
+            spent,
+            "a pause that has ended must not keep counting"
+        );
+    }
+
+    #[test]
+    fn a_pause_that_is_forgotten_ends_when_its_scope_ends() {
+        // The guard is what makes the promise: a function that returns an
+        // error drops it, and the budget is not left paused.
+        let state = WaitState::default();
+        {
+            let _guard = state.begin();
+            assert!(state.is_waiting());
+        }
+        assert!(!state.is_waiting());
     }
 }

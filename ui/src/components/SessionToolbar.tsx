@@ -671,7 +671,7 @@ export function SessionToolbar(props: SessionToolbarProps): ReactNode {
           {/* Fixed width, right-aligned: the figure changes every second, and
               letting it size itself made the whole toolbar twitch sideways as
               the reading moved between "-", "9ms" and "290ms". */}
-          <span className="inline-block w-[5ch] text-right text-xs tabular-nums text-secondary">
+          <span className="inline-block w-[5ch] text-end text-xs tabular-nums text-secondary">
             {latency !== null ? `${Math.round(latency)}ms` : "-"}
           </span>
         </ToolButton>
@@ -863,7 +863,7 @@ export function SessionToolbar(props: SessionToolbarProps): ReactNode {
                   className="flex-1 accent-(--accent)"
                   onChange={(e) => props.onZoom(parseInt(e.target.value, 10) / 100)}
                 />
-                <span className="w-11 text-right text-xs tabular-nums text-secondary">
+                <span className="w-11 text-end text-xs tabular-nums text-secondary">
                   {Math.round(props.zoom * 100)}%
                 </span>
               </div>
@@ -1251,7 +1251,7 @@ function MenuRow({
       aria-checked={selected}
       disabled={disabled}
       className={classNames(
-        "flex w-full items-center gap-2 rounded-sm px-2.5 py-1.5 text-left text-sm",
+        "flex w-full items-center gap-2 rounded-sm px-2.5 py-1.5 text-start text-sm",
         disabled
           ? "cursor-default text-tertiary/60"
           : selected

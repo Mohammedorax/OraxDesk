@@ -16,9 +16,44 @@ export interface TestDevice {
   id: string;
   publicKey: Uint8Array;
   privateKey: CryptoKey;
+  /**
+   * The source address this device's requests come from.
+   *
+   * The registration limiter is keyed on the source address, and in the test
+   * environment every request would otherwise come from the same one, so the
+   * whole file would share a single budget of twenty registrations a minute.
+   * A test file that runs out of budget because a test was ADDED is a test
+   * file that breaks for no reason, and the flood test cannot be given a
+   * budget of its own either.
+   *
+   * Cloudflare sets this header itself in production and a client cannot
+   * forge it; in a test the client IS the caller, so the test sets it.
+   */
+  ip: string;
+  /**
+   * A second key for the same device: the REGISTRY key.
+   *
+   * It is what the API calls are signed with once a device has one, and the
+   * identity is what the FIRST registration is signed with, because the
+   * Worker cannot verify against a key it has not been told yet.
+   */
+  registryKey?: Uint8Array;
+  registryPrivateKey?: CryptoKey;
 }
 
-export async function newDevice(): Promise<TestDevice> {
+/**
+ * A source address for one test device.
+ *
+ * Every device gets its own, so the limiter's budget is per device and a
+ * test cannot spend another's.
+ */
+let deviceCounter = 0;
+function nextIp(): string {
+  deviceCounter += 1;
+  return `10.${Math.floor(deviceCounter / 65536) % 256}.${Math.floor(deviceCounter / 256) % 256}.${deviceCounter % 256}`;
+}
+
+export async function newDevice(withRegistryKey = false): Promise<TestDevice> {
   const pair = (await crypto.subtle.generateKey({ name: "Ed25519" }, true, [
     "sign",
     "verify",
@@ -26,7 +61,28 @@ export async function newDevice(): Promise<TestDevice> {
   const publicKey = new Uint8Array(
     (await crypto.subtle.exportKey("raw", pair.publicKey)) as ArrayBuffer,
   );
-  return { id: hexEncode(publicKey), publicKey, privateKey: pair.privateKey };
+  if (!withRegistryKey) {
+    return {
+      id: hexEncode(publicKey),
+      publicKey,
+      privateKey: pair.privateKey,
+      ip: nextIp(),
+    };
+  }
+  const registry = (await crypto.subtle.generateKey({ name: "Ed25519" }, true, [
+    "sign",
+    "verify",
+  ])) as CryptoKeyPair;
+  return {
+    id: hexEncode(publicKey),
+    publicKey,
+    privateKey: pair.privateKey,
+    ip: nextIp(),
+    registryKey: new Uint8Array(
+      (await crypto.subtle.exportKey("raw", registry.publicKey)) as ArrayBuffer,
+    ),
+    registryPrivateKey: registry.privateKey,
+  };
 }
 
 export function freshNonce(): string {
@@ -52,6 +108,21 @@ export interface SignOptions {
    * stop.
    */
   sendTo?: string;
+  /**
+   * Sign with the REGISTRY key instead of the identity.
+   *
+   * The device is still NAMED by the identity: the header carries the same
+   * id. Only the key the signature is made with changes, which is exactly
+   * what happens on the wire.
+   */
+  signWithRegistryKey?: boolean;
+  /**
+   * The source address to send the request from.
+   *
+   * Defaults to the device's own, so a device's requests all come from one
+   * address and the limiter's budget is per device.
+   */
+  ip?: string;
 }
 
 /** Builds a request signed exactly the way a client must sign it. */
@@ -68,10 +139,14 @@ export async function signedRequest(
   const nonce = options.nonce ?? freshNonce();
   const origin = options.origin ?? "https://registry.test";
   const canonical = canonicalString(origin, method, path, bodyHash, timestamp, nonce);
+  const signingKey =
+    options.signWithRegistryKey && device.registryPrivateKey !== undefined
+      ? device.registryPrivateKey
+      : device.privateKey;
   const signature = new Uint8Array(
     await crypto.subtle.sign(
       { name: "Ed25519" },
-      device.privateKey,
+      signingKey,
       new TextEncoder().encode(canonical),
     ),
   );
@@ -81,6 +156,7 @@ export async function signedRequest(
     "x-orax-timestamp": String(timestamp),
     "x-orax-nonce": nonce,
     "x-orax-signature": b64urlEncode(signature),
+    "cf-connecting-ip": options.ip ?? device.ip,
     ...options.headers,
   };
   return new Request(`${options.sendTo ?? origin}${path}`, {

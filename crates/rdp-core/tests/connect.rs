@@ -1002,11 +1002,12 @@ async fn run_sequence_with_trust(
         connection::trust::approve(
             &gated,
             &events,
-            Some(connection::Prompt {
-                commands: &mut command_rx,
-                cancel: &cancel,
-                ask: &mut connection::Ask::new(),
-            }),
+            Some(connection::Prompt::new(
+                &mut command_rx,
+                &cancel,
+                &mut connection::Ask::new(),
+                connection::WaitState::default(),
+            )),
         )
         .await?;
 
@@ -1565,11 +1566,12 @@ async fn run_sequence_with_credentials(
             TrustDecision::VerifiedByCa,
             None,
             &events,
-            Some(connection::Prompt {
-                commands: &mut command_rx,
-                cancel: &cancel,
-                ask: &mut connection::Ask::new(),
-            }),
+            Some(connection::Prompt::new(
+                &mut command_rx,
+                &cancel,
+                &mut connection::Ask::new(),
+                connection::WaitState::default(),
+            )),
         )
         .await
     })

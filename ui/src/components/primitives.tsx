@@ -37,7 +37,7 @@ export function Select({
       </select>
       <IconChevronDown
         size={14}
-        className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-tertiary"
+        className="pointer-events-none absolute end-2 top-1/2 -translate-y-1/2 text-tertiary"
       />
     </span>
   );
@@ -170,7 +170,7 @@ export function ContextMenu({
             role="menuitem"
             disabled={item.disabled}
             className={classNames(
-              "block w-full rounded-sm px-2.5 py-1.5 text-left text-sm",
+              "block w-full rounded-sm px-2.5 py-1.5 text-start text-sm",
               item.disabled
                 ? "cursor-default text-tertiary"
                 : item.danger
@@ -270,14 +270,37 @@ export function Dialog({
   // out of it. Clicking that pane hands it both.
   const owns = usePaneVisible();
 
+  /**
+   * The focus comes back to where it was.
+   *
+   * A native `<dialog>` returned the focus to the element that opened it
+   * when it closed, and this shared component did not, so closing a dialog
+   * dropped the focus onto the page and a keyboard user had to tab from the
+   * top again to get back to where they were.
+   *
+   * The element is remembered on open and focused on close, and it is
+   * remembered only if it is still in the document: a button that opened a
+   * dialog and has since been removed cannot be focused, and asking for it
+   * would throw the focus nowhere at all.
+   */
+  const opener = useRef<HTMLElement | null>(null);
   useEffect(() => {
     const el = ref.current;
     if (!el || !owns) return;
+    if (opener.current === null) {
+      opener.current = document.activeElement as HTMLElement | null;
+    }
     const target = initialFocusSelector
       ? el.querySelector<HTMLElement>(initialFocusSelector)
       : el.querySelector<HTMLElement>("[data-autofocus]") ??
+        el.querySelector<HTMLElement>("form input, form select, form textarea") ??
         el.querySelector<HTMLElement>("input, select, button");
     target?.focus();
+    return () => {
+      const back = opener.current;
+      opener.current = null;
+      if (back && back.isConnected) back.focus();
+    };
   }, [initialFocusSelector, owns]);
 
   useEffect(() => {
@@ -288,10 +311,17 @@ export function Dialog({
         onClose();
       }
       if (e.key === "Tab" && ref.current) {
-        // simple focus trap
-        const focusables = ref.current.querySelectorAll<HTMLElement>(
-          'button, input, select, textarea, [tabindex]:not([tabindex="-1"])',
-        );
+        // A simple focus trap.
+        //
+        // DISABLED elements are left out on purpose. A disabled button is
+        // skipped by the tab order, so including one at the end of the list
+        // makes the wrap-around land on something the user cannot reach, and
+        // the trap never fires: Tab walks out of the dialog instead.
+        const focusables = Array.from(
+          ref.current.querySelectorAll<HTMLElement>(
+            'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+          ),
+        ).filter((element) => element.offsetParent !== null || element === document.activeElement);
         if (focusables.length === 0) return;
         const first = focusables[0];
         const last = focusables[focusables.length - 1];

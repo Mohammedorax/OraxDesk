@@ -571,10 +571,10 @@ function FilePane({
                   <span className="truncate">{entry.name}</span>
                   {entry.isSymlink ? <span className="shrink-0 text-2xs text-tertiary">↗</span> : null}
                 </span>
-                <span className="text-right tabular-nums text-tertiary">
+                <span className="text-end tabular-nums text-tertiary">
                   {entry.isDir ? "-" : formatBytes(entry.size)}
                 </span>
-                <span className="truncate text-right tabular-nums text-tertiary">
+                <span className="truncate text-end tabular-nums text-tertiary">
                   {formatWhen(entry.modified)}
                 </span>
               </div>
@@ -610,7 +610,7 @@ function SortButton({
       className={classNames(
         "rounded-sm px-1 py-0.5 hover:text-primary",
         active ? "text-accent" : "",
-        align === "right" ? "text-right" : "text-left",
+        align === "right" ? "text-end" : "text-start",
       )}
       onClick={onClick}
     >

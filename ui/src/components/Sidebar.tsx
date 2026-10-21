@@ -265,7 +265,7 @@ function SidebarRow({
       onClick={onClick}
     >
       <span className={active ? "text-accent" : "text-tertiary"}>{icon}</span>
-      <span className="min-w-0 flex-1 truncate text-left">{label}</span>
+      <span className="min-w-0 flex-1 truncate text-start">{label}</span>
       {count !== undefined && count > 0 ? (
         <span className="text-xs text-tertiary">{count}</span>
       ) : null}
@@ -362,7 +362,7 @@ function GroupRow({
         }}
       >
         <IconFolder size={15} className={active ? "text-accent" : "text-tertiary"} />
-        <span className="min-w-0 flex-1 truncate text-left">{group.name}</span>
+        <span className="min-w-0 flex-1 truncate text-start">{group.name}</span>
         <span className="text-xs text-tertiary">{count(group.id) || ""}</span>
       </button>
       {children.map((c) => (

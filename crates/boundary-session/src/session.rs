@@ -436,10 +436,17 @@ fn directory(
                 .ok_or_else(|| anyhow::anyhow!("the registry key is missing"))?;
             orax_registry::directory::Directory::publisher(
                 client,
-                orax_registry::DeviceKeys::new(identity, registry),
+                orax_registry::DeviceKeys::new(identity, registry)
+                    .map_err(|error| anyhow::anyhow!("{error}"))?,
             )
         }
-        _ => orax_registry::directory::Directory::reader(client),
+        // Every other lookup READS. Being explicit about it matters: a
+        // wildcard arm would turn a future variant into a reader by
+        // accident, and a reader that was meant to publish publishes nothing
+        // without saying so.
+        Lookup::ResolveDirectory | Lookup::Resolve | Lookup::Publish | Lookup::Off => {
+            orax_registry::directory::Directory::reader(client)
+        }
     })
 }
 pub fn validate_relay_url(value: &str) -> Result<()> {

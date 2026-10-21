@@ -341,10 +341,20 @@ where
     // A machine with a registry of its own publishes there as well as to
     // n0, so a deployment does not depend on somebody else's directory to
     // find its own machines.
-    let lookup = if options.directory.is_some() {
-        Lookup::PublishDirectory
-    } else {
-        Lookup::Publish
+    //
+    // The registry key decides, not the mere presence of a directory. A
+    // directory WITHOUT a signing key is a directory this machine can READ
+    // but not write, and a machine that cannot write to it must still
+    // publish to n0: publishing to nothing at all would leave the machine
+    // unreachable by anybody, which is a far worse outcome than publishing
+    // to one directory instead of two.
+    let lookup = match options
+        .directory
+        .as_ref()
+        .and_then(|d| d.signing_key.as_ref())
+    {
+        Some(_) => Lookup::PublishDirectory,
+        None => Lookup::Publish,
     };
     // The signing key is NOT loaded here: the registry key lives in the
     // keychain, and this crate is the protocol, not the credential store. The

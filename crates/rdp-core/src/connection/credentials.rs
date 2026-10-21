@@ -239,16 +239,16 @@ async fn raise(
         "asking the user for rdp credentials"
     );
     // The connect budget is paused while the person is at the prompt.
-    prompt
-        .waiting
-        .store(true, std::sync::atomic::Ordering::Relaxed);
+    //
+    // The guard ends the pause when it is dropped, so the pause cannot be
+    // left running by a dismissed dialog, a cancelled session or an error
+    // on the way out. A flag cleared only on the happy path leaves the
+    // budget paused for the rest of the process.
+    let _waiting = prompt.wait.begin();
     remote_core::emit(events, SessionEvent::CredentialsRequired(request)).await?;
 
     let Prompt {
-        commands,
-        cancel,
-        waiting,
-        ..
+        commands, cancel, ..
     } = prompt;
     loop {
         let cmd = tokio::select! {
@@ -269,7 +269,6 @@ async fn raise(
             Some(ClientCommand::ProvideCredentials {
                 username, password, ..
             }) => {
-                waiting.store(false, std::sync::atomic::Ordering::Relaxed);
                 return Ok(Credentials {
                     username: username.filter(|u| !u.trim().is_empty()),
                     password: Some(password),
@@ -308,6 +307,7 @@ async fn raise(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::connection::prompt::WaitState;
     use tokio_util::sync::CancellationToken;
 
     fn prompt<'a>(
@@ -315,11 +315,7 @@ mod tests {
         cancel: &'a CancellationToken,
         ask: &'a mut Ask,
     ) -> Prompt<'a> {
-        Prompt {
-            commands,
-            cancel,
-            ask,
-        }
+        Prompt::new(commands, cancel, ask, WaitState::default())
     }
 
     /// The one definition of "unusable", which the CredSSP client builder

@@ -90,7 +90,7 @@ describe("decoding what the plane sends", () => {
 
   it("names an unnamed holder without claiming what it is", () => {
     const ev = parseActivityEvent(event({ holder: { kind: "weird" } }))!;
-    expect(holderLabel(ev.holder)).toBe("Driver Unnamed driver");
+    expect(holderLabel(ev.holder, t)).toBe("Driver Unnamed driver");
   });
 
   it("calls an unreadable outcome unknown rather than guessing", () => {
@@ -361,14 +361,14 @@ describe("what the wall shows", () => {
 
 describe("labels", () => {
   it("says what a holder is without overstating it", () => {
-    expect(holderLabel(null)).toBe("Nobody");
-    expect(holderLabel({ kind: "agent", name: "claude-ops", capability: null, since: 0 }))
+    expect(holderLabel(null, t)).toBe("Nobody");
+    expect(holderLabel({ kind: "agent", name: "claude-ops", capability: null, since: 0 }, t))
       .toBe("Agent claude-ops");
-    expect(holderLabel({ kind: "human", name: "Alex", capability: null, since: 0 }))
+    expect(holderLabel({ kind: "human", name: "Alex", capability: null, since: 0 }, t))
       .toBe("Alex");
-    expect(holderLabel({ kind: "service", name: "backup", capability: null, since: 0 }))
+    expect(holderLabel({ kind: "service", name: "backup", capability: null, since: 0 }, t))
       .toBe("Service backup");
-    expect(holderLabel({ kind: "unknown", name: "rest-1", capability: null, since: 0 }))
+    expect(holderLabel({ kind: "unknown", name: "rest-1", capability: null, since: 0 }, t))
       .toBe("Driver rest-1");
   });
 

@@ -92,7 +92,7 @@ jobs:
           -p boundary-session -p boundary-codes -p boundary-platform
           -p boundary-provision -p boundary-driver -p boundary
 
-      - name: Test (app ACL)
+      - name: Test (the app)
         # The app's own command list, the ACL manifest and the capability
         # file have to agree, or Tauri refuses a command at run time with
         # "not allowed by ACL" and the webview only ever sees an empty
@@ -105,7 +105,13 @@ jobs:
         # exactly that was never run. `src-tauri/build.rs` now enforces the
         # same invariant at build time; this runs the test as well, because
         # the test explains what to do about it.
-        run: cargo test -p deskvncviewer --test acl
+        #
+        # The WHOLE crate is tested, not just the one integration test:
+        # `--test acl` selects that target and nothing else, which left the
+        # two hundred and twenty nine unit tests inside `src-tauri/src/**`
+        # running nowhere. They cover the command handlers, the agent plane
+        # and the frame parser, and they are the only tests those have.
+        run: cargo test -p deskvncviewer
 
   legacy-tls:
     name: legacy-tls (${{ matrix.os }})

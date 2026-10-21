@@ -126,10 +126,21 @@ const ar = {
   "wall.unread": "غير مقروء",
   "wall.title": "نشاط الوكلاء",
   "wall.planeNone": "لا وكيل متصل",
-  "wall.planeIdleOne": "وكيل واحد متصل، لا شيء يقاد",
+  "wall.planeIdleOne": "وكيل واحد متصل، لا شيء يقود",
   "wall.planeIdleMany": "{agents} وكلاء متصلون، لا شيء يقاد",
   "wall.planeDrivingOne": "وكيل واحد يقود {driving}",
   "wall.planeDrivingMany": "{agents} وكلاء يقودون {driving}",
+  "wall.planeDrivingOneOf": "وكيل واحد يقود {driving} من {sessions}",
+  "wall.planeDrivingManyOf": "{agents} وكلاء يقودون {driving} من {sessions}",
+  "wall.holderNone": "لا أحد",
+  "wall.holderAgent": "وكيل {name}",
+  "wall.holderService": "خدمة {name}",
+  "wall.holderDriver": "سائق {name}",
+  "wall.remoteTerminal": "طرفية البعيد",
+  "wall.remoteScreen": "شاشة البعيد",
+  "wall.showMachine": "اعرض هذا الجهاز",
+  "wall.stopAgent": "أوقف الوكيل الذي يقود {name}، واستعد التحكم",
+
   "wall.detailNone": "لا وكيل متصل بهذا الجهاز.",
   "wall.detailSessionsOne": "جلسة حيّة واحدة في المجموع.",
   "wall.detailSessionsMany": "{sessions} جلسات حيّة في المجموع.",
@@ -160,6 +171,9 @@ const ar = {
   "act.writeClipboard": "يكتب في الحافظة",
   "act.readFile": "يقرأ ملفًا",
   "act.writeFile": "يكتب ملفًا",
+
+  // حقول النموذج
+  "field.optional": "(اختياري)",
 } as const;
 
 const en: Record<keyof typeof ar, string> = {
@@ -276,6 +290,16 @@ const en: Record<keyof typeof ar, string> = {
   "wall.planeIdleMany": "{agents} agents connected, none driving",
   "wall.planeDrivingOne": "1 agent driving {driving}",
   "wall.planeDrivingMany": "{agents} agents driving {driving}",
+  "wall.planeDrivingOneOf": "1 agent driving {driving} of {sessions}",
+  "wall.planeDrivingManyOf": "{agents} agents driving {driving} of {sessions}",
+  "wall.holderNone": "Nobody",
+  "wall.holderAgent": "Agent {name}",
+  "wall.holderService": "Service {name}",
+  "wall.holderDriver": "Driver {name}",
+  "wall.remoteTerminal": "remote terminal",
+  "wall.remoteScreen": "remote screen",
+  "wall.showMachine": "Show this machine",
+  "wall.stopAgent": "Stop the agent driving {name}, and take control",
   "wall.detailNone": "No agent is attached to this computer.",
   "wall.detailSessionsOne": "1 session is live in all.",
   "wall.detailSessionsMany": "{sessions} sessions are live in all.",
@@ -306,6 +330,9 @@ const en: Record<keyof typeof ar, string> = {
   "act.writeClipboard": "writing the clipboard",
   "act.readFile": "reading a file",
   "act.writeFile": "writing a file",
+
+  // Form fields
+  "field.optional": "(optional)",
 };
 
 export type MessageKey = keyof typeof ar;
@@ -340,6 +367,7 @@ export interface I18n {
   t: (key: MessageKey, vars?: Record<string, string | number | boolean>) => string;
   setLang: (lang: Lang) => void;
 }
+
 
 const Context = createContext<I18n | null>(null);
 
@@ -408,7 +436,21 @@ export function useI18n(): I18n {
   return context;
 }
 
-/** Shortcut for components that only format text. */
+/**
+ * Shortcut for components that only format text.
+ *
+ * It does not throw when there is no provider. `useI18n` does, because a
+ * component that wants to CHANGE the language has nowhere to put the change
+ * without one, and failing loudly is right. A component that only wants to
+ * format a string has a perfectly good answer without one: the language the
+ * app would start in.
+ *
+ * That matters because a component rendered on its own, in a test or in a
+ * preview, would otherwise crash on a missing provider rather than on
+ * anything to do with the component.
+ */
 export function useT(): I18n["t"] {
-  return useI18n().t;
+  const context = useContext(Context);
+  const fallback = useMemo(() => translatorFor(rememberedLanguage()), []);
+  return context?.t ?? fallback;
 }

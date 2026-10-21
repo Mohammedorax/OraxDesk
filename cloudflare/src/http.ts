@@ -91,10 +91,24 @@ export function parseObject(body: RawBody): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 
+/**
+ * Refuse a body that carries fields this endpoint does not accept.
+ *
+ * The code is `unknown_field` and not `bad_request`, and the difference
+ * matters to a client. A registry that does not know a field is an OLD
+ * registry, and a client can work around that by dropping the field. A
+ * registry that refuses a body for any other reason is telling the client
+ * something about the body, and dropping the field to make the error go away
+ * would throw away what the client was trying to say.
+ */
 export function rejectUnknownKeys(body: Record<string, unknown>, allowed: readonly string[]): void {
   const extra = Object.keys(body).filter((key) => !allowed.includes(key));
   if (extra.length > 0) {
-    throw new ApiError(400, "bad_request", "Body contains fields this endpoint does not accept");
+    throw new ApiError(
+      400,
+      "unknown_field",
+      "Body contains fields this endpoint does not accept",
+    );
   }
 }
 

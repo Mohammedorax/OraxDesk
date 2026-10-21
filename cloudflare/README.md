@@ -10,10 +10,11 @@ iroh/QUIC. Nothing here ever carries screen, input or clipboard data.
 | Phase | State |
 |---|---|
 | P2 — schema and migrations | implemented, tested locally |
-| P3 — API and authentication | implemented, 28/28 Worker tests + 12/12 schema tests, `tsc` clean |
+| P3 — API and authentication | implemented, 62/62 Worker tests + 13/13 schema tests, `tsc` clean |
 | P4 — security hardening and limits | done: per-IP resolve limit, `/healthz` config status, per-device cap, key rotation (`key_id`, migration 0002), 15-minute cleanup Cron |
-| P5 — Rust client | verified: `cargo test -p orax-registry` 5/5, `clippy -D warnings` clean, `cargo check -p deskvncviewer` clean; six Tauri commands wired (`commands/registry.rs`) |
-| P6 — key separation and the device directory | implemented: the registry key is its own key (never the identity key), and a device publishes its address so a helper can find it by id. 55/55 Worker tests + 12/12 schema tests, `tsc` clean |
+| P5 — Rust client | verified: `cargo test -p orax-registry` 8/8, `clippy -D warnings` clean, `cargo check
+ -p deskvncviewer` clean; six Tauri commands wired (`commands/registry.rs`) |
+| P6 — key separation and the device directory | implemented: the registry key is its own key (never the identity key), and a device publishes its address so a helper can find it by id. 62/62 Worker tests + 13/13 schema tests, `tsc` clean |
 | Deployed | `https://orax-registry.oraxhome.workers.dev` on D1 `oraxdesk-db`; 28/28 live checks pass, test rows removed |
 
 ### Live verification
@@ -147,7 +148,7 @@ Notable findings recorded while building it:
 
 ### P2 results (2026-10-17)
 
-- `npm test` — 12/12 offline schema tests pass (`node:sqlite`).
+- `npm test` — 13/13 offline schema tests pass (`node:sqlite`).
 - `wrangler d1 migrations apply … --local` — applied on a fresh database (14
   statements), and a second run reports `No migrations to apply!`.
 - Local D1 checks: valid device + code insert succeed; first consume changes 1
@@ -188,9 +189,13 @@ schema can be verified before any toolchain install.
 
 ## Conventions
 
-- Every statement is idempotent (`IF NOT EXISTS`, `INSERT OR IGNORE`); a
-  migration is never destructive.
+- A migration is never destructive: no `DROP`, no `TRUNCATE`, no `DELETE FROM`.
+  The FIRST migration is also idempotent (`IF NOT EXISTS`), so applying it
+  twice is a no-op. The later ones ADD COLUMNS, and SQLite has no
+  `ADD COLUMN IF NOT EXISTS`, so they are not idempotent and do not need to
+  be: `wrangler d1 migrations apply` tracks which migrations have run and
+  runs each exactly once.
 - Positional parameters are plain `?`, never `?1`, so the same SQL runs under
   `wrangler` (D1), `node:sqlite`, and the P3 Worker.
-- All limits are constants in one place (`src/limits.ts` in P3): body 16 KiB,
+- All limits are constants in one place (`src/constants.ts`): body 16 KiB,
   invitation ciphertext ≤ 4 KiB, code TTL ≤ 600 s, label ≤ 64 bytes.

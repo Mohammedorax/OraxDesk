@@ -1,8 +1,24 @@
 //! Client for the Orax Remote registry (`cloudflare/`), speaking the `/v1` API.
 //!
-//! The identity is the same ed25519 key iroh already uses, so a device is the
-//! endpoint id it already has: nothing new is enrolled and no second secret is
-//! stored. Requests are signed over a domain-separated canonical string; the
+//! A device has TWO keys, and the difference between them is the whole point
+//! of this crate.
+//!
+//! The IDENTITY is the ed25519 key iroh already uses: it is the device's
+//! endpoint id, it is what a paired helper is recognised by, and it is trusted
+//! by every machine that ever paired with this one. A leak of it is a leak of
+//! all of them.
+//!
+//! The REGISTRY key signs the HTTP calls to this service and nothing else. It
+//! lives in the OS keychain where there is one (see [`keys`]), and it is
+//! generated separately from the identity and never derived from it.
+//!
+//! The FIRST registration is signed with the identity, because the Worker
+//! cannot verify against a key it has not been told yet, and it OFFERS the
+//! registry key in the same body. Every call after that is signed with the
+//! registry key, and the Worker holds the device to it. That is what stops a
+//! leak of the identity from being a leak of the registry account as well.
+//!
+//! Requests are signed over a domain-separated canonical string; the
 //! signature proves possession, and the id can never be enough on its own.
 //!
 //! Nothing in this crate touches session media. It carries an opaque
@@ -47,8 +63,23 @@ pub struct DeviceKeys {
 }
 
 impl DeviceKeys {
-    pub fn new(identity: SecretKey, registry: SecretKey) -> Self {
-        Self { identity, registry }
+    /// The two keys, with the invariant checked.
+    ///
+    /// The registry key must NOT be the identity. The Worker refuses that
+    /// combination, and it is right to: the whole point of the second key
+    /// is that the identity is not enough to sign with, and a pair that
+    /// quietly collapses the two undoes the separation without anybody
+    /// noticing. The check is here as well as there, because a pair that
+    /// cannot be built cannot be mis-built either.
+    ///
+    /// The keys are the same type and both are `SecretKey`, so nothing in the
+    /// type system stops them being the same value. This is the place that
+    /// does.
+    pub fn new(identity: SecretKey, registry: SecretKey) -> Result<Self, Error> {
+        if identity.to_bytes() == registry.to_bytes() {
+            return Err(Error::SameKey);
+        }
+        Ok(Self { identity, registry })
     }
 }
 
@@ -56,6 +87,16 @@ impl DeviceKeys {
 /// signature must never be reusable as one (or vice versa).
 const AUTH_PREFIX: &str = "orax-device-auth-v2";
 const MAX_RESPONSE_BYTES: usize = 64 * 1024;
+
+/// The code the Worker answers with when a body carries a field it does not
+/// accept.
+///
+/// It is a code of its own rather than a `bad_request` because the two mean
+/// different things to a client. "You sent a field I do not know" is an old
+/// registry, and the client can work around it by dropping the field. Any
+/// other refusal is about the body itself, and dropping the field to make
+/// the error go away would throw away what the client was saying.
+const UNKNOWN_FIELD: &str = "unknown_field";
 
 /// The whole request, connect included.
 ///
@@ -91,6 +132,8 @@ pub enum Error {
         code: String,
         message: String,
     },
+    #[error("the registry key must not be this device's own identity key")]
+    SameKey,
     #[error("the registry returned an unexpected response: {0}")]
     Decode(String),
     #[error("cannot generate a request nonce")]
@@ -443,10 +486,39 @@ impl Client {
             .await;
         let value = match outcome {
             Ok(value) => value,
+            // The device is already registered, and the Worker holds it to
+            // the REGISTRY key it registered with. That is the whole point
+            // of the second key: a leak of the identity must not be enough
+            // to take the registry account over, so a refresh is checked
+            // against the registry key and not the identity.
+            //
+            // The first registration is checked against the identity, because
+            // the Worker has nothing else to check it against. So the client
+            // asks with the identity and, when that is refused, asks again
+            // with the registry key. Registration is idempotent, so the
+            // second attempt changes nothing but the key it is signed with.
+            Err(Error::Api { status: 401, .. }) => {
+                self.call(
+                    Method::POST,
+                    "/v1/devices",
+                    Some((&keys.registry, &keys.identity)),
+                    Some(body.clone()),
+                )
+                .await?
+            }
             // A registry that does not know the field refuses the whole
             // body. Registration is idempotent, so trying again without it
             // costs one request and changes nothing else.
-            Err(Error::Api { status: 400, .. }) => {
+            //
+            // ONLY the "unknown field" answer takes this path. A registry
+            // that refuses the body for any other reason — a registry key
+            // that is the identity, a body that is too large — must NOT be
+            // answered by dropping the field and carrying on with the
+            // identity, because that is precisely the state the two keys
+            // exist to end, and the caller would never learn it happened.
+            Err(Error::Api {
+                status: 400, code, ..
+            }) if code == UNKNOWN_FIELD => {
                 let mut without = body;
                 without
                     .as_object_mut()

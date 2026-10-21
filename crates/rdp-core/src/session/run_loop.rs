@@ -133,6 +133,16 @@ pub struct RunLoop<R> {
     /// A Server Redirection this session was told to follow
     /// (MS-RDPBCGR 2.2.13.1).
     redirect: Option<Redirection>,
+    /// A Disconnect arrived while the loop was busy: unwind without reading
+    /// further.
+    ///
+    /// The same shape the VNC loop uses, and for the same reason. A Disconnect
+    /// that arrives while the event channel is full is served inside
+    /// [`Self::emit_serving_input`], which is not the place the loop reads
+    /// its outcome from. Dropping the outcome there would end the session as
+    /// a TRANSIENT failure, and the supervisor would dial the machine again
+    /// and undo the user's own disconnect.
+    pending_outcome: Option<RunOutcome>,
     received: Arc<AtomicU64>,
     sent: Arc<AtomicU64>,
     /// The last figures reported, so a tick reports a delta rather than a
@@ -178,6 +188,7 @@ impl<R: AsyncRead + Unpin> RunLoop<R> {
             cookie: None,
             cookie_discarded: false,
             redirect: None,
+            pending_outcome: None,
             opts,
             activated,
             received,
@@ -277,6 +288,13 @@ impl<R: AsyncRead + Unpin> RunLoop<R> {
         stats_tick.reset(); // do not fire immediately
 
         loop {
+            // A Disconnect that arrived while the loop was busy serving
+            // input is honoured before anything else. It is the user hanging
+            // up, and the alternative is a session that ends as a transient
+            // failure and is dialled again.
+            if let Some(outcome) = self.pending_outcome.take() {
+                return Ok(outcome);
+            }
             // Sampled once per pass rather than per PDU: it is the only
             // observable measure of how far behind the renderer is, and it is
             // what the graphics channel reports back as `queueDepth`.
@@ -897,7 +915,14 @@ impl<R: AsyncRead + Unpin> RunLoop<R> {
                         // The session ended. The event is dropped on purpose:
                         // the socket is about to close and a frame nobody will
                         // render is worth nothing.
-                        let _ = outcome;
+                        //
+                        // The outcome is NOT dropped with it. A Disconnect
+                        // that arrives here is the user hanging up, and a
+                        // session that ends without saying so is a TRANSIENT
+                        // failure: the supervisor would dial the machine
+                        // again and undo the disconnect the user just asked
+                        // for. The loop reads the outcome on its next pass.
+                        self.pending_outcome = Some(outcome);
                         return Ok(());
                     }
                 }

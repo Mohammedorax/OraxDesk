@@ -5,7 +5,7 @@ import {
   MAX_LABEL_CHARS,
 } from "./constants";
 import { b64urlDecode, deviceNumber } from "./crypto";
-import { nowSeconds, sha256Hex } from "./encoding";
+import { blobBytes, nowSeconds, sha256Hex } from "./encoding";
 import type { Env } from "./env";
 import {
   ApiError,
@@ -127,9 +127,19 @@ export async function registerDevice(
   // that the caller holds the identity, which is what makes the offered
   // registry key trustworthy: it can only be the key the holder of the
   // identity chose.
-  const { auth } = await verifySignature(publicKey, request, bodyHash);
-  await consumeNonce(env, auth.nonce, id);
-
+  //
+  // THAT IS TRUE ONLY FOR THE FIRST REGISTRATION. A device that already has
+  // a registry key is held to it, and its refresh is checked against the
+  // registry key rather than the identity.
+  //
+  // The reason is the blast radius the separation exists to bound. If a
+  // refresh could be signed with the identity and could replace the stored
+  // registry key, then a leak of the IDENTITY would be a leak of the
+  // registry account as well: the holder of the identity could re-register
+  // with a registry key of their own, sign every later call with it, mint
+  // codes, publish an address and revoke the device, and the legitimate
+  // owner would be locked out of their own account. The whole point of the
+  // second key is that the identity must not be enough.
   const now = nowSeconds();
   const number = await deviceNumber(publicKey);
   const existing = await env.DB.prepare(
@@ -137,13 +147,44 @@ export async function registerDevice(
   )
     .bind(id)
     .first<DeviceRow & { registry_key: ArrayBuffer | null }>();
-  if (existing !== null) {
-    if (existing.revoked_at !== null) {
-      throw new ApiError(403, "forbidden", "This device was revoked");
+  if (existing !== null && existing.revoked_at !== null) {
+    throw new ApiError(403, "forbidden", "This device was revoked");
+  }
+
+  const storedRegistryKey =
+    existing === null || existing.registry_key === null
+      ? null
+      : blobBytes(existing.registry_key);
+  // A device that already has a registry key is held to it, and cannot
+  // replace it by offering a different one. Rotation is a server-side act:
+  // the row's column is cleared, and the device re-registers with the new
+  // key, which the first branch below then accepts.
+  if (storedRegistryKey !== null && registryKey !== null) {
+    const same =
+      storedRegistryKey.length === registryKey.length &&
+      storedRegistryKey.every((b, i) => b === registryKey![i]);
+    if (!same) {
+      throw new ApiError(
+        400,
+        "bad_request",
+        "the registry key does not match the one this device registered with",
+      );
     }
+  }
+
+  // The key the signature is checked against: the stored registry key when
+  // the device has one, and the identity when it does not.
+  const signingKey = storedRegistryKey ?? publicKey;
+  const { auth } = await verifySignature(signingKey, request, bodyHash);
+  await consumeNonce(env, auth.nonce, id);
+
+  if (existing !== null) {
     // Older rows registered before 0003 get their number backfilled here.
+    //
+    // The registry key is written ONLY when the column is empty. A device
+    // that already has one keeps it, whatever this request offers.
     await env.DB.prepare(
-      "UPDATE devices SET label = ?, client_version = ?, protocol_version = ?, number = COALESCE(number, ?), updated_at = ?, last_seen_at = ?, registry_key = COALESCE(?, registry_key) WHERE id = ?",
+      "UPDATE devices SET label = ?, client_version = ?, protocol_version = ?, number = COALESCE(number, ?), updated_at = ?, last_seen_at = ?, registry_key = CASE WHEN registry_key IS NULL THEN ? ELSE registry_key END WHERE id = ?",
     )
       .bind(
         label,

@@ -206,7 +206,7 @@ function BandwidthStrip({
 /** Small "this picture is live" marker for tiles showing a preview stream. */
 function LiveBadge(): ReactNode {
   return (
-    <span className="pointer-events-none absolute right-1.5 top-1.5 flex items-center gap-1 rounded-pill bg-black/55 px-1.5 py-0.5 text-2xs font-semibold tracking-wide text-white/90">
+    <span className="pointer-events-none absolute end-1.5 top-1.5 flex items-center gap-1 rounded-pill bg-black/55 px-1.5 py-0.5 text-2xs font-semibold tracking-wide text-white/90">
       <span className="h-1.5 w-1.5 rounded-full bg-success motion-safe:animate-pulse" aria-hidden="true" />
       LIVE
     </span>
@@ -266,7 +266,7 @@ export function HostTile({
       tabIndex={0}
       aria-label={`${host.friendlyName}, ${osLabel(host.osHint)}, ${host.address}. Press Enter to connect.`}
       className={classNames(
-        "group relative cursor-default select-none overflow-hidden rounded-md border bg-surface text-left outline-none",
+        "group relative cursor-default select-none overflow-hidden rounded-md border bg-surface text-start outline-none",
         "transition-[transform,box-shadow,border-color] duration-120 motion-reduce:transition-none",
         selected ? "border-accent ring-2 ring-accent/40" : "border-subtle",
         hover && "-translate-y-0.5 shadow-(--shadow-tile-lift)",

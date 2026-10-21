@@ -1297,11 +1297,25 @@ export function Library({
         danger: true,
         separatorAbove: true,
         onSelect: () => {
-          void deleteHost(host.id);
-          push("info", `Deleted ${host.friendlyName}`, {
-            label: "Undo",
-            run: () => void saveHost({ ...host }),
-          });
+          // The toast waits for the delete.
+          //
+          // The delete can fail, and it does: the credential store may be
+          // locked, or the disk may be full. Saying "Deleted" before it
+          // happened, and offering an Undo for a row that never left, is
+          // worse than saying nothing: the user is told a thing is gone
+          // that is still there. The multi-delete path already does it this
+          // way, and this is the same operation with one row.
+          void deleteHost(host.id).then(
+            () => {
+              push("info", `Deleted ${host.friendlyName}`, {
+                label: "Undo",
+                run: () => void saveHost({ ...host }),
+              });
+            },
+            (error: unknown) => {
+              push("danger", `Could not delete ${host.friendlyName}: ${describeError(error)}`);
+            },
+          );
         },
       },
     ],
@@ -1319,10 +1333,10 @@ export function Library({
       <header className="flex items-center gap-3 border-b border-subtle bg-surface/80 px-4 py-2.5">
         <h1 className="mr-1 text-sm font-semibold tracking-tight text-primary">DeskVNCViewer</h1>
         <div className="relative max-w-md flex-1">
-          <IconSearch size={15} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-tertiary" />
+          <IconSearch size={15} className="pointer-events-none absolute start-2.5 top-1/2 -translate-y-1/2 text-tertiary" />
           <input
             ref={searchRef}
-            className="field !pl-8"
+            className="field !ps-8"
             placeholder={`Search or press ${modKeyLabel}K`}
             aria-label="Search hosts"
             value={search}
@@ -1803,7 +1817,7 @@ function HostListView({
     <div className="select-none overflow-x-auto rounded-md border border-subtle bg-surface">
       <table className="w-full border-collapse text-sm">
         <thead>
-          <tr className="border-b border-subtle text-left text-xs text-tertiary">
+          <tr className="border-b border-subtle text-start text-xs text-tertiary">
             <th className="px-3 py-2 font-medium">Name</th>
             <th className="px-3 py-2 font-medium">Address</th>
             <th className="px-3 py-2 font-medium">Group</th>

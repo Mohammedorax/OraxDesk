@@ -8,7 +8,6 @@
 //! (PRDRDP/00 R12).
 
 use std::sync::atomic::AtomicU64;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use remote_core::{ClientCommand, ConnectOptions, SessionEvent, SessionState};
@@ -179,9 +178,15 @@ async fn establish(
     let mut creds = options.credentials.clone();
     let mut ask = connection::Ask::new();
 
-    loop {
-        let stream = crate::transport::open_stream(options, events).await?;
+    // The clock starts here, before the first attempt, and it is the same
+    // clock for every attempt. A second attempt after a refused password does
+    // not buy a second budget: the person watching the spinner does not know
+    // an attempt was made, so a budget that restarts is a budget they do not
+    // know they have.
+    let started = tokio::time::Instant::now();
+    let wait = connection::WaitState::default();
 
+    loop {
         // The connection sequence is straight line `await` code and is
         // deliberately not cancellation safe, so it is raced against the
         // token rather than being polled inside a `select!` alongside
@@ -206,34 +211,52 @@ async fn establish(
         // The budget is PAUSED while the person is typing a password. Their
         // minute is not the connect stalling, and a connect that gave up on a
         // slow typist would be the worst possible answer to a prompt that
-        // asked for one.
-        let waiting = Arc::new(AtomicBool::new(false));
+        // asked for one. The pause is measured, not merely flagged: a flag
+        // only says the prompt is up, and the budget needs to know how long
+        // it has been up to give that time back.
         let result = {
-            let connect = connection::connect(
-                stream,
-                opts,
-                &mut creds,
-                &options.cert_pins,
-                arc,
-                events,
-                Some(connection::Prompt {
-                    commands,
-                    cancel,
-                    ask: &mut ask,
-                    waiting: Arc::clone(&waiting),
-                }),
-            );
-            tokio::pin!(connect);
-            let mut deadline = tokio::time::Instant::now() + options.connect_deadline;
+            let attempt = async {
+                // The stream is inside the budget as well. A TCP connect to a
+                // host that accepts and then says nothing is exactly the
+                // hang the budget exists for, and it happens before the
+                // sequence starts.
+                let stream = crate::transport::open_stream(options, events).await?;
+                connection::connect(
+                    stream,
+                    opts,
+                    &mut creds,
+                    &options.cert_pins,
+                    arc,
+                    events,
+                    Some(connection::Prompt::new(
+                        commands,
+                        cancel,
+                        &mut ask,
+                        wait.clone(),
+                    )),
+                )
+                .await
+            };
+            tokio::pin!(attempt);
+            let mut deadline = wait.deadline(started, options.connect_deadline);
             loop {
                 tokio::select! {
                     biased;
                     () = cancel.cancelled() => return Err(RdpError::Cancelled),
-                    result = &mut connect => break result,
+                    result = &mut attempt => break result,
                     _ = tokio::time::sleep_until(deadline) => {
-                        if waiting.load(Ordering::Relaxed) {
-                            // The person is typing. Give them the budget back.
-                            deadline = tokio::time::Instant::now() + options.connect_deadline;
+                        // The timer fired. How much of the budget is actually
+                        // spent depends on how much of the time was the
+                        // person's, and that is the whole question.
+                        let paused = wait.paused();
+                        let spent = tokio::time::Instant::now().saturating_duration_since(started);
+                        let working = spent.saturating_sub(paused);
+                        if working < options.connect_deadline {
+                            // There is budget left, so the person is being
+                            // asked something and the clock is re-armed
+                            // from the same start with the time they spent
+                            // added back.
+                            deadline = wait.deadline(started, options.connect_deadline);
                             continue;
                         }
                         tracing::warn!("the connect ran out of time");

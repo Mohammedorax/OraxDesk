@@ -268,7 +268,7 @@ export function DisconnectedOverlay({
             </button>
           ) : null}
         </div>
-        <p className="mt-2 text-right text-2xs text-tertiary">Press Esc to close this window</p>
+        <p className="mt-2 text-end text-2xs text-tertiary">Press Esc to close this window</p>
       </div>
     </div>
   );

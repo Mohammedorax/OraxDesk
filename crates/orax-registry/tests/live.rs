@@ -54,7 +54,7 @@ async fn live_registry_round_trip() {
     let identity = SecretKey::generate();
     let registry = SecretKey::generate();
     let id = orax_registry::device_id(&identity);
-    let keys = DeviceKeys::new(identity, registry);
+    let keys = DeviceKeys::new(identity, registry).expect("the two keys must differ");
     let record = client
         .register(&keys, Some("rust live test"), "live-test")
         .await

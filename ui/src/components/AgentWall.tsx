@@ -112,25 +112,39 @@ function age(from: number, now: number): string {
 }
 
 /** The subset of the translator the wall needs. */
-type Translate = (key: MessageKey, vars?: Record<string, string | number>) => string;
+type WallTranslate = (key: MessageKey, vars?: Record<string, string | number | boolean>) => string;
 
-function outcomeStyle(outcome: IntentOutcome, t: Translate): { className: string; label: string } {
+/**
+ * The chip that says what became of the intent.
+ *
+ * The chip is SOLID and the text on it is white, and that is a contrast
+ * decision rather than a style one. The tinted version was a coloured text on
+ * a faint wash of the same colour, and on the light theme that is between
+ * 3.8 and 4.3 to one, which is below the 4.5 that small text needs. A solid
+ * chip with white text is between 4.6 and 5.0 on every one of these colours,
+ * and it does not need the theme's status colours to be darkened, which
+ * would have changed them everywhere they are used.
+ *
+ * The colour is not the only thing carrying the state: the chip has a word
+ * on it, and the word is in the app's language.
+ */
+function outcomeStyle(outcome: IntentOutcome, t: WallTranslate): { className: string; label: string } {
   switch (outcome) {
     case "in-flight":
-      return { className: "bg-accent/15 text-accent", label: t("wall.doing") };
+      return { className: "bg-accent text-white", label: t("wall.doing") };
     case "accepted":
       // "Accepted" means the plane TOOK the intent, not that it worked: the
       // far side can still refuse it, and a person reading "accepted" as
       // "it worked" would be wrong. "Sent" is what actually happened.
-      return { className: "bg-success-subtle text-success", label: t("wall.sent") };
+      return { className: "bg-success text-white", label: t("wall.sent") };
     case "refused":
-      return { className: "bg-warning-subtle text-warning", label: t("wall.refused") };
+      return { className: "bg-warning text-white", label: t("wall.refused") };
     case "failed":
-      return { className: "bg-danger-subtle text-danger", label: t("wall.failed") };
+      return { className: "bg-danger text-white", label: t("wall.failed") };
     default:
       // The plane said something we do not read. Say so, rather than picking
       // whichever of the four would look tidiest.
-      return { className: "bg-inset text-tertiary", label: t("wall.unread") };
+      return { className: "bg-inset text-secondary", label: t("wall.unread") };
   }
 }
 
@@ -144,11 +158,11 @@ function outcomeStyle(outcome: IntentOutcome, t: Translate): { className: string
  * residual right to left run from reordering the label beside it, on top of
  * the bidirectional control characters already stripped on the way in.
  */
-function RemoteQuote({ remote }: { remote: RemoteText }): ReactNode {
+function RemoteQuote({ remote, t }: { remote: RemoteText; t: WallTranslate }): ReactNode {
   return (
-    <div className="flex min-w-0 items-baseline gap-1.5 border-l border-strong pl-1.5">
+    <div className="flex min-w-0 items-baseline gap-1.5 border-s border-strong ps-1.5">
       <span className="shrink-0 text-[9px] uppercase tracking-wide text-tertiary">
-        {remoteLabel(remote)}
+        {remoteLabel(remote, t)}
       </span>
       {/*
         The quotation marks are drawn OUTSIDE the box that truncates, so the
@@ -177,7 +191,7 @@ function RemoteQuote({ remote }: { remote: RemoteText }): ReactNode {
 }
 
 /** The intent line, and what became of it. */
-function IntentRow({ intent, t }: { intent: AgentIntent | null; t: Translate }): ReactNode {
+function IntentRow({ intent, t }: { intent: AgentIntent | null; t: WallTranslate }): ReactNode {
   if (!intent) {
     return <p className="truncate text-2xs text-tertiary">{t("wall.idle")}</p>;
   }
@@ -196,7 +210,7 @@ function IntentRow({ intent, t }: { intent: AgentIntent | null; t: Translate }):
     <div className="flex min-w-0 items-center gap-1.5">
       <span
         className={classNames(
-          "shrink-0 rounded-pill px-1.5 py-px text-[9px] font-medium",
+          "shrink-0 rounded-pill px-1.5 py-px text-2xs font-medium",
           outcome.className,
         )}
       >
@@ -234,7 +248,7 @@ function Card({
   now: number;
   onGo: () => void;
   onStop: () => void;
-  t: Translate;
+  t: WallTranslate;
 }): ReactNode {
   const holder = entry.holder;
   const driven = holder?.kind === "agent";
@@ -260,7 +274,7 @@ function Card({
       <span
         aria-hidden="true"
         className={classNames(
-          "absolute inset-y-0 left-0 w-0.5",
+          "absolute inset-y-0 start-0 w-0.5",
           driven ? "bg-warning" : "bg-accent",
           inFlight && "animate-pulse",
         )}
@@ -277,11 +291,11 @@ function Card({
         <button
           type="button"
           onClick={onGo}
-          className="min-w-0 flex-1 truncate text-left text-2xs font-medium text-primary hover:text-accent hover:underline"
+          className="min-w-0 flex-1 truncate text-start text-2xs font-medium text-primary hover:text-accent hover:underline"
           title={
             entry.machine
               ? `${entry.machine.address}:${entry.machine.port}`
-              : "Show this machine"
+              : t("wall.showMachine")
           }
         >
           {label}
@@ -297,8 +311,8 @@ function Card({
             type="button"
             onClick={onStop}
             className="shrink-0 rounded-sm p-0.5 text-warning hover:bg-danger-subtle hover:text-danger"
-            aria-label={`Stop the agent driving ${label}, and take control`}
-            title={`Stop ${holderLabel(holder)} and take control`}
+            aria-label={t("wall.stopAgent", { name: label })}
+            title={t("wall.stopAgent", { name: holderLabel(holder, t) })}
           >
             <IconStop size={11} />
           </button>
@@ -313,10 +327,10 @@ function Card({
         title={holder?.capability ? `Capability: ${holder.capability}` : undefined}
       >
         {driven
-          ? holderLabel(holder)
+          ? holderLabel(holder, t)
           : entry.preempted
             ? t("wall.tookWheel", { agent: entry.preempted.agent })
-            : holderLabel(holder)}
+            : holderLabel(holder, t)}
       </p>
 
       {driven ? (
@@ -324,7 +338,7 @@ function Card({
         // silently would be a card nobody notices changing.
         <div key={entry.intent?.id ?? "idle"} className="fade-in flex min-w-0 flex-col gap-1">
           <IntentRow intent={entry.intent} t={t} />
-          {entry.intent?.remote ? <RemoteQuote remote={entry.intent.remote} /> : null}
+          {entry.intent?.remote ? <RemoteQuote remote={entry.intent.remote} t={t} /> : null}
         </div>
       ) : (
         <p className="truncate text-2xs text-tertiary">{t("wall.yoursNow")}</p>
@@ -346,6 +360,23 @@ export function AgentWall({
   const t = useT();
   /** "Stop all" asks first: it takes the lease back from every agent at once. */
   const [confirmingStopAll, setConfirmingStopAll] = useState(false);
+  const cancelStopAll = useRef<HTMLButtonElement>(null);
+  const stopAllAskId = "wall-stop-all-ask";
+  // The confirmation takes the focus, so a keyboard user is not left where
+  // they were with a question on the screen they never heard, and Escape
+  // answers it the safe way.
+  useEffect(() => {
+    if (!confirmingStopAll) return;
+    cancelStopAll.current?.focus();
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === "Escape") {
+        e.stopPropagation();
+        setConfirmingStopAll(false);
+      }
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [confirmingStopAll]);
 
   /**
    * The strip explains itself, once.
@@ -449,8 +480,18 @@ export function AgentWall({
           className="flex flex-wrap items-center gap-2 rounded-sm border border-danger/40 bg-danger-subtle px-2 py-1.5"
           role="alertdialog"
           aria-label={t("wall.stopAllDialog")}
+          aria-describedby={stopAllAskId}
         >
-          <span className="text-2xs text-primary">
+          {/*
+            The question is announced, because an `alertdialog` is not a live
+            region: a screen reader user who presses "Stop all" would
+            otherwise have no idea that a confirmation appeared, and the only
+            way out of it would be finding the two buttons by tabbing.
+
+            The focus moves to the cancel button, because that is the safe
+            answer to an accidental press, and Escape takes it too.
+          */}
+          <span id={stopAllAskId} role="alert" className="text-2xs text-primary">
             {count === 1
               ? t("wall.stopAllAskOne")
               : t("wall.stopAllAskMany", { count })}
@@ -458,6 +499,7 @@ export function AgentWall({
           <span className="flex-1" />
           <button
             type="button"
+            ref={cancelStopAll}
             className="rounded-sm px-1.5 py-0.5 text-2xs text-secondary hover:text-primary"
             onClick={() => setConfirmingStopAll(false)}
           >

@@ -99,6 +99,12 @@ impl ConnectStage {
     ///
     /// A slice rather than an array so adding a stage is a one line change,
     /// matching [`remote_core::ProtocolKind::ALL`].
+    ///
+    /// [`ConnectStage::WholeConnect`] is NOT in this list, and that is the
+    /// point of it being a list of stages. It is not a stage the protocol
+    /// draws: it is OUR budget over the whole sequence, and a list that
+    /// answers "which phase did we reach" must not contain a phase that is
+    /// every phase.
     pub const ALL: &'static [ConnectStage] = &[
         ConnectStage::Resolving,
         ConnectStage::Dialling,
@@ -117,7 +123,6 @@ impl ConnectStage {
         ConnectStage::CapabilitiesExchange,
         ConnectStage::ConnectionFinalization,
         ConnectStage::Connected,
-        ConnectStage::WholeConnect,
     ];
 
     /// The stage's name, as it appears in a log line and in an error message.
@@ -168,7 +173,9 @@ impl ConnectStage {
             ConnectStage::CapabilitiesExchange => "MS-RDPBCGR 2.2.1.13",
             ConnectStage::ConnectionFinalization => "MS-RDPBCGR 2.2.1.14 to 2.2.1.22",
             ConnectStage::Connected => "MS-RDPBCGR 1.3.1.1",
-            ConnectStage::WholeConnect => "MS-RDPBCGR 1.3.1.1",
+            // Not a spec section: this is our own budget over the whole
+            // sequence, and the citation says so rather than borrowing one.
+            ConnectStage::WholeConnect => "MS-RDPBCGR 1.3.1.1, the whole sequence",
         }
     }
 
@@ -695,6 +702,14 @@ mod tests {
         assert_eq!(sorted, ConnectStage::ALL);
         assert_eq!(ConnectStage::ALL.first(), Some(&ConnectStage::Resolving));
         assert_eq!(ConnectStage::ALL.last(), Some(&ConnectStage::Connected));
+    }
+
+    /// The whole-connect budget is not a stage in the sequence, and putting it
+    /// in the stage list would make "which phase did we reach" answer "every
+    /// phase".
+    #[test]
+    fn the_whole_connect_budget_is_not_a_stage_in_the_sequence() {
+        assert!(!ConnectStage::ALL.contains(&ConnectStage::WholeConnect));
     }
 
     /// The conversion keeps the structure's name rather than flattening it.

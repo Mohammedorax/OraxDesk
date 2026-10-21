@@ -62,7 +62,25 @@ export function DeviceNumber({ machineId }: { machineId: string }): ReactNode {
       <div className="flex items-center justify-between gap-3">
         <span className="text-sm text-secondary">{t("device.number")}</span>
         <div className="flex items-center gap-2">
-          <span className="mono select-all text-lg font-semibold tracking-wider">
+          {/*
+            The number is a run of digits with spaces in it, and it is read
+            OUT LOUD to another person, so its order is not a detail.
+
+            In an Arabic paragraph the spaces between the groups are bidi
+            neutrals, and they take the paragraph's direction, so the three
+            groups are laid out right to left: "123 456 789" is displayed as
+            "789 456 123". The clipboard copy is unaffected, so the number
+            works and the SCREEN does not, and the failure only shows up when
+            the lookup fails.
+
+            The run is isolated and pinned left to right, so the digits are
+            in the order they are in.
+          */}
+          <span
+            dir="ltr"
+            style={{ unicodeBidi: "isolate" }}
+            className="mono select-all text-lg font-semibold tracking-wider"
+          >
             {groupDigits(number)}
           </span>
           <button

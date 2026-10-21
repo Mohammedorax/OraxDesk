@@ -306,18 +306,26 @@ export function HostsProvider({ children }: { children: ReactNode }): ReactNode 
         return;
       }
       const generation = ++libraryGeneration.current;
+      // The fallback is NULL and not an empty list, and that is the whole
+      // fix. A failed read has to be distinguishable from a read that
+      // succeeded and found nothing, because they mean opposite things: one
+      // is "your library is empty" and the other is "I could not ask".
+      //
+      // With an empty list as the fallback, `Array.isArray(h)` was always
+      // true, so a single failed `list_hosts` replaced every host with
+      // nothing and the user was shown an empty library with no way to tell
+      // that from having deleted them all.
       const [h, g, t] = await Promise.all([
-        safeInvoke<HostProfile[]>("list_hosts", undefined, []),
-        safeInvoke<HostGroup[]>("list_groups", undefined, []),
-        safeInvoke<HostTag[]>("list_tags", undefined, []),
+        safeInvoke<HostProfile[] | null>("list_hosts", undefined, null),
+        safeInvoke<HostGroup[] | null>("list_groups", undefined, null),
+        safeInvoke<HostTag[] | null>("list_tags", undefined, null),
       ]);
       // A read that lost the race is not the answer any more.
       if (generation !== libraryGeneration.current) return;
-      // A read that failed must not empty the library. The old code took the
-      // `[]` fallback at face value, so a single failed `list_hosts` replaced
-      // every host with nothing and the user was shown an empty library, with
-      // no way to tell that from having deleted them all.
-      setHosts((prev) => (Array.isArray(h) ? applyFavorites(h, favoriteIdsRef.current) : prev));
+      // A read that failed leaves what is on screen alone.
+      setHosts((prev) =>
+        Array.isArray(h) ? applyFavorites(h, favoriteIdsRef.current) : prev,
+      );
       setGroups((prev) => (Array.isArray(g) ? g : prev));
       setTags((prev) => (Array.isArray(t) ? t : prev));
       setLoading(false);

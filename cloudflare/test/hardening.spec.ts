@@ -122,9 +122,10 @@ describe("the resolve cannot lose a session", () => {
     const minted = await jsonBody<{ code: string }>(
       await createSignal(device, makeInvitation()),
     );
-    // A revocation lands between the read and the guarded update. The
-    // invitation is already in hand, so the resolve succeeds rather than
-    // consuming the code and answering 404.
+    // The row is gone before the resolve, so there is nothing to read and
+    // the code reads as one that never existed. The helper gets a 404, and
+    // the important part is that the code was NOT consumed on the way to
+    // finding out: a code that is deleted is a code that is already spent.
     await testDb.prepare("DELETE FROM signal_codes WHERE code = ?").bind(minted.code).run();
     const response = await resolveSignal(minted.code);
     expect(response.status).toBe(404);
@@ -236,6 +237,104 @@ describe("the registry key is not the identity", () => {
     expect(response.status).toBe(400);
   });
 
+  it("will not let the identity take the registry key back", async () => {
+    // The hole this pins.
+    //
+    // A refresh used to be verified against the IDENTITY and to write the
+    // offered registry key with COALESCE, which overwrites. So a leak of the
+    // identity was a leak of the registry account: the holder could
+    // re-register with a registry key of their own, sign every later call
+    // with it, mint codes, publish an address and revoke the device, and the
+    // legitimate owner was locked out of their own account.
+    //
+    // The identity is trusted by every machine that ever paired with this
+    // one. It must not be enough to take the registry over.
+    const device = await newDevice(true);
+    const registered = await SELF.fetch(
+      await signedRequest("/v1/devices", device, {
+        body: {
+          public_key: b64urlEncode(device.publicKey),
+          registry_key: b64urlEncode(device.registryKey!),
+        },
+      }),
+    );
+    expect(registered.status).toBe(201);
+
+    // A refresh signed with the identity is refused: the device is held to
+    // the registry key it registered with.
+    const refresh = await SELF.fetch(
+      await signedRequest("/v1/devices", device, {
+        body: {
+          public_key: b64urlEncode(device.publicKey),
+          registry_key: b64urlEncode(device.registryKey!),
+        },
+      }),
+    );
+    expect(refresh.status).toBe(401);
+
+    // And the stored key is still the one that was registered.
+    const stored = await testDb
+      .prepare("SELECT registry_key FROM devices WHERE id = ?")
+      .bind(device.id)
+      .first<{ registry_key: ArrayBuffer | null }>();
+    expect(stored?.registry_key).not.toBeNull();
+    const bytes = new Uint8Array(stored!.registry_key!);
+    expect(Array.from(bytes)).toEqual(Array.from(device.registryKey!));
+  });
+
+  it("refuses a refresh that offers a different registry key", async () => {
+    // A device that already has a registry key is held to it. Silently
+    // replacing it would make the stored key a claim rather than a fact, and
+    // rotation is a server-side act: the column is cleared and the device
+    // re-registers.
+    const device = await newDevice(true);
+    await SELF.fetch(
+      await signedRequest("/v1/devices", device, {
+        body: {
+          public_key: b64urlEncode(device.publicKey),
+          registry_key: b64urlEncode(device.registryKey!),
+        },
+      }),
+    );
+    const other = await newDevice();
+    const refresh = await SELF.fetch(
+      await signedRequest("/v1/devices", device, {
+        body: {
+          public_key: b64urlEncode(device.publicKey),
+          registry_key: b64urlEncode(other.publicKey),
+        },
+        signWithRegistryKey: true,
+      }),
+    );
+    expect(refresh.status).toBe(400);
+  });
+
+  it("accepts a refresh signed with the registry key", async () => {
+    const device = await newDevice(true);
+    const body = {
+      public_key: b64urlEncode(device.publicKey),
+      registry_key: b64urlEncode(device.registryKey!),
+    };
+    expect(
+      (
+        await SELF.fetch(
+          await signedRequest("/v1/devices", device, { body }),
+        )
+      ).status,
+    ).toBe(201);
+    // The second call is a refresh, and it is signed with the registry key.
+    expect(
+      (
+        await SELF.fetch(
+          await signedRequest("/v1/devices", device, {
+            body,
+            signWithRegistryKey: true,
+          }),
+        )
+      ).status,
+    ).toBe(200);
+  });
+
   it("still accepts a device that sends no registry key", async () => {
     // The separation is adopted one device at a time, so a device that has
     // not been updated keeps working: the Worker falls back to the identity.
@@ -309,6 +408,67 @@ describe("the device directory", () => {
     expect(response.status).toBe(404);
   });
 
+  it("reads an expired address as no address at all", async () => {
+    // The address is true for an hour. After that it is a place the machine
+    // is not, and a helper that found it would knock on a stranger's door.
+    const device = await newDevice();
+    await register(device);
+    const published = await SELF.fetch(
+      await signedRequest(`/v1/devices/${device.id}/address`, device, {
+        body: { address: { id: device.id, addrs: [{ Ip: "192.0.2.10:41234" }] } },
+      }),
+    );
+    expect(published.status).toBe(204);
+
+    const fresh = await SELF.fetch(`https://registry.test/v1/devices/${device.id}/address`);
+    expect(fresh.status).toBe(200);
+
+    // One second past the hour.
+    await testDb
+      .prepare("UPDATE devices SET address_at = ? WHERE id = ?")
+      .bind(nowSeconds() - 3601, device.id)
+      .run();
+    const expired = await SELF.fetch(`https://registry.test/v1/devices/${device.id}/address`);
+    expect(expired.status).toBe(404);
+  });
+
+  it("refuses an address whose host is not an IP literal", async () => {
+    // A host that is a NAME is free text, and free text is where a secret
+    // goes. The guarantee the directory makes is about the shape of what is
+    // stored, so the shape has to exclude a name.
+    const device = await newDevice();
+    await register(device);
+    const response = await SELF.fetch(
+      await signedRequest(`/v1/devices/${device.id}/address`, device, {
+        body: {
+          address: {
+            id: device.id,
+            addrs: [{ Ip: "SECRETKEYHERE:41234" }],
+          },
+        },
+      }),
+    );
+    expect(response.status).toBe(400);
+  });
+
+  it("refuses a relay address that carries a fragment", async () => {
+    // A URL fragment is never sent to the server, so it is free text that
+    // would be stored verbatim and read back to every helper.
+    const device = await newDevice();
+    await register(device);
+    const response = await SELF.fetch(
+      await signedRequest(`/v1/devices/${device.id}/address`, device, {
+        body: {
+          address: {
+            id: device.id,
+            addrs: [{ Relay: "https://relay.example/#something" }],
+          },
+        },
+      }),
+    );
+    expect(response.status).toBe(400);
+  });
+
   it("stores only the address, never anything else that was offered", async () => {
     // The address is where a machine can be reached. It is not a way in:
     // iroh's handshake authenticates the peer by its key, so the address is a
@@ -374,27 +534,35 @@ describe("the device directory", () => {
 });
 
 describe("the limits", () => {
-  // LAST in this file, on purpose.
-  //
-  // The limiter is keyed on the source address, and every request in the
-  // test environment comes from the same one, so a flood here spends the
-  // budget that the tests above it share. Against a real deployment each
-  // device has its own address and the two never meet.
   it("refuses a flood of registrations from one address", async () => {
     // The limiter is per isolate, so this is a speed bump rather than a
     // quota. What it has to be is more than nothing: a flood of
     // registrations writes device rows that nothing ever deletes.
+    //
+    // The flood comes from ONE address, because that is the shape of the
+    // attack: one source, many identities. Each device it registers is a new
+    // identity, and they all share the source address, so the budget they
+    // share is the budget under test.
+    //
+    // The count is exact rather than "more than none", because a test that
+    // passes when the limit is raised is not testing the limit.
+    const source = "10.99.99.99";
     let refused = 0;
+    let accepted = 0;
     for (let attempt = 0; attempt < 30; attempt += 1) {
       const device = await newDevice();
       const response = await SELF.fetch(
         await signedRequest("/v1/devices", device, {
           body: { public_key: b64urlEncode(device.publicKey) },
+          ip: source,
         }),
       );
       if (response.status === 429) refused += 1;
+      if (response.status === 201) accepted += 1;
     }
-    expect(refused).toBeGreaterThan(0);
+    // The limiter allows twenty registrations a minute per address.
+    expect(accepted).toBe(20);
+    expect(refused).toBe(10);
   });
 });
 

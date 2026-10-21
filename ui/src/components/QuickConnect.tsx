@@ -417,7 +417,7 @@ export function QuickConnect({
             id="quick-connect-list"
             role="listbox"
             aria-label="Connection suggestions"
-            className="fade-in absolute left-0 right-0 top-full z-30 mt-1 max-h-80 overflow-y-auto rounded-md border border-subtle bg-raised p-1.5 shadow-(--shadow-pop)"
+            className="fade-in absolute start-0 end-0 top-full z-30 mt-1 max-h-80 overflow-y-auto rounded-md border border-subtle bg-raised p-1.5 shadow-(--shadow-pop)"
           >
             {suggestions.map((s, i) => (
               <div key={s.key}>

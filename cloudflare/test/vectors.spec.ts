@@ -105,4 +105,41 @@ describe("wire vectors", () => {
     // Time passing opens the window again.
     expect(limiter.allow("a", 1_001)).toBe(true);
   });
+
+  it("evicts the oldest window, not every window", () => {
+    // The bug this pins.
+    //
+    // The limiter used to CLEAR the whole map when it ran out of room, so ten
+    // thousand distinct source addresses could wipe every honest client's
+    // budget in one go. The key is the source address, and an attacker with a
+    // single IPv6 /64 has ten thousand of them, so the limiter could be reset
+    // at will by whoever it was there to stop.
+    //
+    // Under the old behaviour, "b" would have been reset along with "a", so
+    // "b" would have been allowed again. Under the fixed one, "b" keeps its
+    // budget and "a" is the one that is gone.
+    const limiter = new FixedWindowLimiter(1, 60_000, 2);
+    expect(limiter.allow("a", 0)).toBe(true);
+    expect(limiter.allow("b", 1)).toBe(true);
+    // The map is full now, so the next key evicts the OLDEST window.
+    expect(limiter.allow("c", 2)).toBe(true);
+
+    // "b" is still at its limit: its window was not the one that was dropped.
+    expect(limiter.allow("b", 3)).toBe(false);
+    // "a" was evicted, so it starts again. That is the price of the eviction,
+    // and it is bounded: ONE key, not all of them.
+    expect(limiter.allow("a", 4)).toBe(true);
+  });
+
+  it("drops the expired windows before it drops a live one", () => {
+    // The sweep is what makes the eviction rare: a key whose window has
+    // closed is not a key worth keeping.
+    const limiter = new FixedWindowLimiter(5, 100, 2);
+    expect(limiter.allow("a", 0)).toBe(true);
+    expect(limiter.allow("b", 1)).toBe(true);
+    // "a" has expired by now, so it is the one that goes.
+    expect(limiter.allow("c", 200)).toBe(true);
+    expect(limiter.allow("a", 201)).toBe(true);
+    expect(limiter.allow("b", 202)).toBe(true);
+  });
 });

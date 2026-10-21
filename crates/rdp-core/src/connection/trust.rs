@@ -112,9 +112,10 @@ async fn ask(
     // The budget is paused while the person decides, exactly as it is for the
     // credentials prompt: they are looking at a fingerprint and a subject
     // name, and that is not the connect stalling.
-    prompt
-        .waiting
-        .store(true, std::sync::atomic::Ordering::Relaxed);
+    //
+    // The guard ends the pause on every path out, including a dismissal and
+    // a cancellation.
+    let _waiting = prompt.wait.begin();
     remote_core::emit(
         events,
         SessionEvent::CertificatePrompt {
@@ -128,10 +129,7 @@ async fn ask(
     .await?;
 
     let Prompt {
-        commands,
-        cancel,
-        waiting,
-        ..
+        commands, cancel, ..
     } = prompt;
     loop {
         let cmd = tokio::select! {
@@ -148,14 +146,12 @@ async fn ask(
                 scheme,
                 permanent,
             }) => {
-                waiting.store(false, std::sync::atomic::Ordering::Relaxed);
                 return decide(fingerprint, &answered, scheme, permanent);
             }
             // The dialog's cancel button, and the disconnect that a user who
             // closes the window instead produces. Both mean the same thing:
             // the key was not approved, so nothing more may be sent.
             Some(ClientCommand::CancelCredentials) | Some(ClientCommand::Disconnect) => {
-                waiting.store(false, std::sync::atomic::Ordering::Relaxed);
                 return Err(RdpError::CertificateUntrusted(format!(
                     "{fingerprint} was not approved"
                 )));
@@ -219,6 +215,7 @@ fn same_key(a: &str, b: &str) -> bool {
 mod tests {
     use super::*;
     use crate::connection::credentials::Ask;
+    use crate::connection::prompt::WaitState;
     use tokio_util::sync::CancellationToken;
 
     fn unknown() -> TrustDecision {
@@ -306,11 +303,12 @@ mod tests {
         approve(
             &unknown(),
             &events,
-            Some(Prompt {
-                commands: &mut commands,
-                cancel: &cancel,
-                ask: &mut Ask::new(),
-            }),
+            Some(Prompt::new(
+                &mut commands,
+                &cancel,
+                &mut Ask::new(),
+                WaitState::default(),
+            )),
         )
         .await
         .expect("approved");
@@ -336,11 +334,12 @@ mod tests {
             let err = approve(
                 &unknown(),
                 &events,
-                Some(Prompt {
-                    commands: &mut commands,
-                    cancel: &cancel,
-                    ask: &mut Ask::new(),
-                }),
+                Some(Prompt::new(
+                    &mut commands,
+                    &cancel,
+                    &mut Ask::new(),
+                    WaitState::default(),
+                )),
             )
             .await
             .expect_err("dismissed");
@@ -375,11 +374,12 @@ mod tests {
         let err = approve(
             &unknown(),
             &events,
-            Some(Prompt {
-                commands: &mut commands,
-                cancel: &cancel,
-                ask: &mut Ask::new(),
-            }),
+            Some(Prompt::new(
+                &mut commands,
+                &cancel,
+                &mut Ask::new(),
+                WaitState::default(),
+            )),
         )
         .await
         .expect_err("the shell is gone");
@@ -391,11 +391,12 @@ mod tests {
         let err = approve(
             &unknown(),
             &events,
-            Some(Prompt {
-                commands: &mut commands,
-                cancel: &cancel,
-                ask: &mut Ask::new(),
-            }),
+            Some(Prompt::new(
+                &mut commands,
+                &cancel,
+                &mut Ask::new(),
+                WaitState::default(),
+            )),
         )
         .await
         .expect_err("cancelled");
@@ -433,11 +434,12 @@ mod tests {
         approve(
             &unknown(),
             &events,
-            Some(Prompt {
-                commands: &mut commands,
-                cancel: &cancel,
-                ask: &mut Ask::new(),
-            }),
+            Some(Prompt::new(
+                &mut commands,
+                &cancel,
+                &mut Ask::new(),
+                WaitState::default(),
+            )),
         )
         .await
         .expect("approved after the noise");

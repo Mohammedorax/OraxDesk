@@ -95,8 +95,17 @@ function sanitizeTransportAddr(value: unknown): unknown {
   }
   if (kind === "Ip") {
     // A socket address: a host and a port, nothing else.
-    if (!/^[0-9a-zA-Z.:%\-[\]]+:\d{1,5}$/.test(inner)) {
-      throw new ApiError(400, "bad_request", "an Ip address must be a host and a port");
+    //
+    // The host is an IP LITERAL and not a name. A name would be free text,
+    // and free text is where a secret goes: the guarantee this module makes
+    // is about the SHAPE of what is stored, and a shape that admits any
+    // string in the host position is no guarantee at all.
+    if (!/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}:\d{1,5}$/.test(inner)) {
+      throw new ApiError(400, "bad_request", "an Ip address must be an IPv4 literal and a port");
+    }
+    const port = Number(inner.slice(inner.lastIndexOf(":") + 1));
+    if (port < 1 || port > 65535) {
+      throw new ApiError(400, "bad_request", "an Ip address must carry a real port");
     }
     return { Ip: inner };
   }
@@ -111,7 +120,17 @@ function sanitizeTransportAddr(value: unknown): unknown {
     if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
       throw new ApiError(400, "bad_request", "a relay address must be http or https");
     }
-    if (parsed.username || parsed.password || parsed.pathname !== "/" || parsed.search) {
+    // The FRAGMENT is checked with the rest. A URL fragment is never sent to
+    // the server, so it is free text that would be stored verbatim and read
+    // back to every helper that looks the address up. A relay address that
+    // carries anything but an origin is refused.
+    if (
+      parsed.username ||
+      parsed.password ||
+      parsed.pathname !== "/" ||
+      parsed.search ||
+      parsed.hash
+    ) {
       throw new ApiError(400, "bad_request", "a relay address carries nothing but an origin");
     }
     return { Relay: inner };

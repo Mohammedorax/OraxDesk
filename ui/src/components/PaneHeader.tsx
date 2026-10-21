@@ -19,6 +19,7 @@
  */
 import { type ReactNode } from "react";
 import { classNames } from "../lib/util";
+import { useT } from "../lib/i18n";
 import type { ProtocolKind, SessionState } from "../lib/types";
 import {
   drivenByAgent,
@@ -86,6 +87,7 @@ export function PaneHeader({
   onClose: () => void;
   onPointerDown: (e: React.PointerEvent) => void;
 }): ReactNode {
+  const t = useT();
   const driven = drivenByAgent(agent ?? undefined);
   const intent = driven ? (agent?.intent ?? null) : null;
   // The handover survives the agent leaving the lease, which is the moment it
@@ -135,7 +137,7 @@ export function PaneHeader({
       {driven ? (
         <span
           aria-hidden="true"
-          title={holderLabel(holder)}
+          title={holderLabel(holder, t)}
           className={classNames(
             "h-1.5 w-1.5 shrink-0 rounded-[1px] bg-warning",
             intent?.outcome === "in-flight" && "animate-pulse",
@@ -181,7 +183,7 @@ export function PaneHeader({
           // anything moved at all.
           key={intent?.id}
           className="fade-in mono min-w-0 flex-1 truncate text-2xs text-tertiary"
-          title={`${holderLabel(holder)}: ${flight}`}
+          title={`${holderLabel(holder, t)}: ${flight}`}
         >
           {flight}
         </span>
@@ -200,8 +202,8 @@ export function PaneHeader({
           onPointerDown={(e) => e.stopPropagation()}
           onClick={onStopAgent}
           className="shrink-0 rounded-sm p-0.5 text-warning hover:bg-danger-subtle hover:text-danger"
-          aria-label={`Stop the agent driving ${title}, and take control`}
-          title={`Stop ${holderLabel(holder)} and take control`}
+          aria-label={t("wall.stopAgent", { name: title })}
+          title={t("wall.stopAgent", { name: holderLabel(holder, t) })}
         >
           <IconStop size={11} />
         </button>

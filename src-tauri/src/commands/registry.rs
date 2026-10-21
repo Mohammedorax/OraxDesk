@@ -36,17 +36,21 @@ fn registry_key(account: &str) -> Result<RegistryKey, String> {
 
 /// This computer's two keys: the identity it is known by, and the key it
 /// signs the registry with.
+///
+/// The two must differ, and the check is not decoration: the identity is
+/// trusted by every machine that ever paired with this one, and a registry
+/// key that is the identity would make a leak of it a leak of all of them.
 fn machine_keys() -> Result<DeviceKeys, String> {
     let identity = machine_key()?;
     let registry = registry_key(keys::ACCOUNT_MACHINE)?;
-    Ok(DeviceKeys::new(identity, registry.secret().clone()))
+    DeviceKeys::new(identity, registry.secret().clone()).map_err(|error| error.to_string())
 }
 
 /// This helper's two keys.
 fn helper_keys() -> Result<DeviceKeys, String> {
     let identity = helper_key()?;
     let registry = registry_key(keys::ACCOUNT_HELPER)?;
-    Ok(DeviceKeys::new(identity, registry.secret().clone()))
+    DeviceKeys::new(identity, registry.secret().clone()).map_err(|error| error.to_string())
 }
 
 /// The address directory's settings, when a registry is configured.

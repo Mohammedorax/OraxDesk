@@ -62,7 +62,7 @@ pub use credentials::{Ask, MAX_CREDENTIAL_PROMPTS};
 pub use mcs::{ChannelMap, McsConnected};
 pub use negotiate::SecurityProtocol;
 pub use nla::ServerIdentity;
-pub use prompt::Prompt;
+pub use prompt::{Prompt, WaitState};
 
 /// What the connection sequence hands the run loop, and nothing it does not.
 #[derive(Debug)]
