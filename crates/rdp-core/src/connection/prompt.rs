@@ -245,7 +245,10 @@ mod tests {
 
         let guard = state.begin();
         assert!(state.is_waiting());
-        // The pause is running, so it counts up to now.
+        // The pause is running, so it counts up to now. The clock is asked
+        // after a moment, because a pause that started on this instant can
+        // measure zero, and "zero" would not say the pause is counted.
+        std::thread::sleep(Duration::from_millis(2));
         assert!(state.paused() > Duration::ZERO);
 
         drop(guard);
