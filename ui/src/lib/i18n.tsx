@@ -43,6 +43,14 @@ const ar = {
   "device.id": "معرّف هذا الجهاز، للوصول دون الحضور",
   "device.copyId": "نسخ المعرّف",
 
+  // شاشة البدء
+  "onboarding.scanning": "جارٍ البحث في شبكتك…",
+  "onboarding.scanNothing":
+    "لم يُعثر على أي جهاز بعد؛ بعض الأجهزة لا تعلن عن نفسها. يمكنك إضافة جهاز يدويًا لاحقًا.",
+  "onboarding.scanFailed":
+    "تعذّر بدء البحث عن الأجهزة على الشبكة. تحقّق من إعدادات الشبكة ثم أعد المحاولة.",
+  "onboarding.scanRetry": "أعد المحاولة",
+
   // شريط الاتصال السريع
   "quick.placeholder": "اتصل بعنوان، مثل 192.168.1.20:1 أو rdp://frontdesk  ({key}T)",
   "quick.label": "العنوان الذي تريد الاتصال به",
@@ -84,6 +92,9 @@ const ar = {
   "support.connect": "اتصال",
   "support.saveAndConnect": "احفظ واتصل",
   "support.opening": "جارٍ الفتح…",
+  "support.connectMode": "طريقة الاتصال",
+  "support.registryUrlRequired": "أدخل عنوان السجل لابحث عن الرقم.",
+  "support.defaultMachineName": "حاسوب Boundary",
 
   // نافذة «احصل على المساعدة»
   "gethelp.button": "احصل على مساعدة",
@@ -104,6 +115,7 @@ const ar = {
   "gethelp.endSession": "إنهاء الجلسة",
   "gethelp.unattended": "الوصول دون حضورك",
   "gethelp.paired": "المساعدون المقبولون",
+  "gethelp.passwordsDiffer": "كلمتا المرور غير متطابقتين.",
 
   // جدار الوكلاء
   "wall.idle": "يمسك الإيجار، ولا شيء قيد التنفيذ",
@@ -140,6 +152,11 @@ const ar = {
   "wall.remoteScreen": "شاشة البعيد",
   "wall.showMachine": "اعرض هذا الجهاز",
   "wall.stopAgent": "أوقف الوكيل الذي يقود {name}، واستعد التحكم",
+  "wall.revokeFailed":
+    "تعذّر إيقاف الوكيل {name}. لم تستعد التحكّم، وما زال يقود هذا الجهاز.",
+  "wall.unitSecond": "ث",
+  "wall.unitMinute": "د",
+  "wall.unitHour": "س",
 
   "wall.detailNone": "لا وكيل متصل بهذا الجهاز.",
   "wall.detailSessionsOne": "جلسة حيّة واحدة في المجموع.",
@@ -174,6 +191,14 @@ const ar = {
 
   // حقول النموذج
   "field.optional": "(اختياري)",
+
+  // المكتبة
+  "library.wakeNeedsMac": "لا يوجد عنوان MAC محفوظ لهذا الجهاز، فلا يمكن إيقاظه.",
+  "library.rowSelected": "محدَّد",
+  "files.allowFolder": "اسمح بمجلد",
+
+  // الأوقات
+  "util.never": "أبدًا",
 } as const;
 
 const en: Record<keyof typeof ar, string> = {
@@ -200,6 +225,14 @@ const en: Record<keyof typeof ar, string> = {
     "Nine digits that never change for this computer. Read them down the phone to whoever is helping you, or copy them.",
   "device.id": "This computer's ID, for reaching it unattended",
   "device.copyId": "Copy ID",
+
+  // The onboarding screen
+  "onboarding.scanning": "Scanning your network…",
+  "onboarding.scanNothing":
+    "Nothing found yet; some computers do not advertise themselves. You can add one manually later.",
+  "onboarding.scanFailed":
+    "The network scan could not be started. Check your network settings and try again.",
+  "onboarding.scanRetry": "Try again",
 
   // The quick connect bar
   "quick.placeholder": "Connect to an address, e.g. 192.168.1.20:1 or rdp://frontdesk  ({key}T)",
@@ -242,6 +275,9 @@ const en: Record<keyof typeof ar, string> = {
   "support.connect": "Connect",
   "support.saveAndConnect": "Save and connect",
   "support.opening": "Opening…",
+  "support.connectMode": "How to connect",
+  "support.registryUrlRequired": "Enter the registry URL to look up a number.",
+  "support.defaultMachineName": "Boundary computer",
 
   // The "Get help" window
   "gethelp.button": "Get help",
@@ -264,6 +300,7 @@ const en: Record<keyof typeof ar, string> = {
   "gethelp.endSession": "End session",
   "gethelp.unattended": "Unattended access",
   "gethelp.paired": "Paired helpers",
+  "gethelp.passwordsDiffer": "The two passwords do not match.",
 
   // The agent wall
   "wall.idle": "Holding the lease, nothing in flight",
@@ -300,6 +337,11 @@ const en: Record<keyof typeof ar, string> = {
   "wall.remoteScreen": "remote screen",
   "wall.showMachine": "Show this machine",
   "wall.stopAgent": "Stop the agent driving {name}, and take control",
+  "wall.revokeFailed":
+    "Could not stop the agent {name}. You did not get the machine back, and the agent is still driving it.",
+  "wall.unitSecond": "s",
+  "wall.unitMinute": "m",
+  "wall.unitHour": "h",
   "wall.detailNone": "No agent is attached to this computer.",
   "wall.detailSessionsOne": "1 session is live in all.",
   "wall.detailSessionsMany": "{sessions} sessions are live in all.",
@@ -333,6 +375,14 @@ const en: Record<keyof typeof ar, string> = {
 
   // Form fields
   "field.optional": "(optional)",
+
+  // The library
+  "library.wakeNeedsMac": "This computer has no MAC address saved, so it cannot be woken.",
+  "library.rowSelected": "selected",
+  "files.allowFolder": "Allow a folder",
+
+  // Times
+  "util.never": "never",
 };
 
 export type MessageKey = keyof typeof ar;
