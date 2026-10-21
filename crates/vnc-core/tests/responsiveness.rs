@@ -338,9 +338,16 @@ async fn the_observation_tick_keeps_running_under_a_continuous_flood() {
     // The flood produces events far faster than any assertion loop, so the
     // consumer has to keep draining: a full channel is a different failure
     // (see the stalled-consumer test above) and would mask this one.
+    //
+    // The whole window is used, and NOT stopped at the first three ticks.
+    // The reported duty cycle is an exponential moving average with a three
+    // second time constant, so the first few ticks are the average CLIMBING:
+    // stopping there measures the warm-up and not the saturation, and on a
+    // loaded machine the warm-up is what got measured. The average is what
+    // converges, and the point of the assertion is the steady state.
     let deadline = tokio::time::Instant::now() + Duration::from_secs(8);
     let mut ticks = 0usize;
-    while tokio::time::Instant::now() < deadline && ticks < 3 {
+    while tokio::time::Instant::now() < deadline {
         events.drain_for(Duration::from_millis(100)).await;
         // Framebuffer events carry a megabyte of pixels each; only the stats
         // are worth keeping.
