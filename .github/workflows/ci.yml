@@ -65,6 +65,12 @@ jobs:
         # reason the ACL test below is: the crate is where the commands are
         # registered, so it is where a command can be registered without a
         # grant and be refused at run time.
+        #
+        # `boundary` is the DeskVNC Support app, the standalone remote
+        # support program in `crates/boundary-app`. Its PACKAGE NAME is
+        # `boundary` and that is not its directory name, so the flag is
+        # `-p boundary` and NOT `-p boundary-app`: the second one matches no
+        # package, and the job stops before it has checked anything.
         run: >
           cargo clippy
           -p remote-core -p remote-pixel -p limb-core
@@ -80,6 +86,10 @@ jobs:
           --all-targets -- -D warnings
 
       - name: Test
+        # The same crates as the clippy step above, and the support app
+        # among them: `boundary` is `crates/boundary-app`, whose package
+        # name is `boundary`. Its own tests cover the code exchange and the
+        # translocated install, and nothing else runs them.
         run: >
           cargo test
           -p remote-core -p remote-pixel -p limb-core
