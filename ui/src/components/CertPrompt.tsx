@@ -6,6 +6,7 @@
 import { useState, type ReactNode } from "react";
 import { Dialog } from "./primitives";
 import { fingerprintMnemonic, formatFingerprint } from "../lib/util";
+import { useT } from "../lib/i18n";
 import { IconAlert, IconLock } from "./icons";
 import type { PinScheme } from "../lib/types";
 
@@ -33,14 +34,18 @@ export function CertPrompt({
   onConnectOnce: () => void;
   onCancel: () => void;
 }): ReactNode {
+  const t = useT();
   const mnemonic = fingerprintMnemonic(data.fingerprint);
   const [confirmText, setConfirmText] = useState("");
+  // The phrase the person has to type, in the language they are reading. It
+  // is the same words as the button below it, so there is nothing to guess.
+  const phrase = t("cert.trustNewIdentity").trim().toLowerCase();
 
   if (data.isChange) {
-    const confirmed = confirmText === "trust new identity";
+    const confirmed = confirmText.trim().toLowerCase() === phrase;
     return (
       <Dialog
-        title="Server identity has CHANGED"
+        title={t("cert.changedTitle")}
         onClose={onCancel}
         danger
         width={560}
@@ -52,15 +57,11 @@ export function CertPrompt({
               <IconAlert size={20} />
             </span>
             <p className="text-sm text-primary">
-              <strong>{data.hostName}</strong> is presenting a different certificate than the one
-              you trusted before. This can mean the server was reinstalled, or that someone is
-              intercepting your connection. <strong>Do not continue unless you know why this
-              changed.</strong>
+              <strong>{data.hostName}</strong>{" "}
+              {t("cert.changedBody")} <strong>{t("cert.changedWarning")}</strong>
               {data.scheme === "rdp-tls" ? (
                 <span className="mt-2 block">
-                  A Windows reinstall, or a new machine certificate after a domain
-                  change, both look exactly like this. So does an attacker. Do not
-                  continue unless you know which it is.
+                  {t("cert.changedRdp")}
                 </span>
               ) : null}
             </p>
@@ -68,7 +69,7 @@ export function CertPrompt({
           <FingerprintBlock fingerprint={data.fingerprint} mnemonic={mnemonic} subject={data.subject} />
           <label className="block">
             <span className="mb-1 block text-xs font-medium text-secondary">
-              To proceed anyway, type <span className="mono">trust new identity</span>
+              {t("cert.typeToProceed")} <span className="mono">{t("cert.trustNewIdentity")}</span>
             </span>
             <input
               className="field mono"
@@ -80,7 +81,7 @@ export function CertPrompt({
           </label>
           <div className="flex justify-end gap-2.5">
             <button type="button" data-cancel className="btn-primary" onClick={onCancel}>
-              Cancel (recommended)
+              {t("cert.cancelRecommended")}
             </button>
             <button
               type="button"
@@ -88,7 +89,7 @@ export function CertPrompt({
               disabled={!confirmed}
               onClick={onTrust}
             >
-              Trust new identity
+              {t("cert.trustNewIdentity")}
             </button>
           </div>
         </div>
@@ -98,7 +99,7 @@ export function CertPrompt({
 
   return (
     <Dialog
-      title={`Verify ${data.hostName}`}
+      title={t("cert.verifyTitle", { host: data.hostName })}
       onClose={onCancel}
       width={560}
       initialFocusSelector="[data-cancel]"
@@ -111,16 +112,11 @@ export function CertPrompt({
           <p className="text-sm text-secondary">
             {data.scheme === "rdp-tls" ? (
               <>
-                Windows Remote Desktop normally identifies itself with a certificate
-                it generated for itself, so on a fresh machine there is nothing to
-                compare this against. Remembering it now means you will be told if
-                it ever changes.
+                {t("cert.firstTimeRdp")}
               </>
             ) : (
               <>
-                This is the first time this computer has identified itself with the
-                key below. Verify the fingerprint matches the one shown on the
-                server, then choose how much to trust it.
+                {t("cert.firstTime")}
               </>
             )}
           </p>
@@ -128,13 +124,13 @@ export function CertPrompt({
         <FingerprintBlock fingerprint={data.fingerprint} mnemonic={mnemonic} subject={data.subject} />
         <div className="flex flex-wrap justify-end gap-2.5">
           <button type="button" data-cancel className="btn-secondary" onClick={onCancel}>
-            Cancel
+            {t("host.cancel")}
           </button>
           <button type="button" className="btn-secondary" onClick={onConnectOnce}>
-            Connect once
+            {t("cert.connectOnce")}
           </button>
           <button type="button" className="btn-primary" onClick={onTrust}>
-            Trust this computer
+            {t("cert.trustComputer")}
           </button>
         </div>
       </div>
@@ -151,15 +147,16 @@ function FingerprintBlock({
   mnemonic: string;
   subject: string;
 }): ReactNode {
+  const t = useT();
   return (
     <div className="space-y-2 rounded-md bg-inset p-3.5">
       {subject ? <div className="text-xs text-secondary">{subject}</div> : null}
-      <div className="mono break-all text-xs leading-relaxed text-primary" aria-label="SHA-256 certificate fingerprint">
+      <div className="mono break-all text-xs leading-relaxed text-primary" aria-label={t("cert.fingerprintAria")}>
         {formatFingerprint(fingerprint)}
       </div>
       {mnemonic ? (
         <div className="text-sm">
-          <span className="text-tertiary">Fingerprint words: </span>
+          <span className="text-tertiary">{t("cert.fingerprintWords")} </span>
           <span className="mono font-medium text-accent">{mnemonic}</span>
         </div>
       ) : null}

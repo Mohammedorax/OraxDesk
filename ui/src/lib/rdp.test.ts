@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { blankRdpSettings, parseRdpSettings, serializeRdpSettings } from "./rdp";
 import { diagnose, isAuthFailure, opensSecuritySettings } from "./diagnose";
+import { translatorFor } from "./i18n";
 
 describe("parseRdpSettings", () => {
   it("reads nothing as nothing", () => {
@@ -61,21 +62,34 @@ describe("serializeRdpSettings", () => {
 });
 
 describe("the disconnect copy", () => {
+  // The diagnosis is a KEY now, and the wording lives in the catalogue, so a
+  // test that wants to know WHAT the person is told looks the key up in the
+  // catalogue and reads the sentence there.
+  //
+  // The assertions about the wording are not moved out of the test: they are
+  // the only thing that says the sentence still names the setting the person
+  // has to open. They just read it from where it now lives.
+  const en = translatorFor("en");
+  const said = (reason: unknown, symbol?: string | null): string => {
+    const diagnosis = diagnose(reason, symbol);
+    return en(diagnosis.key, diagnosis.args);
+  };
+
   it("reads the protocol's own symbol when it sends one", () => {
     // The symbol is the stable name for the failure. The reason is a
     // sentence for a person to read and may be reworded at any time, so a
     // diagnosis that matches on prose alone breaks the day it is reworded.
-    expect(diagnose("the remote computer will not accept ntlm", "ntlm-refused-by-policy"))
+    expect(said("the remote computer will not accept ntlm", "ntlm-refused-by-policy"))
       .toContain("Restrict NTLM");
-    expect(diagnose("only TLS 1.0 is offered here", "legacy-tls-required"))
+    expect(said("only TLS 1.0 is offered here", "legacy-tls-required"))
       .toContain("Allow legacy TLS");
-    expect(diagnose("the server said no to that", "nla-refused"))
+    expect(said("the server said no to that", "nla-refused"))
       .toContain("without network level authentication");
   });
 
   it("does not report a policy refusal as a wrong password, by symbol either", () => {
-    expect(diagnose("anything at all", "ntlm-refused-by-policy")).not.toContain(
-      "Incorrect password",
+    expect(diagnose("anything at all", "ntlm-refused-by-policy").key).not.toBe(
+      "diagnose.badPassword",
     );
     expect(isAuthFailure("anything at all", "ntlm-refused-by-policy")).toBe(false);
     expect(isAuthFailure("anything at all", "legacy-tls-unavailable")).toBe(false);
@@ -86,54 +100,55 @@ describe("the disconnect copy", () => {
     // The server answered and refused the security methods. Reporting that
     // as "nothing is listening on that port" sends the person to check a port
     // that is open, and away from the thing that is actually wrong.
-    const text = diagnose("the server refused the requested security protocols: 0x2");
+    const text = said("the server refused the requested security protocols: 0x2");
     expect(text).not.toContain("nothing is listening");
     expect(text).toContain("answered");
   });
 
   it("still calls a refused connection a refused connection", () => {
-    expect(diagnose("connection refused")).toBe(
+    expect(diagnose("connection refused").key).toBe("diagnose.refused");
+    expect(said("connection refused")).toBe(
       "Connection refused, nothing is listening on that port.",
     );
   });
 
   it("names both Group Policy settings and says Kerberos comes later", () => {
-    const text = diagnose("ntlm-refused-by-policy");
+    const text = said("ntlm-refused-by-policy");
     expect(text).toContain("Restrict NTLM");
     expect(text).toContain("LAN Manager authentication level");
     expect(text).toContain("later release");
   });
 
   it("names the setting and where to find it for a legacy TLS failure", () => {
-    const text = diagnose("legacy-tls-required");
+    const text = said("legacy-tls-required");
     expect(text).toContain("Advanced");
     expect(text).toContain("Allow legacy TLS");
   });
 
   it("says there is no local fix when the build cannot do it", () => {
-    const text = diagnose("legacy-tls-unavailable");
+    const text = said("legacy-tls-unavailable");
     expect(text).toContain("built without");
     expect(text).toContain("Nothing you change here will help");
     expect(text).not.toContain("Advanced");
   });
 
   it("points an NLA refusal at the per-host switch", () => {
-    expect(diagnose("nla-refused")).toContain("without network level authentication");
+    expect(said("nla-refused")).toContain("without network level authentication");
     // The driver currently sends its English sentence rather than the token,
     // so the same branch has to catch that too.
-    expect(diagnose("the server would not accept network level authentication")).toContain(
+    expect(said("the server would not accept network level authentication")).toContain(
       "without network level authentication",
     );
   });
 
   it("does not report a policy refusal as a wrong password", () => {
-    expect(diagnose("ntlm-refused-by-policy")).not.toContain("Incorrect password");
+    expect(diagnose("ntlm-refused-by-policy").key).not.toBe("diagnose.badPassword");
   });
 
   // The message the core actually sends, fingerprint and all. It used to
   // arrive verbatim, so the user read a base64 blob and a colon.
   it("turns an untrusted ssh host key into something to do about it", () => {
-    const text = diagnose(
+    const text = said(
       "unknown ssh host key for 192.168.77.133:2222: ssh-ed25519 SHA256:uc22JZO9QG",
     );
     expect(text).toContain("Reconnect");
@@ -141,7 +156,7 @@ describe("the disconnect copy", () => {
   });
 
   it("says what a changed ssh host key means and what to do", () => {
-    const text = diagnose(
+    const text = said(
       "the ssh host key for box.local:22 changed (expected SHA256:a, got SHA256:b)",
     );
     expect(text).toContain("different SSH identity");
@@ -151,16 +166,23 @@ describe("the disconnect copy", () => {
   });
 
   it("is still protocol neutral about a refused port", () => {
-    expect(diagnose("connection refused")).toBe(
-      "Connection refused, nothing is listening on that port.",
-    );
+    expect(diagnose("connection refused").key).toBe("diagnose.refused");
   });
 
   it("keeps its old branches", () => {
-    expect(diagnose("cancelled")).toMatch(/cancelled/);
-    expect(diagnose("authentication failed")).toBe("Incorrect password, the server did not accept it.");
-    expect(diagnose("tls handshake")).toBe("The secure connection could not be verified.");
-    expect(diagnose(undefined)).toBe("The connection ended.");
+    expect(diagnose("cancelled").key).toBe("diagnose.cancelled");
+    expect(diagnose("authentication failed").key).toBe("diagnose.badPassword");
+    expect(diagnose("tls handshake").key).toBe("diagnose.tlsUnverified");
+    expect(diagnose(undefined).key).toBe("diagnose.ended");
+  });
+
+  it("shows the shell's own reason when there is one", () => {
+    // The reason is a VALUE from the shell and is shown as it is. The
+    // explanation around it is ours.
+    const diagnosis = diagnose("the server said no");
+    expect(diagnosis.key).toBe("diagnose.endedWith");
+    expect(diagnosis.args?.reason).toBe("the server said no");
+    expect(en(diagnosis.key, diagnosis.args)).toContain("the server said no");
   });
 });
 

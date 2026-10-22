@@ -23,6 +23,7 @@
  */
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { Dialog } from "./primitives";
+import { useT } from "../lib/i18n";
 import { IconAlert, IconLock } from "./icons";
 import type { CredentialRequest, ProtocolKind } from "../lib/types";
 import { promptNeedsDomain } from "../lib/types";
@@ -56,6 +57,7 @@ export function CredentialPrompt({
   ) => void;
   onCancel: () => void;
 }): ReactNode {
+  const t = useT();
   const needsDomain = promptNeedsDomain(protocol);
   // An RDP logon is always user-first, whatever kind the request names.
   const needsUsername = needsDomain || request.kind === "username-and-password";
@@ -114,7 +116,7 @@ export function CredentialPrompt({
   };
 
   return (
-    <Dialog title="Authentication required" onClose={onCancel} width={460}>
+    <Dialog title={t("cred.title")} onClose={onCancel} width={460}>
       {/* A <form> so Enter submits from either field for free. Escape is
           handled by Dialog and maps to Cancel. */}
       <form className="space-y-4" onSubmit={submit}>
@@ -126,10 +128,10 @@ export function CredentialPrompt({
             <p className="text-sm text-primary">
               <strong className="break-words">{hostName}</strong>{" "}
               {needsDomain
-                ? "needs your Windows sign-in before it will let you in."
+                ? t("cred.needsWindowsSignIn")
                 : needsUsername
-                  ? "needs a user name and password before it will let you in."
-                  : "needs a password before it will let you in."}
+                  ? t("cred.needsUserAndPassword")
+                  : t("cred.needsPassword")}
             </p>
             <p className="mt-0.5 text-xs text-tertiary">{request.method}</p>
           </div>
@@ -145,9 +147,9 @@ export function CredentialPrompt({
               <IconAlert size={16} />
             </span>
             <p className="text-sm text-primary">
-              {request.error?.trim() || "Incorrect password. Try again."}
+              {request.error?.trim() || t("cred.wrongPassword")}
               <span className="mt-0.5 block text-xs text-secondary">
-                Attempt {request.attempt}
+                {t("cred.attempt", { attempt: request.attempt })}
               </span>
             </p>
           </div>
@@ -155,7 +157,7 @@ export function CredentialPrompt({
 
         {needsUsername ? (
           <label className="block">
-            <span className="mb-1 block text-xs font-medium text-secondary">User name</span>
+            <span className="mb-1 block text-xs font-medium text-secondary">{t("host.userName")}</span>
             <input
               data-autofocus
               className="field"
@@ -173,7 +175,7 @@ export function CredentialPrompt({
 
         {needsDomain ? (
           <label className="block">
-            <span className="mb-1 block text-xs font-medium text-secondary">Domain</span>
+            <span className="mb-1 block text-xs font-medium text-secondary">{t("host.domain")}</span>
             <input
               className="field"
               type="text"
@@ -187,14 +189,13 @@ export function CredentialPrompt({
               aria-describedby="rdp-domain-hint"
             />
             <span id="rdp-domain-hint" className="mt-1 block text-xs text-tertiary">
-              Leave blank for a local account, or if your user name is already an
-              email-style name.
+              {t("host.domainHint")}
             </span>
           </label>
         ) : null}
 
         <label className="block">
-          <span className="mb-1 block text-xs font-medium text-secondary">Password</span>
+          <span className="mb-1 block text-xs font-medium text-secondary">{t("host.password")}</span>
           <input
             data-autofocus={needsUsername ? undefined : true}
             className="field"
@@ -219,8 +220,7 @@ export function CredentialPrompt({
               <IconAlert size={14} />
             </span>
             <span>
-              This server uses legacy VNC authentication, only the first {VNC_PASSWORD_LIMIT}{" "}
-              characters are used.
+              {t("cred.vncTruncation", { count: VNC_PASSWORD_LIMIT })}
             </span>
           </p>
         ) : null}
@@ -233,19 +233,19 @@ export function CredentialPrompt({
             onChange={(e) => setSave(e.target.checked)}
           />
           <span>
-            Remember for this computer
+            {t("cred.remember")}
             <span className="block text-xs text-tertiary">
-              Stored in your system keychain, never in a file. Saved only if this password works.
+              {t("host.storedInKeychain")}. {t("cred.rememberSavedOnly")}
             </span>
           </span>
         </label>
 
         <div className="flex justify-end gap-2.5 pt-1">
           <button type="button" className="btn-secondary" onClick={onCancel}>
-            Cancel
+            {t("host.cancel")}
           </button>
           <button type="submit" className="btn-primary disabled:opacity-40" disabled={!password}>
-            Connect
+            {t("support.connect")}
           </button>
         </div>
       </form>

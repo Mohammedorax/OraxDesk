@@ -1,3 +1,5 @@
+import type { MessageKey } from "./i18n";
+
 /**
  * Connecting an agent: the button that does it, and the lines behind it.
  *
@@ -136,13 +138,9 @@ export function httpServeLine(binary: string | null): string {
  * only when the placeholder is on screen, because a person looking at
  * `/path/to/dvv` deserves to know whose fault it is and what fills it in.
  */
-export function binaryNote(binary: string | null): string | null {
+export function binaryNote(binary: string | null): MessageKey | null {
   if (knowsBinary(binary)) return null;
-  return (
-    "This build is not reporting where dvv is. The path comes from inside the " +
-    "application bundle, and a development build does not have one. Run dvv doctor " +
-    "on a copy that does and it prints these lines with the real path already in them."
-  );
+  return "agent.binaryMissing";
 }
 
 /**
@@ -163,22 +161,17 @@ export function binaryNote(binary: string | null): string | null {
  * because the credential comes out of the keychain into the transport, where
  * the agent can neither supply one nor read one back.
  */
-export const AGENT_CAN: readonly string[] = [
-  "Open one of your saved machines. The credential comes from the keychain, and the agent neither supplies it nor sees it.",
-  "Drive it and watch itself work: pointer, keyboard, clipboard, and the screen.",
-  "Run a command over SSH and read the output back, with the exit code it really got.",
-  "Hand control back the instant you want it. Clicking a pane, or pressing stop, takes the lease.",
+export const AGENT_CAN: readonly MessageKey[] = [
+  "agent.canOpen",
+  "agent.canDrive",
+  "agent.canRun",
+  "agent.canHandBack",
 ];
 
-export const AGENT_CANNOT: readonly string[] = [
-  "Answer a password or a certificate prompt. Those stay yours.",
-];
+export const AGENT_CANNOT: readonly MessageKey[] = ["agent.cannotAnswer"];
 
 /** Why the line above is a boundary and not a feature somebody forgot. */
-export const AGENT_BOUNDARY_WHY =
-  "That one is deliberate and it is not going to change. An agent that could type " +
-  "a secret it read off a screen would leave a record saying you approved it, and a " +
-  "record that says the wrong thing is worse than none.";
+export const AGENT_BOUNDARY_WHY: MessageKey = "agent.boundaryWhy";
 
 // ---------------------------------------------------------------------------
 // Registering, without a terminal

@@ -21,7 +21,7 @@ import type {
   SessionState,
   SessionStats,
 } from "../lib/types";
-import { displayLabel } from "../lib/displays";
+import { useT, type Translate } from "../lib/i18n";
 import type { LocalCursor } from "../state/SettingsContext";
 import type { CaptureStatus } from "../lib/tauri";
 import { classNames, formatBps, fullscreenHint, isMac, modKeyLabel } from "../lib/util";
@@ -58,6 +58,14 @@ const MARGIN = 12;
 const SNAP_PX = 40;
 /** Travel before a press counts as a drag rather than a click. */
 const DRAG_SLOP = 4;
+
+/**
+ * The chord that takes the keyboard back from the remote.
+ *
+ * Named once so the sentences that mention it cannot drift apart, and passed
+ * into the catalogue as a value rather than written into it.
+ */
+const RELEASE_CHORD = "Ctrl+Alt+Shift+Esc";
 
 const DEFAULT_POS: ToolbarPos = { edge: "top", ratio: 0.5, x: 0.5, y: 0 };
 
@@ -204,6 +212,7 @@ export interface SessionToolbarProps {
 }
 
 export function SessionToolbar(props: SessionToolbarProps): ReactNode {
+  const t = useT();
   const [pos, setPos] = useState<ToolbarPos>(readPos);
   const [pinned, setPinned] = useState<boolean>(readPinned);
   /** Latest position, for the drag handler to persist on drop. */
@@ -596,8 +605,8 @@ export function SessionToolbar(props: SessionToolbarProps): ReactNode {
       <div ref={rootRef} style={style} className="flex items-center gap-1.5">
         <button
           type="button"
-          aria-label={`Show session toolbar (${modKeyLabel}⇧M), drag to move`}
-          title={`Show session toolbar (${modKeyLabel}⇧M), drag to move`}
+          aria-label={t("session.showToolbar", { chord: `${modKeyLabel}⇧M` })}
+          title={t("session.showToolbar", { chord: `${modKeyLabel}⇧M` })}
           className="fade-in cursor-grab touch-none rounded-pill border border-subtle bg-raised/90 px-3 py-0.5 text-tertiary shadow-(--shadow-tile) backdrop-blur transition-shadow duration-150 hover:text-primary hover:shadow-(--shadow-glow) active:cursor-grabbing"
           onPointerDown={beginDrag}
           onClick={() => {
@@ -618,7 +627,7 @@ export function SessionToolbar(props: SessionToolbarProps): ReactNode {
     <div ref={rootRef} style={style}>
       <div
         role="toolbar"
-        aria-label="Session controls"
+        aria-label={t("session.controls")}
         onPointerEnter={() => {
           hovering.current = true;
           window.clearTimeout(idleTimer.current);
@@ -643,7 +652,7 @@ export function SessionToolbar(props: SessionToolbarProps): ReactNode {
       >
         <button
           type="button"
-          aria-label="Drag to move toolbar"
+          aria-label={t("session.dragToolbar")}
           className="cursor-grab px-0.5 text-tertiary active:cursor-grabbing"
           onPointerDown={beginDrag}
         >
@@ -658,12 +667,12 @@ export function SessionToolbar(props: SessionToolbarProps): ReactNode {
           to find. They are here now, at the front, with the rest of the bar
           unchanged behind them.
         */}
-        <ToolButton label={`Fullscreen (${fullscreenHint})`} onClick={props.onFullscreen}>
+        <ToolButton label={t("session.fullscreen", { hint: fullscreenHint })} onClick={props.onFullscreen}>
           <IconMaximize size={15} />
         </ToolButton>
 
         <ToolButton
-          label="Send Ctrl+Alt+Del to the remote computer"
+          label={t("session.sendCtrlAltDel", { combo: "Ctrl+Alt+Del" })}
           onClick={() => props.onSendCombo("ctrl-alt-del")}
         >
           <IconCommand size={15} />
@@ -673,7 +682,7 @@ export function SessionToolbar(props: SessionToolbarProps): ReactNode {
 
         {/* connection status */}
         <ToolButton
-          label="Connection status"
+          label={t("session.connectionStatus")}
           active={openMenu === "status"}
           onClick={() => setOpenMenu(openMenu === "status" ? null : "status")}
         >
@@ -688,14 +697,14 @@ export function SessionToolbar(props: SessionToolbarProps): ReactNode {
 
         <Divider />
 
-        <ToolButton label="Scaling" active={openMenu === "scale"} onClick={() => setOpenMenu(openMenu === "scale" ? null : "scale")}>
+        <ToolButton label={t("host.scaling")} active={openMenu === "scale"} onClick={() => setOpenMenu(openMenu === "scale" ? null : "scale")}>
           <IconSearch size={15} />
           <span className="text-xs text-secondary">
-            {props.scalingMode === "custom" ? `${Math.round(props.zoom * 100)}%` : scaleLabel(props.scalingMode)}
+            {props.scalingMode === "custom" ? `${Math.round(props.zoom * 100)}%` : scaleLabel(props.scalingMode, t)}
           </span>
         </ToolButton>
 
-        <ToolButton label="Displays" active={openMenu === "displays"} onClick={() => setOpenMenu(openMenu === "displays" ? null : "displays")}>
+        <ToolButton label={t("session.displays")} active={openMenu === "displays"} onClick={() => setOpenMenu(openMenu === "displays" ? null : "displays")}>
           <IconMonitor size={15} />
           {props.displayId !== null ? (
             <span className="text-xs text-secondary">
@@ -705,20 +714,20 @@ export function SessionToolbar(props: SessionToolbarProps): ReactNode {
         </ToolButton>
 
         <ToolButton
-          label="Pointers"
+          label={t("session.pointers")}
           active={openMenu === "pointer"}
           onClick={() => setOpenMenu(openMenu === "pointer" ? null : "pointer")}
         >
           <IconCursor size={15} />
         </ToolButton>
 
-        <ToolButton label="Quality" active={openMenu === "quality"} onClick={() => setOpenMenu(openMenu === "quality" ? null : "quality")}>
+        <ToolButton label={t("host.quality")} active={openMenu === "quality"} onClick={() => setOpenMenu(openMenu === "quality" ? null : "quality")}>
           <IconActivity size={15} />
-          <span className="text-xs uppercase text-secondary">{props.quality === "bw" ? "B&W" : props.quality}</span>
+          <span className="text-xs uppercase text-secondary">{qualityBadge(props.quality, t)}</span>
         </ToolButton>
 
         <ToolButton
-          label={captureButtonLabel(props.captureStatus, props.passthrough)}
+          label={captureButtonLabel(props.captureStatus, props.passthrough, t)}
           active={openMenu === "keyboard"}
           toggled={capturing}
           onClick={() => setOpenMenu(openMenu === "keyboard" ? null : "keyboard")}
@@ -740,17 +749,17 @@ export function SessionToolbar(props: SessionToolbarProps): ReactNode {
 
         {capturing ? <CaptureIndicator /> : null}
 
-        <ToolButton label="Send clipboard to remote" onClick={props.onClipboardSend}>
+        <ToolButton label={t("session.sendClipboard")} onClick={props.onClipboardSend}>
           <IconClipboard size={15} />
         </ToolButton>
 
         <ToolButton
           label={
             props.filesAvailable === true
-              ? "File transfer (SFTP)"
+              ? t("session.fileTransfer")
               : props.filesAvailable === null
-                ? "Checking whether SSH is available on this computer…"
-                : "File transfer needs SSH on the remote computer, and it isn't reachable on this one"
+                ? t("session.checkingSsh")
+                : t("session.filesNeedSsh")
           }
           disabled={props.filesAvailable !== true}
           onClick={props.onFiles}
@@ -761,10 +770,10 @@ export function SessionToolbar(props: SessionToolbarProps): ReactNode {
         <ToolButton
           label={
             props.terminalAvailable === true
-              ? "Terminal (SSH)"
+              ? t("session.terminal")
               : props.terminalAvailable === null
-                ? "Checking whether SSH is available on this computer…"
-                : "Terminal needs SSH on the remote computer, and it isn't reachable on this one"
+                ? t("session.checkingSsh")
+                : t("session.terminalNeedSsh")
           }
           disabled={props.terminalAvailable !== true}
           onClick={props.onTerminal}
@@ -779,13 +788,13 @@ export function SessionToolbar(props: SessionToolbarProps): ReactNode {
         {props.onSplit ? (
           <>
             <ToolButton
-              label={`Split right (${modKeyLabel}⌥D)`}
+              label={`${t("about.shortcut.splitRight")} (${modKeyLabel}⌥D)`}
               onClick={() => props.onSplit?.("row")}
             >
               <IconSplitRight size={15} />
             </ToolButton>
             <ToolButton
-              label={`Split down (${modKeyLabel}⌥⇧D)`}
+              label={`${t("about.shortcut.splitDown")} (${modKeyLabel}⌥⇧D)`}
               onClick={() => props.onSplit?.("column")}
             >
               <IconSplitDown size={15} />
@@ -794,23 +803,23 @@ export function SessionToolbar(props: SessionToolbarProps): ReactNode {
         ) : null}
 
         <ToolButton
-          label={props.viewOnly ? "View only: on, click to allow input" : "View only: off, click to block input"}
+          label={props.viewOnly ? t("session.viewOnlyOn") : t("session.viewOnlyOff")}
           toggled={props.viewOnly}
           onClick={() => props.onViewOnly(!props.viewOnly)}
         >
           <IconEye size={15} />
         </ToolButton>
 
-        <ToolButton label="Save screenshot" onClick={props.onScreenshot}>
+        <ToolButton label={t("session.saveScreenshot")} onClick={props.onScreenshot}>
           <IconCamera size={15} />
         </ToolButton>
 
-        <ToolButton label="Request full screen refresh" onClick={props.onRefresh}>
+        <ToolButton label={t("session.requestRefresh")} onClick={props.onRefresh}>
           <IconRefresh size={15} />
         </ToolButton>
 
         <ToolButton
-          label={pinned ? "Unpin toolbar (allow auto-hide)" : "Pin toolbar (stay visible)"}
+          label={pinned ? t("session.unpin") : t("session.pin")}
           toggled={pinned}
           onClick={() => {
             const v = !pinned;
@@ -823,14 +832,14 @@ export function SessionToolbar(props: SessionToolbarProps): ReactNode {
 
         {/* Auto-hide only ever arrives on its own schedule, and a pinned
             toolbar never hides at all, so put it away by hand from here. */}
-        <ToolButton label={`Collapse toolbar (${modKeyLabel}⇧M)`} onClick={collapse}>
+        <ToolButton label={t("session.collapseToolbar", { chord: `${modKeyLabel}⇧M` })} onClick={collapse}>
           <IconChevronDown size={15} className={menuBelow ? "rotate-180" : ""} />
         </ToolButton>
 
         <Divider />
 
         <ToolButton
-          label="Disconnect (leaves the remote machine running)"
+          label={t("session.disconnect")}
           danger
           onClick={props.onDisconnect}
         >
@@ -856,11 +865,11 @@ export function SessionToolbar(props: SessionToolbarProps): ReactNode {
             <div>
               {(["fit", "aspect-fit", "actual"] as ScalingMode[]).map((m) => (
                 <MenuRow key={m} selected={props.scalingMode === m} onClick={() => props.onScalingMode(m)}>
-                  {scaleLabel(m)}
+                  {scaleLabel(m, t)}
                 </MenuRow>
               ))}
               <MenuRow selected={props.scalingMode === "custom"} onClick={() => props.onScalingMode("custom")}>
-                Custom zoom
+                {t("session.customZoom")}
               </MenuRow>
               <div className="flex items-center gap-2 px-2.5 py-1.5">
                 <input
@@ -869,7 +878,7 @@ export function SessionToolbar(props: SessionToolbarProps): ReactNode {
                   max={400}
                   step={5}
                   value={Math.round(props.zoom * 100)}
-                  aria-label="Zoom percentage"
+                  aria-label={t("session.zoomPercent")}
                   className="flex-1 accent-(--accent)"
                   onChange={(e) => props.onZoom(parseInt(e.target.value, 10) / 100)}
                 />
@@ -887,52 +896,45 @@ export function SessionToolbar(props: SessionToolbarProps): ReactNode {
                 selected={props.scalingMode === "remote-resize"}
                 onClick={() => props.onScalingMode("remote-resize")}
               >
-                Remote resize (match window)
+                {t("session.remoteResize")}
               </MenuRow>
               {props.protocol === "rdp" ? (
                 <p className="px-2.5 pb-1 text-2xs text-tertiary">
-                  View, then Resolution, also sets the remote desktop to a fixed
-                  size.
+                  {t("session.rdpFixedSize")}
                 </p>
               ) : null}
               <MenuRow
                 selected={props.zoomLocked}
                 onClick={() => props.onZoomLocked(!props.zoomLocked)}
               >
-                Lock zoom (ignore pinch)
+                {t("session.lockZoom")}
               </MenuRow>
               <MenuRow selected={props.edgePan} onClick={() => props.onEdgePan(!props.edgePan)}>
-                Pan by moving to edges
+                {t("session.panByEdges")}
               </MenuRow>
             </div>
           ) : null}
           {openMenu === "pointer" ? (
             <div>
               <p className="px-2.5 pt-1.5 pb-1 text-2xs uppercase tracking-wide text-tertiary">
-                Remote pointer
+                {t("session.remotePointer")}
               </p>
               <MenuRow
                 selected={props.showRemoteCursor}
                 onClick={() => props.onShowRemoteCursor(!props.showRemoteCursor)}
               >
-                Show the remote pointer
+                {t("session.showRemotePointer")}
               </MenuRow>
               <p className="px-2.5 pt-2 pb-1 text-2xs uppercase tracking-wide text-tertiary">
-                My pointer
+                {t("session.myPointer")}
               </p>
-              {(
-                [
-                  ["standard", "Standard arrow"],
-                  ["dot", "Dot"],
-                  ["off", "Hidden"],
-                ] as [LocalCursor, string][]
-              ).map(([mode, label]) => (
+              {(["standard", "dot", "off"] as LocalCursor[]).map((mode) => (
                 <MenuRow
                   key={mode}
                   selected={props.localCursor === mode}
                   onClick={() => props.onLocalCursor(mode)}
                 >
-                  {label}
+                  {cursorLabel(mode, t)}
                 </MenuRow>
               ))}
             </div>
@@ -940,11 +942,11 @@ export function SessionToolbar(props: SessionToolbarProps): ReactNode {
           {openMenu === "displays" ? (
             <div>
               <MenuRow selected={props.displayId === null} onClick={() => props.onDisplay(null)}>
-                All displays
+                {t("session.allDisplays")}
               </MenuRow>
               {!props.layoutKnown && props.screens.length > 0 ? (
                 <p className="px-2.5 pt-2 pb-1 text-2xs uppercase tracking-wide text-tertiary">
-                  Split this desktop
+                  {t("session.splitThisDesktop")}
                 </p>
               ) : null}
               {props.screens.map((s, i) => (
@@ -953,7 +955,7 @@ export function SessionToolbar(props: SessionToolbarProps): ReactNode {
                   selected={props.displayId === s.id}
                   onClick={() => props.onDisplay(s.id)}
                 >
-                  {displayLabel(s, i)}
+                  {s.label ?? t("session.displayRow", { n: i + 1, w: s.width, h: s.height })}
                 </MenuRow>
               ))}
               {/*
@@ -966,16 +968,15 @@ export function SessionToolbar(props: SessionToolbarProps): ReactNode {
               */}
               {!props.layoutKnown && props.protocol === "rdp" ? (
                 <p className="px-2.5 py-1 text-2xs text-tertiary">
-                  This session is using a single display. Turn on “Use all of my
-                  monitors” in this computer's settings to use more.
+                  {t("session.singleDisplay")}
                 </p>
               ) : !props.layoutKnown ? (
                 <>
-                  <MenuRow onClick={props.onDetectDisplays}>Detect displays again</MenuRow>
+                  <MenuRow onClick={props.onDetectDisplays}>{t("session.detectDisplays")}</MenuRow>
                   <p className="px-2.5 py-1 text-2xs text-tertiary">
                     {props.screens.length > 0
-                      ? "This server does not say where its monitors meet: detection reads the picture, the other cuts are guesses by width."
-                      : "This server has not described its monitors, so the whole desktop is one display."}
+                      ? t("session.displaysUnknown")
+                      : t("session.displaysUndescribed")}
                   </p>
                 </>
               ) : null}
@@ -1001,21 +1002,21 @@ export function SessionToolbar(props: SessionToolbarProps): ReactNode {
                 real one, the menu you right-click for went from 2208 ms to
                 346 ms because Auto dropped the quality on its own.
               */}
-              <p className="px-2.5 py-1 text-2xs text-tertiary">Picture vs response</p>
+              <p className="px-2.5 py-1 text-2xs text-tertiary">{t("session.pictureVsResponse")}</p>
               <MenuRow selected={props.quality === "auto"} onClick={() => props.onQuality("auto")}>
-                Auto — sharp when idle, faster under load
+                {t("session.qualityAuto")}
               </MenuRow>
               <MenuRow selected={props.quality === "high"} onClick={() => props.onQuality("high")}>
-                Sharp — best picture, never adapts
+                {t("session.qualitySharp")}
               </MenuRow>
               <MenuRow selected={props.quality === "medium"} onClick={() => props.onQuality("medium")}>
-                Balanced
+                {t("host.qualityBalanced")}
               </MenuRow>
               <MenuRow selected={props.quality === "low"} onClick={() => props.onQuality("low")}>
-                Responsive — softer picture, lowest lag
+                {t("session.qualityResponsive")}
               </MenuRow>
               <MenuRow selected={props.quality === "bw"} onClick={() => props.onQuality("bw")}>
-                Black &amp; White
+                {t("host.qualityBw")}
               </MenuRow>
               {/*
                 Hidden for RDP rather than disabled, and that asymmetry with
@@ -1036,21 +1037,19 @@ export function SessionToolbar(props: SessionToolbarProps): ReactNode {
                     selected={props.alwaysRefresh}
                     onClick={() => props.onAlwaysRefresh(!props.alwaysRefresh)}
                   >
-                    Always request fresh frames
+                    {t("session.alwaysFresh")}
                   </MenuRow>
                   <p className="px-2.5 pb-1 text-2xs text-tertiary">
-                    Re-fetches the whole screen every second instead of trusting the
-                    server to report what changed. Fixes a picture that stays stale
-                    or smeared; uses more bandwidth.
+                    {t("session.alwaysFreshHint")}
                   </p>
                 </div>
               )}
               {props.quality === "bw" ? (
                 <div className="mt-1 border-t border-subtle pt-1">
-                  <p className="px-2.5 py-1 text-2xs text-tertiary">Gray levels</p>
+                  <p className="px-2.5 py-1 text-2xs text-tertiary">{t("session.grayLevels")}</p>
                   {[256, 16, 8, 4, 2, 1].map((n) => (
                     <MenuRow key={n} selected={props.bwLevels === n} onClick={() => props.onBwLevels(n)}>
-                      {n === 1 ? "1-bit (dithered)" : `${n} levels`}
+                      {n === 1 ? t("session.oneBit") : t("session.levels", { n })}
                     </MenuRow>
                   ))}
                 </div>
@@ -1060,7 +1059,7 @@ export function SessionToolbar(props: SessionToolbarProps): ReactNode {
           {openMenu === "keyboard" ? (
             <div>
               <MenuRow selected={props.passthrough} onClick={() => props.onPassthrough(!props.passthrough)}>
-                Pass system shortcuts to remote
+                {t("session.passShortcuts")}
               </MenuRow>
               <CaptureStatusNote
                 status={props.captureStatus}
@@ -1068,10 +1067,10 @@ export function SessionToolbar(props: SessionToolbarProps): ReactNode {
                 onPermission={props.onCapturePermission}
               />
               <div className="mt-1 border-t border-subtle pt-1">
-                <p className="px-2.5 py-1 text-2xs text-tertiary">Send to remote</p>
+                <p className="px-2.5 py-1 text-2xs text-tertiary">{t("session.sendToRemote")}</p>
                 <MenuRow onClick={() => props.onSendCombo("ctrl-alt-del")}>Ctrl+Alt+Del</MenuRow>
                 <MenuRow onClick={() => props.onSendCombo("cmd-tab")}>Cmd/Alt+Tab</MenuRow>
-                <MenuRow onClick={() => props.onSendCombo("win")}>Windows/Super key</MenuRow>
+                <MenuRow onClick={() => props.onSendCombo("win")}>{t("session.keyWindows")}</MenuRow>
                 <MenuRow onClick={() => props.onSendCombo("alt-f4")}>Alt+F4</MenuRow>
                 <MenuRow onClick={() => props.onSendCombo("escape")}>Escape</MenuRow>
               </div>
@@ -1093,7 +1092,8 @@ export function SessionToolbar(props: SessionToolbarProps): ReactNode {
  * see it *and* is told the release chord, even when the toolbar is collapsed.
  */
 function CaptureIndicator({ compact }: { compact?: boolean }): ReactNode {
-  const label = "System shortcuts are going to the remote. Press Ctrl+Alt+Shift+Esc to release.";
+  const t = useT();
+  const label = t("session.captureBadge", { chord: RELEASE_CHORD });
   return (
     <span
       role="status"
@@ -1109,21 +1109,21 @@ function CaptureIndicator({ compact }: { compact?: boolean }): ReactNode {
     >
       <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-accent" aria-hidden="true" />
       <IconKeyboard size={14} />
-      {compact ? null : <span className="text-2xs font-medium uppercase tracking-wide">Captured</span>}
+      {compact ? null : <span className="text-2xs font-medium uppercase tracking-wide">{t("session.captured")}</span>}
     </span>
   );
 }
 
-function captureButtonLabel(status: CaptureStatus, passthrough: boolean): string {
+function captureButtonLabel(status: CaptureStatus, passthrough: boolean, t: Translate): string {
   switch (status.state) {
     case "active":
-      return "Keyboard captured, system shortcuts go to the remote (release: Ctrl+Alt+Shift+Esc)";
+      return t("session.keyboardCaptured", { chord: RELEASE_CHORD });
     case "permission-required":
-      return "Keyboard: pass-through needs permission";
+      return t("session.keyboardNeedsPermission");
     case "unsupported":
-      return `Keyboard: pass-through unavailable, ${status.reason}`;
+      return t("session.keyboardUnavailable", { reason: status.reason });
     default:
-      return passthrough ? "Keyboard: pass-through waiting for focus" : "Keyboard";
+      return passthrough ? t("session.keyboardWaitingFocus") : t("session.keyboard");
   }
 }
 
@@ -1141,10 +1141,11 @@ function CaptureStatusNote({
   passthrough: boolean;
   onPermission: () => void;
 }): ReactNode {
+  const t = useT();
   if (status.state === "active") {
     return (
       <p className="px-2.5 pb-1 text-2xs text-accent">
-        Captured. Press <span className="mono">Ctrl+Alt+Shift+Esc</span> to release.
+        {t("session.capturedNote", { chord: RELEASE_CHORD })}
       </p>
     );
   }
@@ -1152,14 +1153,14 @@ function CaptureStatusNote({
     return (
       <div className="px-2.5 pb-1.5">
         <p className="text-2xs text-warning">
-          Needs Accessibility permission to intercept system shortcuts.
+          {t("session.needsAccessibility")}
         </p>
         <button
           type="button"
           className="mt-1 text-2xs font-medium text-accent underline underline-offset-2"
           onClick={onPermission}
         >
-          How to enable it
+          {t("session.howToEnable")}
         </button>
       </div>
     );
@@ -1170,31 +1171,63 @@ function CaptureStatusNote({
   if (passthrough) {
     return (
       <p className="px-2.5 pb-1 text-2xs text-tertiary">
-        Active only while this window is focused.
+        {t("session.activeWhileFocused")}
       </p>
     );
   }
   return (
     <p className="px-2.5 pb-1 text-2xs text-tertiary">
-      {isMac
-        ? "Sends Cmd+Tab, Cmd+Space and other system shortcuts to the remote instead of this computer."
-        : "Sends Alt+Tab, the Windows key and other system shortcuts to the remote instead of this computer."}
+      {isMac ? t("session.sendsShortcutsMac") : t("session.sendsShortcuts")}
     </p>
   );
 }
 
-function scaleLabel(m: ScalingMode): string {
+function scaleLabel(m: ScalingMode, t: Translate): string {
   switch (m) {
     case "fit":
-      return "Fit";
+      return t("host.scalingFit");
     case "aspect-fit":
-      return "Aspect fit";
+      return t("host.scalingAspectFit");
     case "actual":
+      // A pixel-for-pixel ratio, not a word: the same in every language.
       return "1:1";
     case "remote-resize":
-      return "Remote";
+      return t("host.scalingRemoteResize");
     default:
-      return "Zoom";
+      return t("session.zoom");
+  }
+}
+
+/**
+ * The quality preset, named in the catalogue.
+ *
+ * The raw preset names are English words ("auto", "high"), so the badge shows
+ * the catalogue's names for them instead.
+ */
+function qualityBadge(quality: QualityPreset, t: Translate): string {
+  switch (quality) {
+    case "auto":
+      return t("host.auto");
+    case "high":
+      return t("host.qualitySharp");
+    case "medium":
+      return t("host.qualityBalanced");
+    case "low":
+      return t("host.qualityResponsive");
+    default:
+      return t("host.qualityBw");
+  }
+}
+
+/** The shape of the local pointer, named in the catalogue. */
+function cursorLabel(mode: LocalCursor, t: Translate): string {
+  switch (mode) {
+    case "standard":
+      return t("session.cursorStandard");
+    case "dot":
+      return t("session.cursorDot");
+    default:
+      return t("session.cursorHidden");
   }
 }
 
@@ -1291,24 +1324,25 @@ export function SessionStatusDetails({
   queueStats?: { depth: number; bytes: number; droppedRects: number; droppedUpdates: number } | null;
   desktopName: string;
 }): ReactNode {
+  const t = useT();
   return (
     <div className="text-sm">
       <p className="mb-2 truncate font-medium text-primary">{desktopName}</p>
       {stats ? (
         <dl className="grid grid-cols-2 gap-y-1 text-xs">
-          <dt className="text-tertiary">Latency</dt>
+          <dt className="text-tertiary">{t("session.latency")}</dt>
           <dd className="tabular-nums text-primary">
             {stats.rtt_ms > 0 ? `${Math.round(stats.rtt_ms)} ms` : "-"}
           </dd>
-          <dt className="text-tertiary">Throughput</dt>
+          <dt className="text-tertiary">{t("session.throughput")}</dt>
           <dd className="tabular-nums text-primary">{formatBps(stats.throughput_bps)}</dd>
-          <dt className="text-tertiary">Frame rate</dt>
+          <dt className="text-tertiary">{t("session.frameRate")}</dt>
           <dd className="tabular-nums text-primary">{stats.fps.toFixed(0)} fps</dd>
-          <dt className="text-tertiary">Decode</dt>
+          <dt className="text-tertiary">{t("session.decode")}</dt>
           <dd className="tabular-nums text-primary">{stats.decode_ms.toFixed(1)} ms</dd>
-          <dt className="text-tertiary">Encoding</dt>
+          <dt className="text-tertiary">{t("session.encoding")}</dt>
           <dd className="mono text-primary">{encodingName(stats.current_encoding)}</dd>
-          <dt className="text-tertiary">Received</dt>
+          <dt className="text-tertiary">{t("session.received")}</dt>
           <dd className="tabular-nums text-primary">{(stats.bytes_received / 1e6).toFixed(1)} MB</dd>
           {/*
             The renderer's own queue, and what it has shed.
@@ -1321,15 +1355,18 @@ export function SessionStatusDetails({
           */}
           {queueStats && queueStats.droppedRects + queueStats.droppedUpdates > 0 ? (
             <>
-              <dt className="text-tertiary">Shed</dt>
+              <dt className="text-tertiary">{t("session.shed")}</dt>
               <dd className="tabular-nums text-warning">
-                {queueStats.droppedRects} rects, {queueStats.droppedUpdates} updates
+                {t("session.shedCounts", {
+                  rects: queueStats.droppedRects,
+                  updates: queueStats.droppedUpdates,
+                })}
               </dd>
             </>
           ) : null}
         </dl>
       ) : (
-        <p className="text-xs text-tertiary">Statistics arrive once the session reports them.</p>
+        <p className="text-xs text-tertiary">{t("session.statsLater")}</p>
       )}
     </div>
   );

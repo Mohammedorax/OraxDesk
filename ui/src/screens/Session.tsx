@@ -19,6 +19,7 @@ import {
   type SessionParams,
 } from "../hooks/useSession";
 import { useLivePreview } from "../hooks/useLivePreview";
+import { useT } from "../lib/i18n";
 import { SessionStatusDetails, SessionToolbar } from "../components/SessionToolbar";
 import { CertPrompt } from "../components/CertPrompt";
 import { CredentialPrompt } from "../components/CredentialPrompt";
@@ -2233,20 +2234,17 @@ function CapturePermissionDialog({
   onClose: () => void;
 }): ReactNode {
   const isMac = navigator.platform.toLowerCase().includes("mac");
+  const t = useT();
 
   if (status.state === "unsupported") {
     return (
-      <Dialog title="Shortcut pass-through isn't available here" onClose={onClose} width={480}>
+      <Dialog title={t("session.captureUnsupported")} onClose={onClose} width={480}>
         <div className="space-y-3 p-5 text-sm text-secondary">
           <p>{status.reason}</p>
-          <p>
-            Everything the browser engine can see still reaches the remote. For the shortcuts it
-            can't, use <strong>Send to remote</strong> in the keyboard menu, Ctrl+Alt+Del,
-            Cmd/Alt+Tab and the Windows key are all deliverable that way.
-          </p>
+          <p>{t("session.captureUnsupportedBody")}</p>
           <div className="flex justify-end pt-1">
             <button type="button" data-autofocus className="btn-primary" onClick={onClose}>
-              Got it
+              {t("session.captureGotIt")}
             </button>
           </div>
         </div>
@@ -2257,31 +2255,27 @@ function CapturePermissionDialog({
   const granted = status.state === "active";
 
   return (
-    <Dialog title="Let this app capture system shortcuts" onClose={onClose} width={520}>
+    <Dialog title={t("session.shortcutsDialogTitle")} onClose={onClose} width={520}>
       <div className="space-y-3.5 p-5 text-sm text-secondary">
         <p>
-          To send {isMac ? "⌘Tab, ⌘Space and ⌘Q" : "Alt+Tab and the Windows key"} to the remote
-          computer instead of this one, {isMac ? "macOS" : "the system"} has to let this app see
-          keys before the {isMac ? "window server" : "shell"} does.
+          {t("session.shortcutsIntro", {
+            keys: isMac ? "⌘Tab, ⌘Space and ⌘Q" : "Alt+Tab and the Windows key",
+            system: isMac ? "macOS" : "the system",
+            server: isMac ? "window server" : "shell",
+          })}
         </p>
         {isMac ? (
           <div className="rounded-md bg-inset p-3.5">
-            <p className="text-xs text-primary">
-              macOS calls this <strong>Accessibility</strong>. It is only used while a session
-              window is focused and pass-through is switched on. Keys are forwarded to the remote
-              computer you are connected to and are never stored or sent anywhere else.
-            </p>
+            <p className="text-xs text-primary">{t("session.accessibilityNote")}</p>
           </div>
         ) : null}
         <p className="text-xs text-tertiary">
-          You can release the keyboard at any time with{" "}
-          <span className="mono">Ctrl+Alt+Shift+Esc</span>, and it releases automatically when this
-          window loses focus or closes.
+          {t("session.shortcutsRelease", { chord: "Ctrl+Alt+Shift+Esc" })}
         </p>
 
         <div className="flex flex-wrap justify-end gap-2.5 pt-1">
           <button type="button" className="btn-secondary" onClick={onClose}>
-            Not now
+            {t("session.shortcutsNotNow")}
           </button>
           {isMac ? (
             <button
@@ -2289,25 +2283,23 @@ function CapturePermissionDialog({
               className="btn-secondary"
               onClick={() => void openExternal(MACOS_ACCESSIBILITY_SETTINGS_URL)}
             >
-              Open System Settings
+              {t("session.captureOpenSettings")}
             </button>
           ) : null}
           {granted ? (
             <button type="button" data-autofocus className="btn-primary" onClick={onRetry}>
-              Turn pass-through on
+              {t("session.captureTurnOn")}
             </button>
           ) : (
             <button type="button" data-autofocus className="btn-primary" onClick={onGrant}>
-              Allow…
+              {t("session.captureAllow")}
             </button>
           )}
         </div>
         {isMac ? (
-          <p className="text-2xs text-tertiary">
-            Already allowed but still not working? A macOS update or a new build can silently
-            invalidate the grant, remove the app from the Accessibility list and add it again.
-          </p>
+          <p className="text-2xs text-tertiary">{t("session.captureAlreadyAllowed")}</p>
         ) : null}
+
       </div>
     </Dialog>
   );

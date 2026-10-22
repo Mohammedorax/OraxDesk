@@ -33,6 +33,7 @@ import type { SshHostKeyPromptState } from "../hooks/useSession";
 import { SshHostKeyPrompt } from "./SshHostKeyPrompt";
 import { usePaneVisible } from "./Pane";
 import { useToasts } from "../state/ToastContext";
+import { useT, type Translate } from "../lib/i18n";
 import { classNames, describeError as describeErrorShared } from "../lib/util";
 import { IconAlert, IconX } from "./icons";
 
@@ -272,6 +273,7 @@ export function SshTerminal({
   const [bellTick, setBellTick] = useState(0);
   const owns = usePaneVisible();
   const { push } = useToasts();
+  const t = useT();
 
   // Latest config/onClose for the mount effect to read without depending on
   // them: `config` is a fresh object on most parent renders (it is usually
@@ -481,7 +483,7 @@ export function SshTerminal({
     return () => window.removeEventListener("keydown", onKey, true);
   }, [owns]);
 
-  const status = statusPill(phase);
+  const status = statusPill(phase, t);
   const shellState = phase.kind === "shell" ? phase.state : null;
   const connectingEndpoint =
     shellState?.state === "connecting"
@@ -526,7 +528,7 @@ export function SshTerminal({
               role="status"
             >
               <span className="mr-1.5 inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-accent align-middle" />
-              Connecting to {connectingEndpoint}
+              {t("ssh.connectingTo", { endpoint: connectingEndpoint })}
             </div>
           ) : null}
 
@@ -598,25 +600,35 @@ export function SshTerminal({
 
 // --------------------------------------------------------------- status pill
 
-function statusPill(phase: Phase): { label: string; dot: string } {
-  if (phase.kind === "error") return { label: "Connection failed", dot: "bg-danger" };
-  if (phase.kind === "host-key-prompt") return { label: "Verifying host key", dot: "bg-warning" };
-  if (phase.kind === "host-key-changed") return { label: "Host key changed", dot: "bg-danger" };
+function statusPill(phase: Phase, t: Translate): { label: string; dot: string } {
+  if (phase.kind === "error") return { label: t("ssh.failed"), dot: "bg-danger" };
+  if (phase.kind === "host-key-prompt") {
+    return { label: t("ssh.verifyingHostKey"), dot: "bg-warning" };
+  }
+  if (phase.kind === "host-key-changed") {
+    return { label: t("ssh.hostKeyChanged"), dot: "bg-danger" };
+  }
   const s = phase.kind === "shell" ? phase.state : null;
-  if (!s || s.state === "connecting") return { label: "Connecting…", dot: "bg-tertiary animate-pulse" };
+  if (!s || s.state === "connecting") {
+    return { label: t("ssh.connecting"), dot: "bg-tertiary animate-pulse" };
+  }
   switch (s.state) {
     case "connected":
-      return { label: "Connected", dot: "bg-success" };
+      return { label: t("ssh.connected"), dot: "bg-success" };
     case "reconnecting":
-      return { label: `Reconnecting (attempt ${s.attempt})`, dot: "bg-warning animate-pulse" };
+      return {
+        label: t("ssh.reconnecting", { attempt: s.attempt }),
+        dot: "bg-warning animate-pulse",
+      };
     case "disconnected":
-      return { label: "Disconnected", dot: "bg-danger" };
+      return { label: t("ssh.disconnected"), dot: "bg-danger" };
     default:
-      return { label: "Connected", dot: "bg-success" };
+      return { label: t("ssh.connected"), dot: "bg-success" };
   }
 }
 
 // ------------------------------------------------------------------ banners
+
 
 function ReconnectingBanner({
   attempt,
@@ -680,14 +692,15 @@ function DisconnectedBanner({
   onReconnect: () => void;
   onClose: () => void;
 }): ReactNode {
+  const t = useT();
   return (
     <div className="fade-in absolute inset-0 z-10 flex items-center justify-center bg-scrim" role="alert">
       <div className="w-80 max-w-[calc(100%-32px)] rounded-lg border border-subtle bg-raised p-4 shadow-(--shadow-pop)">
-        <p className="text-sm font-semibold text-primary">Disconnected</p>
-        <p className="mt-1.5 text-xs text-secondary">{reason || "The connection was closed."}</p>
+        <p className="text-sm font-semibold text-primary">{t("ssh.disconnected")}</p>
+        <p className="mt-1.5 text-xs text-secondary">{reason || t("ssh.closed")}</p>
         <div className="mt-3 flex justify-end gap-2">
           <button type="button" className="btn-secondary px-3 py-1 text-xs" onClick={onClose}>
-            Close
+            {t("about.close")}
           </button>
           {canRetry ? (
             <button type="button" className="btn-primary px-3 py-1 text-xs" onClick={onReconnect}>

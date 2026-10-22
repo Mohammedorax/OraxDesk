@@ -58,6 +58,7 @@ import {
 } from "../lib/agentSetup";
 import { useAgentActivity } from "../state/AgentActivityContext";
 import { Dialog } from "./primitives";
+import { useT } from "../lib/i18n";
 import {
   IconAlert,
   IconCheck,
@@ -114,6 +115,7 @@ function CopyLine({
   copied: Copied | null;
   onCopy: (key: string, text: string) => void;
 }): ReactNode {
+  const t = useT();
   const mine = copied?.key === copiedKey ? copied : null;
   return (
     <div className="flex items-stretch gap-1.5 rounded-md border border-subtle bg-inset/60">
@@ -130,8 +132,8 @@ function CopyLine({
       <button
         type="button"
         onClick={() => onCopy(copiedKey, text)}
-        aria-label={mine?.ok ? "Copied" : "Copy this line"}
-        title="Copy"
+        aria-label={mine?.ok ? t("agent.copied") : t("agent.copyLine")}
+        title={t("agent.copy")}
         className={classNames(
           "flex shrink-0 items-center gap-1 rounded-r-md border-l border-subtle px-2.5 text-2xs font-medium",
           mine === null
@@ -153,7 +155,7 @@ function CopyLine({
           person who cannot see it has pressed a button that did nothing.
         */}
         <span aria-live="polite">
-          {mine === null ? "Copy" : mine.ok ? "Copied" : "Blocked"}
+          {mine === null ? t("agent.copy") : mine.ok ? t("agent.copied") : t("agent.blocked")}
         </span>
       </button>
     </div>
@@ -169,6 +171,7 @@ function CopyLine({
  * is not treated as one: the line underneath says where to get it by hand.
  */
 function CopyToken(): ReactNode {
+  const t = useT();
   const [said, setSaid] = useState<"copied" | "unavailable" | null>(null);
   const timer = useRef<number | null>(null);
   useEffect(() => () => {
@@ -194,9 +197,9 @@ function CopyToken(): ReactNode {
         type="button"
         onClick={grab}
         className="btn-secondary text-2xs"
-        title="The token goes straight to the clipboard. It is never shown here."
+        title={t("agent.tokenTitle")}
       >
-        Copy the token
+        {t("agent.copyToken")}
       </button>
       <span
         className={classNames(
@@ -206,10 +209,10 @@ function CopyToken(): ReactNode {
         aria-live="polite"
       >
         {said === "copied"
-          ? "On the clipboard. Paste it into the prompt above."
+          ? t("agent.tokenCopied")
           : said === "unavailable"
-            ? "This build will not hand it over. Read it from dvv doctor instead."
-            : "It is never shown here, only copied."}
+            ? t("agent.tokenUnavailable")
+            : t("agent.tokenNeverShown")}
       </span>
     </div>
   );
@@ -250,6 +253,7 @@ function Step({
  * than mentioning it and leaving the reader to go looking.
  */
 function Register({ onFallback }: { onFallback: () => void }): ReactNode {
+  const t = useT();
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<RegisterResult | null>(null);
   const alive = useRef(true);
@@ -277,9 +281,9 @@ function Register({ onFallback }: { onFallback: () => void }): ReactNode {
     <section className="rounded-lg border border-accent/40 bg-accent/10 p-4">
       <div className="flex items-start justify-between gap-4">
         <div className="min-w-0">
-          <h3 className="text-sm font-semibold text-primary">Connect Claude Code</h3>
+          <h3 className="text-sm font-semibold text-primary">{t("agent.connectClaude")}</h3>
           <p className="mt-0.5 text-xs text-secondary">
-            This registers the server for you. No terminal, nothing to copy.
+            {t("agent.registerNote")}
           </p>
         </div>
         <button
@@ -294,7 +298,7 @@ function Register({ onFallback }: { onFallback: () => void }): ReactNode {
             after a success invites somebody to press a button that has already
             worked, and then to wonder whether the second press undid it.
           */}
-          {busy ? "Connecting…" : result && needsManualSetup(result.outcome) ? "Try again" : "Connect"}
+          {busy ? t("agent.connecting") : result && needsManualSetup(result.outcome) ? t("agent.tryAgain") : t("agent.connect")}
         </button>
       </div>
       {/*
@@ -333,6 +337,7 @@ function Register({ onFallback }: { onFallback: () => void }): ReactNode {
  * what it printed is shown as it is, so the person sees every file touched.
  */
 function SetupAgents(): ReactNode {
+  const t = useT();
   const [busy, setBusy] = useState(false);
   const [report, setReport] = useState<string | null>(null);
   const alive = useRef(true);
@@ -345,18 +350,17 @@ function SetupAgents(): ReactNode {
     void safeInvoke<string | null>("agent_setup_agents", undefined, null).then((text) => {
       if (!alive.current) return;
       setBusy(false);
-      setReport(text ?? "This build cannot run setup. Run dvv setup in a terminal instead.");
+      setReport(text ?? t("agent.setupFailed"));
     });
-  }, []);
+  }, [t]);
 
   return (
     <section className="rounded-lg border border-accent/40 bg-accent/10 p-4">
       <div className="flex items-start justify-between gap-4">
         <div className="min-w-0">
-          <h3 className="text-sm font-semibold text-primary">OpenCode, Pi, Claude Code and Codex</h3>
+          <h3 className="text-sm font-semibold text-primary">{t("agent.setupTitle")}</h3>
           <p className="mt-0.5 text-xs text-secondary">
-            Connected automatically each time DeskVNC starts. Installed a new agent just now? Connect it
-            without restarting.
+            {t("agent.setupNote")}
           </p>
         </div>
         <button
@@ -365,7 +369,7 @@ function SetupAgents(): ReactNode {
           className={classNames("btn-primary shrink-0", busy && "opacity-70")}
           onClick={run}
         >
-          {busy ? "Connecting…" : "Connect now"}
+          {busy ? t("agent.connecting") : t("agent.connectNow")}
         </button>
       </div>
       <div role="status" aria-live="polite" className="empty:hidden">
@@ -388,20 +392,21 @@ function SetupAgents(): ReactNode {
  * so it reads as a property of the product rather than as a to-do.
  */
 function Limits(): ReactNode {
+  const t = useT();
   return (
     <div className="space-y-3 border-t border-subtle pt-4">
       <div>
         <p className="mb-1.5 text-2xs font-semibold uppercase tracking-wider text-tertiary">
-          What an agent can do
+          {t("agent.canDo")}
         </p>
         <ul className="space-y-1">
-          {AGENT_CAN.map((line) => (
-            <li key={line} className="flex gap-2 text-xs text-secondary">
+          {AGENT_CAN.map((key) => (
+            <li key={key} className="flex gap-2 text-xs text-secondary">
               <span
                 aria-hidden="true"
                 className="mt-1.5 h-1 w-1 shrink-0 rounded-full bg-success"
               />
-              <span>{line}</span>
+              <span>{t(key)}</span>
             </li>
           ))}
         </ul>
@@ -411,12 +416,12 @@ function Limits(): ReactNode {
           <IconLock size={14} />
         </span>
         <div className="min-w-0 space-y-0.5">
-          {AGENT_CANNOT.map((line) => (
-            <p key={line} className="text-xs font-medium text-primary">
-              {line}
+          {AGENT_CANNOT.map((key) => (
+            <p key={key} className="text-xs font-medium text-primary">
+              {t(key)}
             </p>
           ))}
-          <p className="text-2xs text-tertiary">{AGENT_BOUNDARY_WHY}</p>
+          <p className="text-2xs text-tertiary">{t(AGENT_BOUNDARY_WHY)}</p>
         </div>
       </div>
     </div>
@@ -445,6 +450,7 @@ function ManualSetup({
   copied: Copied | null;
   onCopy: (key: string, text: string) => void;
 }): ReactNode {
+  const t = useT();
   const note = binaryNote(binary);
   // No rule above it deliberately. The footer below draws one and the limits
   // above draw one, and a third between two short rows would make the fold
@@ -461,11 +467,11 @@ function ManualSetup({
         <span aria-hidden="true">
           {open ? <IconChevronDown size={13} /> : <IconChevronRight size={13} />}
         </span>
-        Do it by hand, or connect a different agent
+        {t("agent.byHand")}
       </button>
       {open ? (
         <div id="agent-manual" className="mt-3.5 space-y-4">
-          <Step n={1} title="Register it yourself">
+          <Step n={1} title={t("agent.stepRegister")}>
             <CopyLine
               text={mcpAddLine(binary)}
               copiedKey="stdio"
@@ -492,7 +498,7 @@ function ManualSetup({
             container, anything that cannot spawn a subprocess) would never
             learn it exists.
           */}
-          <Step n={2} title="Or reach it over HTTP">
+          <Step n={2} title={t("agent.stepHttp")}>
             <CopyLine
               text={httpServeLine(binary)}
               copiedKey="http-serve"
@@ -500,10 +506,8 @@ function ManualSetup({
               onCopy={onCopy}
             />
             <p className="text-xs text-tertiary">
-              Starts a listener on <code className="mono">{HTTP_DEFAULT_URL}</code> and prints
-              the line below with your token already in it. Loopback only, and it needs the
-              token even there, because any page your browser has open can reach a port on
-              this machine.
+              {t("agent.httpNoteLead")} <code className="mono">{HTTP_DEFAULT_URL}</code>
+              {t("agent.httpNoteTail")}
             </p>
             <CopyLine
               text={httpAddLine(httpUrl ?? HTTP_DEFAULT_URL)}
@@ -514,7 +518,7 @@ function ManualSetup({
             <CopyToken />
           </Step>
 
-          <Step n={3} title="Check it">
+          <Step n={3} title={t("agent.stepCheck")}>
             <CopyLine
               text={doctorLine(binary)}
               copiedKey="doctor"
@@ -522,8 +526,7 @@ function ManualSetup({
               onCopy={onCopy}
             />
             <p className="text-xs text-tertiary">
-              It prints the socket path and whether it is present. Present means this
-              application is running with the plane on, which is what an agent needs.
+              {t("agent.doctorNote")}
             </p>
           </Step>
         </div>
@@ -533,13 +536,14 @@ function ManualSetup({
 }
 
 export function AgentConnect({ onClose }: { onClose: () => void }): ReactNode {
+  const t = useT();
   const { plane, setPlaneEnabled } = useAgentActivity();
   const [copied, copy] = useCopied();
   const [manual, setManual] = useState(false);
   const openManual = useCallback(() => setManual(true), []);
 
   return (
-    <Dialog title="AI agents" onClose={onClose} width={620}>
+    <Dialog title={t("agent.title")} onClose={onClose} width={620}>
       <div className="space-y-5">
         {plane.on ? (
           <>
@@ -548,8 +552,7 @@ export function AgentConnect({ onClose }: { onClose: () => void }): ReactNode {
             <Register onFallback={openManual} />
 
             <p className="text-xs text-secondary">
-              Then ask your agent to open one of your machines by name. It reads the same
-              library you see here.
+              {t("agent.thenAsk")}
             </p>
 
             <Limits />
@@ -565,7 +568,7 @@ export function AgentConnect({ onClose }: { onClose: () => void }): ReactNode {
 
             <div className="flex items-center justify-between gap-4 border-t border-subtle pt-4">
               <div className="min-w-0">
-                <p className="text-xs text-secondary">The plane is on.</p>
+                <p className="text-xs text-secondary">{t("agent.planeOn")}</p>
                 {plane.socket ? (
                   <p className="mono truncate text-2xs text-tertiary" title={plane.socket}>
                     {plane.socket}
@@ -576,25 +579,23 @@ export function AgentConnect({ onClose }: { onClose: () => void }): ReactNode {
                 type="button"
                 className="btn-secondary shrink-0"
                 onClick={() => setPlaneEnabled(false)}
-                title="Close the socket and unlink it. Every agent loses its connection at once."
+                title={t("agent.turnOffTitle")}
               >
-                Turn it off
+                {t("agent.turnOff")}
               </button>
             </div>
           </>
         ) : (
           <>
             <p className="text-sm text-secondary">
-              An agent can open your machines, drive them and read the screen, while you
-              watch and take over whenever you want.
+              {t("agent.offIntro")}
             </p>
             <p className="text-sm text-secondary">
-              It is off because it was switched off on this computer. While it is off there is no
-              socket, nothing is listening, and your agents cannot reach your machines.
+              {t("agent.offWhy")}
             </p>
             {plane.error ? (
               <p className="rounded-md border border-warning bg-warning-subtle px-3 py-2 text-xs text-warning">
-                The last attempt to start it failed: {plane.error}
+                {t("agent.startFailed", { reason: plane.error })}
               </p>
             ) : null}
             <div className="flex items-center gap-3">
@@ -604,10 +605,10 @@ export function AgentConnect({ onClose }: { onClose: () => void }): ReactNode {
                 className="btn-primary"
                 onClick={() => setPlaneEnabled(true)}
               >
-                Turn it back on
+                {t("agent.turnBackOn")}
               </button>
               <span className="text-xs text-tertiary">
-                One socket, on this computer only. Nothing opens on the network.
+                {t("agent.oneSocket")}
               </span>
             </div>
             {/*

@@ -12,11 +12,26 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { authMethodLabel } from "../hooks/useSession";
 import { diagnose, isAuthFailure, opensSecuritySettings } from "../lib/diagnose";
+import { useT, type Translate } from "../lib/i18n";
 import type { SessionState } from "../lib/types";
 
 // -------------------------------------------------------- connecting overlay
 
 const STAGES = ["resolving", "connecting", "authenticating", "negotiating"] as const;
+
+/**
+ * The name of each stage, as a key in the catalogue.
+ *
+ * The stage list shows all four, with the one in flight spelled out. The
+ * stage in flight is the one that carries the method, so the plain name is
+ * what the other three rows use.
+ */
+const STAGE_LABELS = {
+  resolving: "overlay.stageResolving",
+  connecting: "overlay.stageConnecting",
+  authenticating: "overlay.stageAuthenticating",
+  negotiating: "overlay.stageNegotiating",
+} as const;
 
 /**
  * How long the connecting panel waits before it says something more.
@@ -27,24 +42,25 @@ const STAGES = ["resolving", "connecting", "authenticating", "negotiating"] as c
  */
 const SLOW_CONNECT_MS = 10_000;
 
-function stageLabel(st: SessionState): string {
+function stageLabel(t: Translate, st: SessionState): string {
   switch (st.state) {
     case "resolving":
-      return "Resolving";
+      return t("overlay.stageResolving");
     case "connecting":
-      return "Connecting";
+      return t("overlay.stageConnecting");
     case "authenticating":
       // The wire value is a stable identifier, so the copy is the UI's own.
       // An unrecognised one comes back verbatim rather than as a blank.
-      return `Authenticating (${authMethodLabel(st.method)})`;
+      return `${t("overlay.stageAuthenticating")} (${authMethodLabel(st.method)})`;
     case "negotiating":
-      return "Negotiating";
+      return t("overlay.stageNegotiating");
     default:
-      return "Preparing";
+      return t("overlay.stagePreparing");
   }
 }
 
 export function ConnectingOverlay({ state, name }: { state: SessionState; name: string }): ReactNode {
+  const t = useT();
   const idx = STAGES.indexOf(state.state as (typeof STAGES)[number]);
   /**
    * How long the connection has been trying.
@@ -62,7 +78,9 @@ export function ConnectingOverlay({ state, name }: { state: SessionState; name: 
   return (
     <div className="absolute inset-0 flex items-center justify-center bg-canvas" role="status" aria-live="polite">
       <div className="w-80 rounded-lg border border-subtle bg-surface p-5 shadow-(--shadow-pop)">
-        <p className="mb-3 text-sm font-medium text-primary">Connecting to {name}</p>
+        <p className="mb-3 text-sm font-medium text-primary">
+          {t("library.connectingTo", { address: name })}
+        </p>
         <ol className="space-y-1.5">
           {STAGES.map((s, i) => (
             <li key={s} className="flex items-center gap-2 text-xs">
@@ -76,15 +94,14 @@ export function ConnectingOverlay({ state, name }: { state: SessionState; name: 
                 }
               />
               <span className={i === idx ? "text-primary" : "text-tertiary"}>
-                {i === idx ? stageLabel(state) : s[0].toUpperCase() + s.slice(1)}
+                {i === idx ? stageLabel(t, state) : t(STAGE_LABELS[s])}
               </span>
             </li>
           ))}
         </ol>
         {slow ? (
           <p className="mt-3 border-t border-subtle pt-3 text-xs text-secondary">
-            Still trying. If that computer is off, asleep, or on a different network, this
-            will keep failing. Check that it is awake, then reconnect.
+            {t("overlay.stillTrying")}
           </p>
         ) : null}
       </div>
@@ -109,6 +126,7 @@ export function ReconnectOverlay({
   onRetryNow: () => void;
   onDisconnect: () => void;
 }): ReactNode {
+  const t = useT();
   const [remaining, setRemaining] = useState(nextRetryMs);
   useEffect(() => {
     setRemaining(nextRetryMs);
@@ -135,16 +153,16 @@ export function ReconnectOverlay({
           <div className="indeterminate-bar h-0.5 w-1/3 bg-accent" />
         </div>
         <p className="mt-3 text-sm font-medium text-primary">
-          Reconnecting to {name}… attempt {attempt}
-          {secs > 0 ? ` · retrying in ${secs}s` : " · retrying now"}
+          {t("overlay.reconnectingTo", { name, attempt })}
+          {secs > 0 ? t("overlay.retryingIn", { secs }) : t("overlay.retryingNow")}
         </p>
         {reason ? <p className="mt-1 text-xs text-secondary">{reason}</p> : null}
         <div className="mt-4 flex justify-end gap-2.5">
           <button type="button" className="btn-secondary" onClick={onDisconnect}>
-            Disconnect
+            {t("overlay.disconnect")}
           </button>
           <button type="button" className="btn-primary" onClick={onRetryNow}>
-            Retry now
+            {t("overlay.retryNow")}
           </button>
         </div>
       </div>
@@ -180,6 +198,7 @@ export function DisconnectedOverlay({
   onReconnect: (options?: { reprompt?: boolean }) => void;
   onClose: () => void;
 }): ReactNode {
+  const t = useT();
   const panelRef = useRef<HTMLDivElement>(null);
   // Move focus off the canvas: it keeps Enter/Space on the default action and
   // takes the keystrokes out of the remote input hook's reach.
@@ -210,7 +229,7 @@ export function DisconnectedOverlay({
         ref={panelRef}
         role="dialog"
         aria-modal="true"
-        aria-label={`Disconnected from ${name}`}
+        aria-label={t("overlay.disconnectedFrom", { name })}
         className="w-96 max-w-[calc(100vw-32px)] rounded-lg border border-subtle bg-raised p-5 shadow-(--shadow-pop)"
       >
         {/*
@@ -221,14 +240,17 @@ export function DisconnectedOverlay({
           exactly what ran off the side of this panel.
         */}
         <p className="text-base font-semibold break-words text-primary">
-          Disconnected from {name}
+          {t("overlay.disconnectedFrom", { name })}
         </p>
         <p className="mt-2 text-sm break-words text-secondary" role="alert">
-          {diagnose(reason, symbol)}
+          {(() => {
+            const diagnosis = diagnose(reason, symbol);
+            return t(diagnosis.key, diagnosis.args);
+          })()}
         </p>
         {authFailure ? (
           <p className="mt-1.5 text-xs text-tertiary">
-            Reconnecting asks for the password again instead of reusing the saved one.
+            {t("overlay.reconnectAsksPassword")}
           </p>
         ) : null}
         {/*
@@ -244,18 +266,17 @@ export function DisconnectedOverlay({
               className="mt-2.5 text-xs font-medium text-accent underline underline-offset-2"
               onClick={onEditSecurity}
             >
-              Open this computer's security settings
+              {t("overlay.openSecurity")}
             </button>
           ) : (
             <p className="mt-1.5 text-xs text-tertiary">
-              Save this computer to your library first, then change the setting in
-              its settings.
+              {t("overlay.saveFirst")}
             </p>
           )
         ) : null}
         <div className="mt-4 flex flex-wrap justify-end gap-2.5">
           <button type="button" className="btn-secondary" onClick={onClose}>
-            Close
+            {t("about.close")}
           </button>
           {retryable ? (
             <button
@@ -264,11 +285,11 @@ export function DisconnectedOverlay({
               className="btn-primary"
               onClick={() => onReconnect(authFailure ? { reprompt: true } : undefined)}
             >
-              Reconnect
+              {t("overlay.reconnect")}
             </button>
           ) : null}
         </div>
-        <p className="mt-2 text-end text-2xs text-tertiary">Press Esc to close this window</p>
+        <p className="mt-2 text-end text-2xs text-tertiary">{t("overlay.pressEsc")}</p>
       </div>
     </div>
   );

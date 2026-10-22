@@ -23,7 +23,7 @@ import {
 } from "../hooks/useFiles";
 import { usePaneVisible } from "./Pane";
 import { pickLocalDirectory, pickLocalFiles } from "../lib/tauri";
-import { useT } from "../lib/i18n";
+import { useLang, useT, type Translate } from "../lib/i18n";
 import { classNames, fingerprintMnemonic } from "../lib/util";
 import {
   IconAlert,
@@ -73,11 +73,20 @@ export function formatEta(transferred: number, total: number, bytesPerSec: numbe
   return `${Math.floor(secs / 3600)}h ${Math.floor((secs % 3600) / 60)}m`;
 }
 
-function formatWhen(ts: number | null): string {
+/**
+ * When a file changed, in the app's language.
+ *
+ * The locale used to be `undefined`, which means the BROWSER's locale, and
+ * the browser's locale is the operating system's. A person whose interface
+ * is in Arabic and whose machine is in English read month names in English on
+ * a screen that is otherwise in Arabic, and the panel is read while a
+ * transfer is running.
+ */
+function formatWhen(ts: number | null, lang: string): string {
   if (!ts) return "-";
   const d = new Date(ts * 1000);
   if (Number.isNaN(d.getTime())) return "-";
-  return d.toLocaleString(undefined, {
+  return d.toLocaleString(lang, {
     year: "numeric",
     month: "short",
     day: "numeric",
@@ -141,7 +150,7 @@ export function FilePanel({ files, hostName, onClose }: FilePanelProps): ReactNo
       className="fade-in absolute inset-0 z-30 flex flex-col bg-scrim"
       role="dialog"
       aria-modal="true"
-      aria-label={`Files, ${hostName}`}
+      aria-label={t("files.title", { host: hostName })}
       onPointerDown={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
@@ -149,7 +158,9 @@ export function FilePanel({ files, hostName, onClose }: FilePanelProps): ReactNo
       <div className="m-auto flex h-[min(88vh,760px)] w-[min(96vw,1180px)] flex-col overflow-hidden rounded-lg border border-subtle bg-surface shadow-(--shadow-pop)">
         {/* ------------------------------------------------------- header */}
         <div className="flex items-center justify-between border-b border-subtle px-4 py-2.5">
-          <h2 className="truncate text-sm font-semibold text-primary">Files, {hostName}</h2>
+          <h2 className="truncate text-sm font-semibold text-primary">
+            {t("files.title", { host: hostName })}
+          </h2>
           <div className="flex items-center gap-2">
             {conn.state === "connected" ? (
               <span className="text-2xs text-tertiary">
@@ -158,7 +169,7 @@ export function FilePanel({ files, hostName, onClose }: FilePanelProps): ReactNo
             ) : null}
             <button
               type="button"
-              aria-label="Close files"
+              aria-label={t("files.close")}
               className="rounded-sm p-1 text-tertiary hover:text-primary"
               onClick={onClose}
             >
@@ -199,7 +210,7 @@ export function FilePanel({ files, hostName, onClose }: FilePanelProps): ReactNo
         <div className="flex min-h-0 flex-1">
           <FilePane
             pane="local"
-            title="Local"
+            title={t("files.localPane")}
             state={files.local}
             files={files}
             focused={focused === "local"}
@@ -219,27 +230,27 @@ export function FilePanel({ files, hostName, onClose }: FilePanelProps): ReactNo
               disabled={!canTransfer || busy}
               title={
                 canTransfer
-                  ? "Upload the selected local files (or choose files) to the remote folder"
-                  : "Connect the file-transfer channel first"
+                  ? t("files.uploadTitle")
+                  : t("files.uploadTitleDisconnected")
               }
               onClick={() => void doUpload()}
             >
-              Upload →
+              {t("files.upload")}
             </button>
             <button
               type="button"
               className="btn-secondary w-full px-2 py-1.5 text-xs"
               disabled={!canTransfer || files.remote.selected.length === 0}
-              title="Download the selected remote files into the local folder"
+              title={t("files.downloadTitle")}
               onClick={() => void doDownload()}
             >
-              ← Download
+              {t("files.download")}
             </button>
           </div>
 
           <FilePane
             pane="remote"
-            title={`Remote, ${hostName}`}
+            title={t("files.remotePane", { host: hostName })}
             state={files.remote}
             files={files}
             focused={focused === "remote"}
@@ -257,10 +268,10 @@ export function FilePanel({ files, hostName, onClose }: FilePanelProps): ReactNo
             type="button"
             className="btn-secondary px-2.5 py-1 text-xs"
             disabled={focused === "remote" && conn.state !== "connected"}
-            onClick={() => setCreating({ pane: focused, name: "New folder" })}
+            onClick={() => setCreating({ pane: focused, name: t("files.newFolder") })}
           >
             <IconPlus size={13} className="mr-1 inline" />
-            New folder
+            {t("files.newFolder")}
           </button>
           <button
             type="button"
@@ -272,7 +283,7 @@ export function FilePanel({ files, hostName, onClose }: FilePanelProps): ReactNo
               if (entry) setRenaming({ pane: focused, path, name: entry.name });
             }}
           >
-            Rename (F2)
+            {t("files.renameF2")}
           </button>
           <button
             type="button"
@@ -281,7 +292,7 @@ export function FilePanel({ files, hostName, onClose }: FilePanelProps): ReactNo
             onClick={() => setConfirmDelete({ pane: focused, paths: activePane.selected })}
           >
             <IconTrash size={13} className="mr-1 inline" />
-            Delete
+            {t("files.delete")}
           </button>
           {/*
             The local pane may only change things in a folder the user has
@@ -301,7 +312,7 @@ export function FilePanel({ files, hostName, onClose }: FilePanelProps): ReactNo
           ) : null}
           <span className="flex-1" />
           <span className="text-2xs text-tertiary">
-            Enter opens · Backspace goes up · Ctrl/⌘+A selects all · F2 renames · Del removes
+            {t("files.keysHint")}
           </span>
         </div>
 
@@ -311,9 +322,13 @@ export function FilePanel({ files, hostName, onClose }: FilePanelProps): ReactNo
 
       {creating ? (
         <NamePrompt
-          title={`New folder in ${creating.pane === "local" ? "the local" : "the remote"} folder`}
+          title={
+            creating.pane === "local"
+              ? t("files.newFolderLocal")
+              : t("files.newFolderRemote")
+          }
           initial={creating.name}
-          confirmLabel="Create"
+          confirmLabel={t("library.create")}
           onCancel={() => setCreating(null)}
           onConfirm={(name) => {
             void files.mkdir(creating.pane, name);
@@ -324,9 +339,9 @@ export function FilePanel({ files, hostName, onClose }: FilePanelProps): ReactNo
 
       {renaming ? (
         <NamePrompt
-          title="Rename"
+          title={t("files.rename")}
           initial={renaming.name}
-          confirmLabel="Rename"
+          confirmLabel={t("files.rename")}
           onCancel={() => setRenaming(null)}
           onConfirm={(name) => {
             void files.rename(renaming.pane, renaming.path, name);
@@ -338,7 +353,9 @@ export function FilePanel({ files, hostName, onClose }: FilePanelProps): ReactNo
       {confirmDelete ? (
         <ConfirmDelete
           count={confirmDelete.paths.length}
-          where={confirmDelete.pane === "local" ? "this computer" : hostName}
+          where={
+            confirmDelete.pane === "local" ? t("files.deleteWhereLocal") : hostName
+          }
           onCancel={() => setConfirmDelete(null)}
           onConfirm={() => {
             void files.remove(confirmDelete.pane, confirmDelete.paths);
@@ -376,6 +393,8 @@ function FilePane({
   setRenaming,
   onRequestDelete,
 }: FilePaneProps): ReactNode {
+  const t = useT();
+  const lang = useLang();
   const listRef = useRef<HTMLDivElement>(null);
   const [cursor, setCursor] = useState(0);
 
@@ -500,7 +519,7 @@ function FilePane({
             state.showHidden ? "text-accent" : "text-tertiary hover:text-primary",
           )}
           aria-pressed={state.showHidden}
-          title={state.showHidden ? "Hide dot-files" : "Show hidden files"}
+          title={state.showHidden ? t("files.hideHidden") : t("files.showHidden")}
           onClick={() => files.setShowHidden(pane, !state.showHidden)}
         >
           <IconEye size={14} />
@@ -508,7 +527,7 @@ function FilePane({
         <button
           type="button"
           className="rounded-sm p-1 text-tertiary hover:text-primary"
-          title="Refresh"
+          title={t("gethelp.refresh")}
           onClick={() => files.refresh(pane)}
         >
           <IconRefresh size={14} />
@@ -516,7 +535,7 @@ function FilePane({
       </header>
 
       {/* breadcrumbs */}
-      <nav className="flex flex-wrap items-center gap-0.5 border-b border-subtle px-3 py-1 text-xs" aria-label={`${title} location`}>
+      <nav className="flex flex-wrap items-center gap-0.5 border-b border-subtle px-3 py-1 text-xs" aria-label={t("files.locationAria", { pane: title })}>
         {crumbs.length === 0 ? (
           <span className="text-tertiary">-</span>
         ) : (
@@ -537,9 +556,9 @@ function FilePane({
 
       {/* column headers / sort */}
       <div className="grid grid-cols-[1fr_5rem_9rem] items-center gap-2 border-b border-subtle px-3 py-1 text-2xs text-tertiary">
-        <SortButton label="Name" active={state.sort === "name"} asc={state.sortAsc} onClick={() => files.setSort(pane, "name")} />
-        <SortButton label="Size" active={state.sort === "size"} asc={state.sortAsc} onClick={() => files.setSort(pane, "size")} align="right" />
-        <SortButton label="Modified" active={state.sort === "date"} asc={state.sortAsc} onClick={() => files.setSort(pane, "date")} align="right" />
+        <SortButton label={t("files.colName")} active={state.sort === "name"} asc={state.sortAsc} onClick={() => files.setSort(pane, "name")} />
+        <SortButton label={t("files.colSize")} active={state.sort === "size"} asc={state.sortAsc} onClick={() => files.setSort(pane, "size")} align="right" />
+        <SortButton label={t("files.colModified")} active={state.sort === "date"} asc={state.sortAsc} onClick={() => files.setSort(pane, "date")} align="right" />
       </div>
 
       {/* rows */}
@@ -548,23 +567,23 @@ function FilePane({
         tabIndex={0}
         role="listbox"
         aria-multiselectable="true"
-        aria-label={`${title} files`}
+        aria-label={t("files.filesAria", { pane: title })}
         className="min-h-0 flex-1 overflow-y-auto outline-none"
         onKeyDown={onKeyDown}
       >
         {disabled ? (
           <p className="p-4 text-xs text-tertiary">
-            The file-transfer channel is not connected.
+            {t("files.notConnected")}
           </p>
         ) : state.loading ? (
-          <p className="p-4 text-xs text-tertiary">Loading…</p>
+          <p className="p-4 text-xs text-tertiary">{t("files.loading")}</p>
         ) : state.error ? (
           <p className="flex items-start gap-2 p-4 text-xs text-danger">
             <IconAlert size={14} className="mt-px shrink-0" />
             <span className="min-w-0 break-words">{state.error}</span>
           </p>
         ) : visible.length === 0 ? (
-          <p className="p-4 text-xs text-tertiary">This folder is empty.</p>
+          <p className="p-4 text-xs text-tertiary">{t("files.emptyFolder")}</p>
         ) : (
           visible.map((entry, i) => {
             const selected = state.selected.includes(entry.path);
@@ -593,7 +612,7 @@ function FilePane({
                   {entry.isDir ? "-" : formatBytes(entry.size)}
                 </span>
                 <span className="truncate text-end tabular-nums text-tertiary">
-                  {formatWhen(entry.modified)}
+                  {formatWhen(entry.modified, lang)}
                 </span>
               </div>
             );
@@ -602,8 +621,12 @@ function FilePane({
       </div>
 
       <footer className="border-t border-subtle px-3 py-1 text-2xs text-tertiary">
-        {visible.length} item{visible.length === 1 ? "" : "s"}
-        {state.selected.length > 0 ? ` · ${state.selected.length} selected` : ""}
+        {visible.length === 1
+          ? t("files.itemOne")
+          : t("files.itemMany", { count: visible.length })}
+        {state.selected.length > 0
+          ? ` · ${t("files.selectedCount", { count: state.selected.length })}`
+          : ""}
       </footer>
     </section>
   );
@@ -641,6 +664,7 @@ function SortButton({
 // ------------------------------------------------------------------ queue
 
 function TransferQueue({ files }: { files: FilesApi }): ReactNode {
+  const t = useT();
   const running = files.active;
   const finished = files.transfers.filter((t) => t.state !== "running");
 
@@ -648,7 +672,8 @@ function TransferQueue({ files }: { files: FilesApi }): ReactNode {
     <div className="max-h-56 shrink-0 overflow-y-auto border-t border-subtle bg-inset/30">
       <div className="flex items-center gap-2 px-3 py-1.5">
         <span className="text-2xs font-medium uppercase tracking-wide text-tertiary">
-          Transfers{running.length > 0 ? ` (${running.length} active)` : ""}
+          {t("files.transfers")}
+          {running.length > 0 ? t("files.activeCount", { count: running.length }) : ""}
         </span>
         <span className="flex-1" />
         {finished.length > 0 ? (
@@ -657,14 +682,14 @@ function TransferQueue({ files }: { files: FilesApi }): ReactNode {
             className="text-2xs text-tertiary hover:text-primary"
             onClick={files.clearFinished}
           >
-            Clear completed
+            {t("files.clearCompleted")}
           </button>
         ) : null}
       </div>
 
       {files.transfers.length === 0 ? (
         <p className="px-3 pb-2 text-2xs text-tertiary">
-          No transfers yet. Drag files onto the session window, or use Upload / Download.
+          {t("files.noTransfers")}
         </p>
       ) : (
         <ul className="space-y-0.5 px-3 pb-2">
@@ -684,6 +709,7 @@ function TransferRow({
   transfer: Transfer;
   onCancel: () => void;
 }): ReactNode {
+  const t = useT();
   const pct =
     transfer.total > 0 ? Math.min(100, Math.round((transfer.transferred / transfer.total) * 100)) : 0;
   const running = transfer.state === "running";
@@ -711,7 +737,7 @@ function TransferRow({
         </span>
       </span>
       <span className="tabular-nums text-tertiary">
-        {running ? `${pct}% · ${formatBytes(transfer.transferred)}` : stateLabel(transfer)}
+        {running ? `${pct}% · ${formatBytes(transfer.transferred)}` : stateLabel(t, transfer)}
       </span>
       <span className="tabular-nums text-tertiary">{running ? formatRate(transfer.bytesPerSec) : ""}</span>
       <span className="tabular-nums text-tertiary">
@@ -720,8 +746,8 @@ function TransferRow({
       {running ? (
         <button
           type="button"
-          aria-label={`Cancel transfer of ${transfer.name}`}
-          title="Cancel"
+          aria-label={t("files.cancelTransfer", { name: transfer.name })}
+          title={t("host.cancel")}
           className="justify-self-end rounded-sm p-0.5 text-tertiary hover:text-danger"
           onClick={onCancel}
         >
@@ -734,14 +760,14 @@ function TransferRow({
   );
 }
 
-function stateLabel(t: Transfer): string {
-  switch (t.state) {
+function stateLabel(t: Translate, transfer: Transfer): string {
+  switch (transfer.state) {
     case "completed":
-      return `Done · ${formatBytes(t.total)}`;
+      return t("files.done", { size: formatBytes(transfer.total) });
     case "cancelled":
-      return "Cancelled";
+      return t("files.cancelled");
     case "failed":
-      return t.error ?? "Failed";
+      return transfer.error ?? t("wall.failed");
     default:
       return "";
   }
@@ -764,15 +790,15 @@ function HostKeyPrompt({
   onAccept: () => void;
   onCancel: () => void;
 }): ReactNode {
+  const t = useT();
   return (
     <div className="border-b border-subtle bg-raised px-4 py-3">
       <p className="flex items-center gap-2 text-sm font-medium text-primary">
         <IconLock size={15} className="text-warning" />
-        First connection to {host}:{port}
+        {t("files.firstConnection", { host, port })}
       </p>
       <p className="mt-1 text-xs text-secondary">
-        This computer&apos;s SSH identity has not been seen before. Check the fingerprint against the
-        server before trusting it.
+        {t("files.sshUnknown")}
       </p>
       <p className="mono mt-2 break-all text-xs text-primary">
         {keyType} {fingerprint}
@@ -780,10 +806,10 @@ function HostKeyPrompt({
       <p className="mt-0.5 text-2xs text-tertiary">{fingerprintMnemonic(fingerprint)}</p>
       <div className="mt-3 flex justify-end gap-2">
         <button type="button" className="btn-secondary px-3 py-1 text-xs" onClick={onCancel}>
-          Cancel
+          {t("host.cancel")}
         </button>
         <button type="button" className="btn-primary px-3 py-1 text-xs" onClick={onAccept}>
-          Trust and connect
+          {t("files.trustAndConnect")}
         </button>
       </div>
     </div>
@@ -803,30 +829,29 @@ function HostKeyChanged({
   actual: string;
   onClose: () => void;
 }): ReactNode {
+  const t = useT();
   return (
     <div className="border-b border-danger bg-danger-subtle px-4 py-3">
       <p className="flex items-center gap-2 text-sm font-semibold text-danger">
         <IconAlert size={15} />
-        The SSH identity of {host}:{port} has changed
+        {t("files.identityChanged", { host, port })}
       </p>
       <p className="mt-1 text-xs text-secondary">
-        File transfer is blocked. This is either a reinstalled server or someone intercepting the
-        connection, there is no &ldquo;continue anyway&rdquo;. Verify the new key out of band and
-        remove the stored pin before reconnecting.
+        {t("files.transferBlocked")}
       </p>
       <dl className="mono mt-2 space-y-0.5 break-all text-2xs">
         <div>
-          <dt className="inline text-tertiary">expected </dt>
+          <dt className="inline text-tertiary">{t("files.expected")} </dt>
           <dd className="inline text-primary">{expected}</dd>
         </div>
         <div>
-          <dt className="inline text-tertiary">received </dt>
+          <dt className="inline text-tertiary">{t("session.received")} </dt>
           <dd className="inline text-danger">{actual}</dd>
         </div>
       </dl>
       <div className="mt-3 flex justify-end">
         <button type="button" className="btn-secondary px-3 py-1 text-xs" onClick={onClose}>
-          Close
+          {t("about.close")}
         </button>
       </div>
     </div>
@@ -848,6 +873,7 @@ function NamePrompt({
   onConfirm: (name: string) => void;
   onCancel: () => void;
 }): ReactNode {
+  const t = useT();
   const [value, setValue] = useState(initial);
   const inputRef = useRef<HTMLInputElement>(null);
   useEffect(() => {
@@ -875,12 +901,12 @@ function NamePrompt({
         />
         {!valid ? (
           <p className="mt-1 text-2xs text-danger">
-            A name cannot be empty, contain a slash, or be “.” or “..”.
+            {t("files.badName")}
           </p>
         ) : null}
         <div className="mt-3 flex justify-end gap-2">
           <button type="button" className="btn-secondary px-3 py-1 text-xs" onClick={onCancel}>
-            Cancel
+            {t("host.cancel")}
           </button>
           <button type="submit" className="btn-primary px-3 py-1 text-xs" disabled={!valid}>
             {confirmLabel}
@@ -902,18 +928,21 @@ function ConfirmDelete({
   onConfirm: () => void;
   onCancel: () => void;
 }): ReactNode {
+  const t = useT();
   return (
     <div className="fixed inset-0 z-40 flex items-center justify-center bg-scrim">
       <div className="w-96 max-w-[calc(100vw-32px)] rounded-lg border border-danger bg-surface p-4 shadow-(--shadow-pop)">
         <p className="text-sm font-semibold text-primary">
-          Delete {count} item{count === 1 ? "" : "s"} on {where}?
+          {count === 1
+            ? t("files.deleteOne", { where })
+            : t("files.deleteMany", { count, where })}
         </p>
         <p className="mt-1 text-xs text-secondary">
-          Folders are removed with everything inside them. This cannot be undone.
+          {t("files.deleteWarn")}
         </p>
         <div className="mt-3 flex justify-end gap-2">
           <button type="button" className="btn-secondary px-3 py-1 text-xs" onClick={onCancel}>
-            Cancel
+            {t("host.cancel")}
           </button>
           <button
             type="button"
@@ -921,7 +950,7 @@ function ConfirmDelete({
             className="btn-primary bg-danger px-3 py-1 text-xs"
             onClick={onConfirm}
           >
-            Delete
+            {t("files.delete")}
           </button>
         </div>
       </div>
@@ -944,6 +973,7 @@ export function DropOverlay({
   hostName: string;
   remoteDir: string;
 }): ReactNode {
+  const t = useT();
   return (
     <div
       className="fade-in pointer-events-none absolute inset-0 z-40 flex items-center justify-center bg-scrim"
@@ -952,7 +982,9 @@ export function DropOverlay({
     >
       <div className="rounded-lg border-2 border-dashed border-(--accent) bg-raised/95 px-8 py-6 text-center shadow-(--shadow-pop)">
         <p className="text-base font-semibold text-primary">
-          Drop to send {count > 0 ? count : ""} file{count === 1 ? "" : "s"} to {hostName}
+          {count === 1
+            ? t("files.dropOne", { host: hostName })
+            : t("files.dropMany", { count, host: hostName })}
         </p>
         <p className="mono mt-1 text-xs text-secondary">→ {remoteDir}</p>
       </div>

@@ -23,7 +23,27 @@
  * out of the event decoder, which made every branch below that matches on a
  * symbol dead code, and the person was shown the raw sentence from the
  * protocol instead of the explanation written for it.
+ *
+ * WHAT IT RETURNS
+ *
+ * A KEY, not a sentence. This is the text a person reads when a connection
+ * FAILS, which is the last place an English sentence belongs in an app whose
+ * default language is Arabic. The reason itself is a value from the shell and
+ * stays as it is; the explanation around it is ours and is in the catalogue.
  */
+
+import type { MessageKey } from "./i18n";
+
+/**
+ * What to say, and the values to say it with.
+ *
+ * `args` is for the one case where the sentence has to name something: the
+ * shell's own reason, which is a value and not a sentence of ours.
+ */
+export interface Diagnosis {
+  key: MessageKey;
+  args?: Record<string, string>;
+}
 
 /**
  * Would offering "reconnect" here re-prompt for a credential?
@@ -58,61 +78,35 @@ export function isAuthFailure(reason: string, symbol?: string | null): boolean {
   return r.includes("auth") || r.includes("password") || r.includes("credential");
 }
 
-export function diagnose(reason: unknown, symbol?: string | null): string {
+export function diagnose(reason: unknown, symbol?: string | null): Diagnosis {
   const text = typeof reason === "string" ? reason : "";
   const r = text.toLowerCase();
   // Ordered: "cancelled" must win over the generic auth match below, or
   // dismissing the password prompt would be reported as a failed login.
-  if (r.includes("cancel")) return "Authentication was cancelled. Reconnect to try again.";
+  if (r.includes("cancel")) return { key: "diagnose.cancelled" };
 
   // Ordered above the generic password match for the same reason "cancel"
   // is: a message that mentions authentication and a domain policy must not
   // be reported as a wrong password. The two deserve opposite advice, and
   // the wrong one wastes an afternoon.
   if (symbol === "ntlm-refused-by-policy" || r.includes("ntlm-refused-by-policy")) {
-    return (
-      "This computer's domain does not accept the sign-in method this version " +
-      "uses. An administrator has set “Restrict NTLM: Incoming NTLM " +
-      "traffic” or raised “LAN Manager authentication level” on " +
-      "the remote computer, so it will only accept Kerberos. Kerberos sign-in " +
-      "is coming in a later release. Until then this computer can be reached " +
-      "from a client that speaks Kerberos, or an administrator can allow NTLM " +
-      "for it."
-    );
+    return { key: "diagnose.ntlmRefused" };
   }
   if (
     symbol === "nla-refused" ||
     r.includes("nla-refused") ||
     r.includes("would not accept network level authentication")
   ) {
-    return (
-      "The computer refused network level authentication. If it is an older " +
-      "or non-Windows server, turn on “Allow connecting without network " +
-      "level authentication” in this computer's settings."
-    );
+    return { key: "diagnose.nlaRefused" };
   }
 
   // Ordered ABOVE the certificate/TLS arm below, which would otherwise
   // swallow both of these: the symbols contain the substring "tls".
   if (symbol === "legacy-tls-required" || r.includes("legacy-tls-required")) {
-    return (
-      "This computer only offers TLS 1.0 or 1.1 to encrypt the connection, " +
-      "and this app does not use those versions unless you say so. That is " +
-      "normal for a Windows 7 or Server 2008 R2 machine that was never " +
-      "updated. To connect anyway, edit this computer, open Advanced, then " +
-      "Security, and tick “Allow legacy TLS (1.0 and 1.1)”. Read " +
-      "what it says there first: those versions are weak, and that is the " +
-      "reason it is off by default."
-    );
+    return { key: "diagnose.legacyTlsRequired" };
   }
   if (symbol === "legacy-tls-unavailable" || r.includes("legacy-tls-unavailable")) {
-    return (
-      "This computer only offers TLS 1.0 or 1.1, and this copy of the app was " +
-      "built without support for them, so the setting you turned on cannot be " +
-      "used. A build that includes legacy TLS support will connect. Nothing " +
-      "you change here will help, and nothing is wrong with the computer you " +
-      "are connecting to."
-    );
+    return { key: "diagnose.legacyTlsUnavailable" };
   }
 
   // Both SSH host-key messages, above every generic arm below: the changed
@@ -125,21 +119,10 @@ export function diagnose(reason: unknown, symbol?: string | null): string {
   // a session, a message that arrived some other way), reconnecting is what
   // raises that prompt, so that is what this says to do.
   if (r.includes("unknown ssh host key")) {
-    return (
-      "This machine has not been trusted yet, so the connection stopped " +
-      "rather than trusting it silently. Reconnect to see its fingerprint " +
-      "and decide."
-    );
+    return { key: "diagnose.unknownHostKey" };
   }
   if (r.includes("host key") && r.includes("changed")) {
-    return (
-      "This machine is presenting a different SSH identity than the one you " +
-      "trusted before. That can mean it was reinstalled, or that something " +
-      "is sitting in the middle of the connection, and there is no way to " +
-      "tell which from here, so the connection was refused. If you know the " +
-      "key legitimately changed, forget the saved key for this machine and " +
-      "connect again."
-    );
+    return { key: "diagnose.hostKeyChanged" };
   }
 
   // The diagnosis is about the port, not about which server ought to be on
@@ -151,16 +134,12 @@ export function diagnose(reason: unknown, symbol?: string | null): string {
   // substring test reported that as "nothing is listening on that port",
   // which sends the person to check a port that is very much open.
   if (r.includes("refused the requested security protocols")) {
-    return (
-      "The computer answered, but it would not use a security method this " +
-      "version speaks. It may be an old server, or one whose policy forbids " +
-      "the sign-in this app offers."
-    );
+    return { key: "diagnose.securityRefused" };
   }
   if (r.includes("connection refused") || r === "refused" || r.endsWith(" refused")) {
-    return "Connection refused, nothing is listening on that port.";
+    return { key: "diagnose.refused" };
   }
-  if (r.includes("timed out") || r.includes("timeout")) return "The computer didn't respond, it may be asleep, off, or unreachable from this network.";
+  if (r.includes("timed out") || r.includes("timeout")) return { key: "diagnose.timedOut" };
   // Deliberately NOT a bare "auth" match. That caught every message merely
   // mentioning authentication, so a server offering none at all was reported
   // to the user as "incorrect password" for a server that has no password
@@ -170,11 +149,15 @@ export function diagnose(reason: unknown, symbol?: string | null): string {
     r.includes("authentication failed") ||
     r.includes("auth failed")
   ) {
-    return "Incorrect password, the server did not accept it.";
+    return { key: "diagnose.badPassword" };
   }
-  if (r.includes("certificate") || r.includes("tls")) return "The secure connection could not be verified.";
-  if (r.includes("reset")) return "The connection was closed by the other side.";
-  return text || "The connection ended.";
+  if (r.includes("certificate") || r.includes("tls")) return { key: "diagnose.tlsUnverified" };
+  if (r.includes("reset")) return { key: "diagnose.reset" };
+  // The shell's own reason is a VALUE and is shown as it is; the sentence
+  // around it is ours.
+  return text
+    ? { key: "diagnose.endedWith", args: { reason: text } }
+    : { key: "diagnose.ended" };
 }
 
 /**

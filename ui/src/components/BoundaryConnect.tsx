@@ -147,10 +147,7 @@ export function BoundaryConnect() {
         // The usual reason is that the other computer has not registered with
         // this registry, which is a different thing from a wrong number and
         // one the person reading the screen can fix.
-        throw new Error(
-          `No computer with that number is registered at this registry (${describeError(err)}). ` +
-            "The other computer has to create a code here first, or give you its full ID.",
-        );
+        throw new Error(t("support.numberNotRegistered", { reason: describeError(err) }));
       }
       target = record.id;
     }
@@ -163,7 +160,7 @@ export function BoundaryConnect() {
       port: 0,
       protocol: "boundary",
     });
-    if (!saved) throw new Error("The computer could not be saved to the Library");
+    if (!saved) throw new Error(t("support.saveMachineFailed"));
     if (password) await savePassword(saved.id, password);
     await openSessionWindow({ profileId: saved.id });
   };
@@ -251,7 +248,7 @@ export function BoundaryConnect() {
   };
 
   return <>
-    <button type="button" className="rounded-md border border-subtle px-3 py-1.5 text-sm text-primary hover:bg-inset" onClick={() => void show()} title="Connect to someone who asked you for help">{t("support.helpSomeone")}</button>
+    <button type="button" className="rounded-md border border-subtle px-3 py-1.5 text-sm text-primary hover:bg-inset" onClick={() => void show()} title={t("support.helpSomeoneTitle")}>{t("support.helpSomeone")}</button>
     {/*
       The shared Dialog primitive, not a native <dialog>.
       A native one is in the TOP LAYER, and top-layer promotion does not reset
@@ -268,7 +265,7 @@ export function BoundaryConnect() {
       <Dialog title={t("support.helpSomeone")} onClose={close} width={512}>
         <form onSubmit={(event) => { event.preventDefault(); void submit(); }} className="flex flex-col gap-4">
         <div>
-          <p className="mt-2 text-sm text-secondary">Help someone over the internet, with nothing to set up on either network.</p>
+          <p className="mt-2 text-sm text-secondary">{t("support.helpOverInternet")}</p>
         </div>
         <div
           className="flex gap-2"
@@ -288,24 +285,24 @@ export function BoundaryConnect() {
         >
         {mode === "invite" ? <>
           <ol className="list-decimal space-y-1 pl-5 text-sm text-secondary">
-            <li>In DeskVNC they press <strong>Get help</strong>. Without DeskVNC, they download <strong>DeskVNC Support</strong> from the DeskVNC releases page and open it. Nothing is installed.</li>
-            <li>They press <strong>Get a code</strong> or <strong>Create invitation</strong> and send you what it shows.</li>
-            <li>You copy it and open this window. It is pasted for you. They approve you on their screen.</li>
+            <li>{t("support.stepInstallLead")} <strong>{t("gethelp.button")}</strong>{t("support.stepInstallTail")}</li>
+            <li>{t("support.stepCodeLead")} <strong>{t("gethelp.getCode")}</strong> {t("support.stepCodeMid")} <strong>{t("gethelp.createInvitation")}</strong> {t("support.stepCodeTail")}</li>
+            <li>{t("support.stepUse")}</li>
           </ol>
           <label className="text-sm">{t("support.theirCode")}<textarea required spellCheck={false} autoComplete="off" maxLength={16384} rows={4} value={invitation} onChange={(event) => { setInvitation(event.target.value); setPasted(false); }} placeholder={t("support.theirCodePlaceholder")} className="mt-1 w-full rounded border border-subtle bg-inset p-2 font-mono text-xs" /></label>
           {pasted && <p className="-mt-2 text-xs text-secondary">{t("support.pasted")}</p>}
           {numeric && <label className="text-sm">{t("support.registryUrl")}<input type="url" value={registryUrl} onChange={(event) => { setRegistryUrl(event.target.value); rememberRegistryUrl(event.target.value); }} placeholder="https://your-registry.workers.dev" className="mt-1 w-full rounded border border-subtle bg-inset p-2" /><span className="mt-1 block text-xs text-secondary">{t("support.registryHint")}</span></label>}
           {numeric && <label className="text-sm">{t("support.codeServiceUrl")}<input type="url" value={codeService} onChange={(event) => setCodeService(event.target.value)} placeholder="https://codes.example.com" className="mt-1 w-full rounded border border-subtle bg-inset p-2" /><span className="mt-1 block text-xs text-secondary">{t("support.codeServiceHint")}</span></label>}
-          <p className="text-xs text-secondary">During the session they can choose to let you connect any time. The computer is then saved to your Library and opens unattended.</p>
+          <p className="text-xs text-secondary">{t("support.duringSession")}</p>
           <BoundaryProviderSetup active={open} />
         </> : <>
-          <p className="text-sm text-secondary">For a computer with unattended access switched on in DeskVNC or DeskVNC Support. A computer that paired you is already in your Library. Otherwise the person there approves you on their screen, and can pair you so you connect without asking next time.</p>
-          <label className="text-sm">{t("support.computerId")}<input required spellCheck={false} autoComplete="off" value={machineId} onChange={(event) => { setMachineId(event.target.value); setPasted(false); }} placeholder="Their nine-digit number, or the 64-character ID" className="mt-1 w-full rounded border border-subtle bg-inset p-2 font-mono text-xs" dir="ltr" /><span className="mt-1 block text-xs text-secondary">{t("support.computerIdHint")}</span></label>
-          <label className="text-sm">Orax registry URL, to look up a number<input type="url" value={registryUrl} onChange={(event) => { setRegistryUrl(event.target.value); rememberRegistryUrl(event.target.value); }} placeholder="https://your-registry.workers.dev" className="mt-1 w-full rounded border border-subtle bg-inset p-2" dir="ltr" /><span className="mt-1 block text-xs text-secondary">A nine-digit number is looked up through this registry, so both of you need the same one. Leave it empty to use a full ID instead.</span></label>
+          <p className="text-sm text-secondary">{t("support.machineIntro")}</p>
+          <label className="text-sm">{t("support.computerId")}<input required spellCheck={false} autoComplete="off" value={machineId} onChange={(event) => { setMachineId(event.target.value); setPasted(false); }} placeholder={t("support.computerIdPlaceholder")} className="mt-1 w-full rounded border border-subtle bg-inset p-2 font-mono text-xs" dir="ltr" /><span className="mt-1 block text-xs text-secondary">{t("support.computerIdHint")}</span></label>
+          <label className="text-sm">{t("support.registryUrl")}<input type="url" value={registryUrl} onChange={(event) => { setRegistryUrl(event.target.value); rememberRegistryUrl(event.target.value); }} placeholder="https://your-registry.workers.dev" className="mt-1 w-full rounded border border-subtle bg-inset p-2" dir="ltr" /><span className="mt-1 block text-xs text-secondary">{t("support.registryNumberHint")}</span></label>
           {pasted && <p className="-mt-2 text-xs text-secondary">{t("support.pasted")}</p>}
           {machineId.trim() !== "" && !looksLikeMachineId(machineId) && !looksLikeNumber(machineId) && <p className="-mt-2 text-xs text-danger">{t("support.notAnId")}</p>}
           {looksLikeNumber(machineId) && registryUrl.trim() === "" && <p className="-mt-2 text-xs text-secondary">{t("support.numberNeedsRegistry")}</p>}
-          <label className="text-sm">{t("support.libraryName")}<input maxLength={80} value={machineName} onChange={(event) => setMachineName(event.target.value)} placeholder="Mum's laptop" className="mt-1 w-full rounded border border-subtle bg-inset p-2" /></label>
+          <label className="text-sm">{t("support.libraryName")}<input maxLength={80} value={machineName} onChange={(event) => setMachineName(event.target.value)} placeholder={t("support.libraryNamePlaceholder")} className="mt-1 w-full rounded border border-subtle bg-inset p-2" /></label>
           <label className="text-sm">{t("support.unattendedPassword")}<input type="password" autoComplete="off" value={password} onChange={(event) => setPassword(event.target.value)} className="mt-1 w-full rounded border border-subtle bg-inset p-2" /><span className="mt-1 block text-xs text-secondary">{t("support.unattendedPasswordHint")}</span></label>
         </>}
         </div>

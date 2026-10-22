@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { translatorFor } from "./i18n";
 import {
   AGENT_BOUNDARY_WHY,
   AGENT_CAN,
@@ -88,6 +89,11 @@ describe("the HTTP form carries no secret", () => {
 });
 
 describe("what it says it can do", () => {
+  // The list is KEYS now, and the wording is in the catalogue. The tests still
+  // ask what the person is told, so they read the sentence from where it now
+  // lives.
+  const en = translatorFor("en");
+
   it("is short enough to be read", () => {
     expect(AGENT_CAN.length).toBeLessThanOrEqual(4);
     expect(AGENT_CANNOT.length).toBeLessThanOrEqual(4);
@@ -96,29 +102,31 @@ describe("what it says it can do", () => {
   it("counts opening a machine and running over SSH as things that work", () => {
     // Both were limits and are limits no longer. A list nobody rereads goes on
     // telling people a feature is missing months after it shipped.
-    const can = AGENT_CAN.join(" ");
+    const can = AGENT_CAN.map((key) => en(key)).join(" ");
     expect(can).toContain("Open one of your saved machines");
     expect(can).toContain("SSH");
-    const cannot = AGENT_CANNOT.join(" ");
+    const cannot = AGENT_CANNOT.map((key) => en(key)).join(" ");
     expect(cannot).not.toContain("Open a machine");
     expect(cannot).not.toContain("SSH");
   });
 
   it("leaves exactly one thing an agent will not do, and says why", () => {
     expect(AGENT_CANNOT).toHaveLength(1);
-    expect(AGENT_CANNOT[0]).toContain("password");
-    expect(AGENT_CANNOT[0]).toContain("stay yours");
+    expect(en(AGENT_CANNOT[0])).toContain("password");
+    expect(en(AGENT_CANNOT[0])).toContain("stay yours");
     // A boundary rather than a gap, and the reason is the advertisement.
-    expect(AGENT_BOUNDARY_WHY).toContain("deliberate");
+    expect(en(AGENT_BOUNDARY_WHY)).toContain("deliberate");
   });
 
   it("promises the credential never reaches the agent", () => {
-    expect(AGENT_CAN[0]).toContain("keychain");
-    expect(AGENT_CAN[0]).toContain("neither supplies it nor sees it");
+    expect(en(AGENT_CAN[0])).toContain("keychain");
+    expect(en(AGENT_CAN[0])).toContain("neither supplies it nor sees it");
   });
 });
 
 describe("saying why a line has a hole in it", () => {
+  const en = translatorFor("en");
+
   it("says nothing at all when the path is known, which is the normal case", () => {
     expect(binaryNote("/usr/local/bin/dvv")).toBeNull();
     expect(binaryNote("/Applications/Desk VNC.app/Contents/MacOS/dvv")).toBeNull();
@@ -128,8 +136,8 @@ describe("saying why a line has a hole in it", () => {
     for (const nothing of [null, "", "   "]) {
       const note = binaryNote(nothing);
       expect(note).not.toBeNull();
-      expect(note).toContain("development build");
-      expect(note).toContain("dvv doctor");
+      expect(en(note!)).toContain("development build");
+      expect(en(note!)).toContain("dvv doctor");
     }
   });
 });

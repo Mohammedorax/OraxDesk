@@ -45,7 +45,7 @@ import {
   saveGroupLayout,
 } from "../lib/groupLayout";
 import { classNames, describeError, formatBps, fuzzyMatch, modKeyLabel, timeAgo } from "../lib/util";
-import { useI18n } from "../lib/i18n";
+import { useI18n, useT } from "../lib/i18n";
 import { formatTarget } from "../lib/address";
 import { Sidebar, type SidebarSelection } from "../components/Sidebar";
 import { useHostDragSelect, type DropTarget } from "../hooks/useHostDragSelect";
@@ -183,7 +183,10 @@ export function Library({
         // The shell refused or failed to open the session. Say so: a connect
         // that fails silently is a button that does nothing, and the user has
         // no way to tell that from a machine that is simply not answering.
-        push("danger", `Could not connect to ${label}: ${describeError(err)}`);
+        push(
+          "danger",
+          t("library.connectFailed", { name: label, reason: describeError(err) }),
+        );
         return;
       }
       if (!outcome) return;
@@ -198,7 +201,10 @@ export function Library({
         try {
           outcome = await openSessionWindow({ ...options, asTab: tabbed, forceNew: true });
         } catch (err) {
-          push("danger", `Could not connect to ${label}: ${describeError(err)}`);
+          push(
+            "danger",
+            t("library.connectFailed", { name: label, reason: describeError(err) }),
+          );
           return;
         }
         if (!outcome) return;
@@ -210,7 +216,7 @@ export function Library({
         // pane, not merely the right tab.
         if (background) return;
         if (outcome.target === "tab") selectSession(outcome.sessionId);
-        push("info", `${label} is already open, brought it to the front`);
+        push("info", t("library.alreadyOpen", { name: label }));
         return;
       }
       if (outcome.target === "tab" && outcome.params) {
@@ -227,7 +233,7 @@ export function Library({
       }
       onConnected?.();
     },
-    [tabbed, selectSession, openTab, hasTab, push],
+    [tabbed, selectSession, openTab, hasTab, push, t],
   );
 
   const connectHost = useCallback(
@@ -267,7 +273,12 @@ export function Library({
       // Say what is being attempted. The session opens in another window or
       // tab, so without this the address bar goes empty and nothing at all
       // happens where the person is looking.
-      push("info", `Connecting to ${address}${port ? ` on port ${port}` : ""}`);
+      push(
+        "info",
+        port
+          ? t("library.connectingToPort", { address, port })
+          : t("library.connectingTo", { address }),
+      );
       if (inTauri()) {
         void openSession({ address, port, protocol }, address);
         return;
@@ -292,7 +303,7 @@ export function Library({
         `&name=${encodeURIComponent(address)}` +
         (protocol === "vnc" ? "" : `&protocol=${protocol}`);
     },
-    [openSession, tabbed, openTab, push],
+    [openSession, tabbed, openTab, push, t],
   );
 
   // A nine-digit number is a device number, not a hostname: resolve it through
@@ -347,7 +358,7 @@ export function Library({
         (h) => h.groupId === group.id || (h.groupId !== null && childIds.includes(h.groupId)),
       );
       if (inGroup.length === 0) {
-        push("info", `${group.name} has no hosts in it yet`);
+        push("info", t("library.groupEmpty", { group: group.name }));
         return;
       }
 
@@ -365,10 +376,7 @@ export function Library({
         const missing = saved.places.length - places.length;
         const added = inGroup.length - places.length;
         if (missing > 0 || added > 0) {
-          push(
-            "info",
-            `${group.name} has changed since its layout was saved; opened what still matches`,
-          );
+          push("info", t("library.groupLayoutChanged", { group: group.name }));
         }
       } else {
         const { tabId: id, paneIds } = openArranged(gridLayout(inGroup.length));
@@ -419,11 +427,17 @@ export function Library({
             void safeInvoke("touch_connected", { hostId: host.id }, null);
           })
           .catch((err: unknown) => {
-            push("danger", `Could not connect to ${host.friendlyName}: ${describeError(err)}`);
+            push(
+              "danger",
+              t("library.connectFailed", {
+                name: host.friendlyName,
+                reason: describeError(err),
+              }),
+            );
           });
       }
     },
-    [groups, hosts, openArranged, openTab, adopt, push],
+    [groups, hosts, openArranged, openTab, adopt, push, t],
   );
 
   /**
@@ -437,40 +451,42 @@ export function Library({
     (group: HostGroup): void => {
       const serialized = serializeActive();
       if (!serialized) {
-        push("info", "Open a group as a grid first, then save how you arranged it");
+        push("info", t("library.openGridFirst"));
         return;
       }
       saveGroupLayout(group.id, serialized);
-      push("success", `Saved this arrangement to ${group.name}`);
+      push("success", t("library.layoutSaved", { group: group.name }));
     },
-    [serializeActive, push],
+    [serializeActive, push, t],
   );
 
   const groupMenuItems = useCallback(
     (group: HostGroup): MenuItem[] => {
       const items: MenuItem[] = [
         {
-          label: hasSavedLayout(group.id) ? "Open as grid (saved layout)" : "Open as grid",
+          label: hasSavedLayout(group.id)
+            ? t("library.menuOpenGridSaved")
+            : t("library.menuOpenGrid"),
           onSelect: () => openGroupAsGrid(group),
         },
       ];
       // Only worth offering with a session in front: with the library showing
       // there is no arrangement to save.
       if (activeTabId !== null) {
-        items.push({ label: "Save this layout to group", onSelect: () => saveLayoutToGroup(group) });
+        items.push({ label: t("library.menuSaveLayout"), onSelect: () => saveLayoutToGroup(group) });
       }
       if (hasSavedLayout(group.id)) {
         items.push({
-          label: "Forget saved layout",
+          label: t("library.menuForgetLayout"),
           onSelect: () => {
             forgetGroupLayout(group.id);
-            push("info", `${group.name} will open as a plain grid from now on`);
+            push("info", t("library.layoutForgotten", { group: group.name }));
           },
         });
       }
       return items;
     },
-    [openGroupAsGrid, saveLayoutToGroup, activeTabId, push],
+    [openGroupAsGrid, saveLayoutToGroup, activeTabId, push, t],
   );
 
   /** Most recent first, no duplicates, oldest dropped past the cap. */
@@ -606,14 +622,15 @@ export function Library({
   /** Id lookup: a Cmd+A selection turns every `hosts.find` into a full scan. */
   const hostById = useMemo(() => new Map(hosts.map((h) => [h.id, h] as const)), [hosts]);
   const hostName = useCallback(
-    (id: string): string => hostById.get(id)?.friendlyName ?? "host",
-    [hostById],
+    (id: string): string => hostById.get(id)?.friendlyName ?? t("library.hostWord"),
+    [hostById, t],
   );
 
   /** "3 hosts" / "Studio", for toasts about a dropped selection. */
   const describe = useCallback(
-    (ids: string[]): string => (ids.length === 1 ? hostName(ids[0]) : `${ids.length} hosts`),
-    [hostName],
+    (ids: string[]): string =>
+      ids.length === 1 ? hostName(ids[0]) : t("library.hostsCount", { count: ids.length }),
+    [hostName, t],
   );
 
   /**
@@ -645,23 +662,31 @@ export function Library({
       // nothing is the very bug this change exists to fix, and it is no more
       // acceptable on the way back than on the way there.
       const reportUndo = (run: () => Promise<void>) => (): void => {
-        void run().catch((err: unknown) => push("danger", `Could not undo: ${String(err)}`));
+        void run().catch((err: unknown) =>
+          push("danger", t("library.undoFailed", { reason: String(err) })),
+        );
       };
 
       if (target.kind === "ungroup") {
         // Nothing to do for hosts that are not in a group anyway.
         const grouped = ids.filter((id) => previousGroup.get(id) !== null);
         if (grouped.length === 0) {
-          push("info", `${describe(ids)} ${ids.length === 1 ? "is" : "are"} not in a group`);
+          push(
+            "info",
+            ids.length === 1
+              ? t("library.notInGroupOne", { hosts: describe(ids) })
+              : t("library.notInGroupMany", { hosts: describe(ids) }),
+          );
           return;
         }
         void setHostsGroup(grouped, null).then(
           () =>
-            push("success", `Removed ${describe(grouped)} from their group`, {
-              label: "Undo",
+            push("success", t("library.removedFromGroup", { hosts: describe(grouped) }), {
+              label: t("library.undo"),
               run: reportUndo(undoGroups),
             }),
-          (err: unknown) => push("danger", `Could not move those hosts: ${String(err)}`),
+          (err: unknown) =>
+            push("danger", t("library.moveFailed", { reason: String(err) })),
         );
         return;
       }
@@ -672,16 +697,17 @@ export function Library({
         const moving = ids.filter((id) => previousGroup.get(id) !== target.id);
         // Silence here would be indistinguishable from a drop that missed.
         if (moving.length === 0) {
-          push("info", `${describe(ids)} already in ${group.name}`);
+          push("info", t("library.alreadyInGroup", { hosts: describe(ids), group: group.name }));
           return;
         }
         void setHostsGroup(moving, target.id).then(
           () =>
-            push("success", `Moved ${describe(moving)} to ${group.name}`, {
-              label: "Undo",
+            push("success", t("library.movedToGroup", { hosts: describe(moving), group: group.name }), {
+              label: t("library.undo"),
               run: reportUndo(undoGroups),
             }),
-          (err: unknown) => push("danger", `Could not move those hosts: ${String(err)}`),
+          (err: unknown) =>
+            push("danger", t("library.moveFailed", { reason: String(err) })),
         );
         return;
       }
@@ -692,19 +718,19 @@ export function Library({
       // would strip a tag the user had put there earlier by hand.
       const tagging = ids.filter((id) => !(hostById.get(id)?.tags ?? []).includes(target.id));
       if (tagging.length === 0) {
-        push("info", `${describe(ids)} already tagged ${tag.name}`);
+        push("info", t("library.alreadyTagged", { hosts: describe(ids), tag: tag.name }));
         return;
       }
       void addTagToHosts(tagging, target.id).then(
         () =>
-          push("success", `Tagged ${describe(tagging)} with ${tag.name}`, {
-            label: "Undo",
+          push("success", t("library.taggedWith", { hosts: describe(tagging), tag: tag.name }), {
+            label: t("library.undo"),
             run: reportUndo(() => removeTagFromHosts(tagging, target.id)),
           }),
-        (err: unknown) => push("danger", `Could not tag those hosts: ${String(err)}`),
+        (err: unknown) => push("danger", t("library.tagFailed", { reason: String(err) })),
       );
     },
-    [hostById, groups, tags, setHostsGroup, addTagToHosts, removeTagFromHosts, describe, push],
+    [hostById, groups, tags, setHostsGroup, addTagToHosts, removeTagFromHosts, describe, push, t],
   );
 
   const {
@@ -818,8 +844,8 @@ export function Library({
             rdpSettings: null,
             sshSettings: null,
           });
-          push("success", `Added ${draft.friendlyName}`, {
-            label: "Undo",
+          push("success", t("library.added", { name: draft.friendlyName }), {
+            label: t("library.undo"),
             run: () => {
               void (async () => {
                 // The same address AND port, not just the address: another
@@ -831,16 +857,19 @@ export function Library({
                   await deleteHost(h.id);
                 }
               })().catch((err: unknown) =>
-                push("danger", `Could not remove that: ${describeError(err)}`),
+                push("danger", t("library.removeFailed", { reason: describeError(err) })),
               );
             },
           });
         } catch (err) {
-          push("danger", `Could not save ${d.name}: ${describeError(err)}`);
+          push(
+            "danger",
+            t("library.saveFailed", { name: d.name, reason: describeError(err) }),
+          );
         }
       })();
     },
-    [saveHost, deleteHost, push],
+    [saveHost, deleteHost, push, t],
   );
 
   /** The MAC discovery is currently reporting for this endpoint, if any. */
@@ -950,7 +979,10 @@ export function Library({
         // The profile was not written. Say so and keep the dialog open, with
         // everything the user typed still in it, rather than closing it and
         // claiming success.
-        push("danger", `Could not save ${draft.friendlyName}: ${describeError(err)}`);
+        push(
+          "danger",
+          t("library.saveFailed", { name: draft.friendlyName, reason: describeError(err) }),
+        );
         return;
       }
       const id = saved?.id ?? draft.id;
@@ -1025,7 +1057,10 @@ export function Library({
           // that go with it, so say that and not "could not save the host".
           push(
             "danger",
-            `${draft.friendlyName} was saved, but its password was not: ${describeError(err)}`,
+            t("library.savedWithoutPassword", {
+              name: draft.friendlyName,
+              reason: describeError(err),
+            }),
           );
           setHostDialog(null);
           return;
@@ -1034,15 +1069,21 @@ export function Library({
       setHostDialog(null);
       // The one thing a person usually wants next is to connect to the
       // computer they have just added, and the toast is where that belongs.
-      push("success", draft.isNew ? `Added ${draft.friendlyName}` : "Host updated", {
-        label: "Connect",
-        run: () => {
-          const saved = hostsRef.current.find((h) => h.id === id);
-          if (saved) connectHost(saved);
+      push(
+        "success",
+        draft.isNew
+          ? t("library.added", { name: draft.friendlyName })
+          : t("library.hostUpdated"),
+        {
+          label: t("quick.connect"),
+          run: () => {
+            const saved = hostsRef.current.find((h) => h.id === id);
+            if (saved) connectHost(saved);
+          },
         },
-      });
+      );
     },
-    [saveHost, savePassword, saveSshPassphrase, saveRdpCredentials, setHostTags, refresh, push, connectHost],
+    [saveHost, savePassword, saveSshPassphrase, saveRdpCredentials, setHostTags, refresh, push, connectHost, t],
   );
 
   const paletteActions = useMemo((): PaletteAction[] => {
@@ -1050,26 +1091,26 @@ export function Library({
       // Sessions open in tabs are reachable from here as well as from the
       // strip, so a library with a long list of machines still has one keyboard
       // route back to the one you were working in.
-      ...summaries.map((t, i) => ({
-        id: `go-to-tab-${t.id}`,
-        label: `Go to ${t.title}`,
+      ...summaries.map((summary, i) => ({
+        id: `go-to-tab-${summary.id}`,
+        label: t("library.paletteGoTo", { title: summary.title }),
         hint: i < 8 ? `${modKeyLabel}${i + 2}` : "",
-        run: () => selectTab(t.id),
+        run: () => selectTab(summary.id),
       })),
-      { id: "new-host", label: "New host…", hint: "", run: () => setHostDialog(draftFromHost(null)) },
-      { id: "quick-connect", label: "Connect to an address…", hint: `${modKeyLabel}T`, run: focusQuickConnect },
-      { id: "scan", label: "Scan network", hint: "", run: () => void startScan().catch((err: unknown) => push("danger", describeError(err))) },
+      { id: "new-host", label: t("host.new"), hint: "", run: () => setHostDialog(draftFromHost(null)) },
+      { id: "quick-connect", label: t("library.paletteConnectAddress"), hint: `${modKeyLabel}T`, run: focusQuickConnect },
+      { id: "scan", label: t("about.scanNetwork"), hint: "", run: () => void startScan().catch((err: unknown) => push("danger", describeError(err))) },
       {
         id: "toggle-view",
-        label: settings.libraryView === "grid" ? "Switch to list view" : "Switch to grid view",
+        label: settings.libraryView === "grid" ? t("library.paletteSwitchList") : t("library.paletteSwitchGrid"),
         run: () => update({ libraryView: settings.libraryView === "grid" ? "list" : "grid" }),
       },
-      { id: "preferences", label: "Open Preferences", run: onOpenPreferences },
-      { id: "refresh", label: "Refresh library", run: () => void reload() },
-      { id: "help", label: "Help & keyboard shortcuts", run: onOpenAbout },
-      { id: "about", label: "About DeskVNCViewer", run: onOpenAbout },
+      { id: "preferences", label: t("about.shortcut.preferences"), run: onOpenPreferences },
+      { id: "refresh", label: t("library.paletteRefresh"), run: () => void reload() },
+      { id: "help", label: t("library.paletteHelp"), run: onOpenAbout },
+      { id: "about", label: t("about.title"), run: onOpenAbout },
     ];
-    }, [summaries, selectTab, settings.libraryView, update, startScan, focusQuickConnect, onOpenPreferences, onOpenAbout, reload]);
+    }, [summaries, selectTab, settings.libraryView, update, startScan, focusQuickConnect, onOpenPreferences, onOpenAbout, reload, push, t]);
 
 
   // Onboarding hand-off: open the add dialog pre-filled from a discovered host
@@ -1166,21 +1207,21 @@ export function Library({
       const grouped = ids.filter((id) => hosts.find((h) => h.id === id)?.groupId);
       return [
         {
-          label: `Remove ${ids.length} hosts from their group`,
+          label: t("library.menuRemoveFromGroup", { count: ids.length }),
           disabled: grouped.length === 0,
           onSelect: () => dropOnTarget(ids, { kind: "ungroup" }),
         },
         ...groups.map((g) => ({
-          label: `Move to ${g.name}`,
+          label: t("library.menuMoveTo", { group: g.name }),
           onSelect: () => dropOnTarget(ids, { kind: "group", id: g.id }),
         })),
-        ...tags.map((t) => ({
-          label: `Tag with ${t.name}`,
-          separatorAbove: t.id === tags[0]?.id,
-          onSelect: () => dropOnTarget(ids, { kind: "tag", id: t.id }),
+        ...tags.map((tag) => ({
+          label: t("library.menuTagWith", { tag: tag.name }),
+          separatorAbove: tag.id === tags[0]?.id,
+          onSelect: () => dropOnTarget(ids, { kind: "tag", id: tag.id }),
         })),
         {
-          label: `Delete ${ids.length} hosts…`,
+          label: t("library.menuDeleteMany", { count: ids.length }),
           danger: true,
           separatorAbove: true,
           onSelect: () => {
@@ -1200,7 +1241,13 @@ export function Library({
                   await deleteHost(h.id);
                   deleted += 1;
                 } catch (err) {
-                  push("danger", `Could not delete ${h.friendlyName}: ${describeError(err)}`);
+                  push(
+                    "danger",
+                    t("library.deleteFailed", {
+                      name: h.friendlyName,
+                      reason: describeError(err),
+                    }),
+                  );
                 }
               }
               if (deleted === 0) return;
@@ -1209,13 +1256,16 @@ export function Library({
               // entry, the history rows and the thumbnail, and none of those
               // are recoverable from here. Say so rather than promise more
               // than the button delivers.
-              push("info", `Deleted ${deleted} hosts. Saved passwords are gone.`, {
-                label: "Undo",
+              push("info", t("library.deletedMany", { count: deleted }), {
+                label: t("library.undo"),
                 run: () => {
                   void (async () => {
                     for (const h of doomed) await saveHost({ ...h });
                   })().catch((err: unknown) =>
-                    push("danger", `Could not restore those hosts: ${describeError(err)}`),
+                    push(
+                      "danger",
+                      t("library.restoreFailed", { reason: describeError(err) }),
+                    ),
                   );
                 },
               });
@@ -1224,42 +1274,52 @@ export function Library({
         },
       ];
     },
-    [hostById, groups, tags, dropOnTarget, deleteHost, saveHost, clearSelection, push],
+    [hostById, groups, tags, dropOnTarget, deleteHost, saveHost, clearSelection, push, t],
   );
 
   const menuItemsFor = useCallback(
     (host: HostProfile): MenuItem[] => [
-      { label: "Connect", onSelect: () => connectHost(host) },
+      { label: t("quick.connect"), onSelect: () => connectHost(host) },
       ...(allowMultiple
         ? [
             {
-              label: tabbed ? "Connect in new tab" : "Connect in new window",
+              label: tabbed
+                ? t("library.menuConnectNewTab")
+                : t("library.menuConnectNewWindow"),
               onSelect: () => connectHost(host, true),
             },
           ]
         : []),
       {
-        label: "Edit…",
+        label: t("library.menuEdit"),
         onSelect: () => editHost(host),
       },
       {
-        label: host.favorite ? "Remove from Favorites" : "Add to Favorites",
+        label: host.favorite
+          ? t("library.menuRemoveFavorite")
+          : t("library.menuAddFavorite"),
         onSelect: () => toggleFavorite(host.id),
       },
       {
-        label: "Duplicate",
+        label: t("library.menuDuplicate"),
         onSelect: () =>
           void saveHost({
             ...host,
             id: undefined,
-            friendlyName: `${host.friendlyName} copy`,
+            friendlyName: t("library.copyName", { name: host.friendlyName }),
             hasPassword: false,
           }).catch((err: unknown) =>
-            push("danger", `Could not duplicate ${host.friendlyName}: ${describeError(err)}`),
+            push(
+              "danger",
+              t("library.duplicateFailed", {
+                name: host.friendlyName,
+                reason: describeError(err),
+              }),
+            ),
           ),
       },
       {
-        label: "Wake (Wake-on-LAN)",
+        label: t("library.menuWake"),
         disabled: !host.wolMac,
         // A greyed-out row with no reason is a dead end: the person cannot
         // tell whether the app has forgotten something, whether there is
@@ -1271,9 +1331,15 @@ export function Library({
           // refuses when the host has no MAC address stored, and the old code
           // said "Magic packet sent" whether or not that had happened.
           void wakeHost(host.id)
-            .then(() => push("info", `Magic packet sent to ${host.friendlyName}`))
+            .then(() => push("info", t("library.magicPacketSent", { name: host.friendlyName })))
             .catch((err: unknown) =>
-              push("danger", `Could not wake ${host.friendlyName}: ${describeError(err)}`),
+              push(
+                "danger",
+                t("library.wakeFailed", {
+                  name: host.friendlyName,
+                  reason: describeError(err),
+                }),
+              ),
             );
         },
       },
@@ -1281,7 +1347,7 @@ export function Library({
         // Thumbnails are captured by the SESSION window (capture_thumbnail
         // takes a raw RGBA body, not a host id), so from here we can only
         // re-read what the store already has.
-        label: "Reload thumbnail",
+        label: t("library.menuReloadThumbnail"),
         onSelect: () => refreshThumbnail(host.id),
       },
       {
@@ -1289,18 +1355,15 @@ export function Library({
         // clicked through, so without this a legitimately rebuilt machine, // new TLS certificate or new RA2 key, would be permanently
         // unreachable. Forgetting returns it to first-contact state, where the
         // usual "Trust this computer" prompt applies.
-        label: "Forget saved key…",
+        label: t("library.menuForgetKey"),
         onSelect: () => {
           void forgetCertificate(host.address, host.port).then(() =>
-            push(
-              "info",
-              `Forgot the saved key for ${host.friendlyName}. You will be asked to verify it on the next connection.`,
-            ),
+            push("info", t("library.forgotKey", { name: host.friendlyName })),
           );
         },
       },
       {
-        label: "Delete…",
+        label: t("library.menuDelete"),
         danger: true,
         separatorAbove: true,
         onSelect: () => {
@@ -1314,13 +1377,19 @@ export function Library({
           // way, and this is the same operation with one row.
           void deleteHost(host.id).then(
             () => {
-              push("info", `Deleted ${host.friendlyName}`, {
-                label: "Undo",
+              push("info", t("library.deleted", { name: host.friendlyName }), {
+                label: t("library.undo"),
                 run: () => void saveHost({ ...host }),
               });
             },
             (error: unknown) => {
-              push("danger", `Could not delete ${host.friendlyName}: ${describeError(error)}`);
+              push(
+                "danger",
+                t("library.deleteFailed", {
+                  name: host.friendlyName,
+                  reason: describeError(error),
+                }),
+              );
             },
           );
         },
@@ -1354,8 +1423,8 @@ export function Library({
           <input
             ref={searchRef}
             className="field !ps-8"
-            placeholder={`Search or press ${modKeyLabel}K`}
-            aria-label="Search hosts"
+            placeholder={t("library.searchPlaceholder", { chord: modKeyLabel })}
+            aria-label={t("library.searchAria")}
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             onKeyDown={(e) => {
@@ -1364,24 +1433,24 @@ export function Library({
           />
         </div>
         <label className="flex shrink-0 items-center gap-1.5 text-xs text-secondary">
-          Sort
+          {t("library.sort")}
           <Select
             wrapperClassName="!inline-block"
             className="!w-auto !py-1 text-xs"
-            aria-label="Sort hosts"
+            aria-label={t("library.sortAria")}
             value={settings.sortKey}
             onChange={(e) => update({ sortKey: e.target.value as SortKey })}
           >
-            <option value="name">Name</option>
-            <option value="last-connected">Last connected</option>
-            <option value="frequency">Most used</option>
-            <option value="group">Group</option>
+            <option value="name">{t("host.name")}</option>
+            <option value="last-connected">{t("library.sortLastConnected")}</option>
+            <option value="frequency">{t("library.sortMostUsed")}</option>
+            <option value="group">{t("host.group")}</option>
           </Select>
         </label>
-        <div className="flex overflow-hidden rounded-sm border border-subtle" role="group" aria-label="View mode">
+        <div className="flex overflow-hidden rounded-sm border border-subtle" role="group" aria-label={t("library.viewMode")}>
           <button
             type="button"
-            aria-label="Grid view"
+            aria-label={t("library.gridView")}
             aria-pressed={settings.libraryView === "grid"}
             className={classNames("p-1.5", settings.libraryView === "grid" ? "bg-accent text-accent-fg" : "text-secondary hover:bg-inset")}
             onClick={() => update({ libraryView: "grid" })}
@@ -1390,7 +1459,7 @@ export function Library({
           </button>
           <button
             type="button"
-            aria-label="List view"
+            aria-label={t("library.listView")}
             aria-pressed={settings.libraryView === "list"}
             className={classNames("p-1.5", settings.libraryView === "list" ? "bg-accent text-accent-fg" : "text-secondary hover:bg-inset")}
             onClick={() => update({ libraryView: "list" })}
@@ -1401,11 +1470,11 @@ export function Library({
         {/* The same preference as Connections > "Show sessions as tabs", within
             reach of the moment it matters: about to connect. It decides where
             the NEXT session goes, so sessions already running stay put. */}
-        <div className="flex overflow-hidden rounded-sm border border-subtle" role="group" aria-label="Where sessions open">
+        <div className="flex overflow-hidden rounded-sm border border-subtle" role="group" aria-label={t("library.sessionsWhere")}>
           <button
             type="button"
-            aria-label="Open sessions in their own windows"
-            title="Open each session in its own window"
+            aria-label={t("library.sessionsInWindows")}
+            title={t("library.sessionOwnWindow")}
             aria-pressed={!tabbed}
             className={classNames("p-1.5", !tabbed ? "bg-accent text-accent-fg" : "text-secondary hover:bg-inset")}
             onClick={() => update({ windowMode: "windows" })}
@@ -1414,8 +1483,8 @@ export function Library({
           </button>
           <button
             type="button"
-            aria-label="Open sessions as tabs in this window"
-            title="Open sessions as tabs in this window"
+            aria-label={t("library.sessionsAsTabs")}
+            title={t("library.sessionsAsTabs")}
             aria-pressed={tabbed}
             className={classNames("p-1.5", tabbed ? "bg-accent text-accent-fg" : "text-secondary hover:bg-inset")}
             onClick={() => update({ windowMode: "tabs" })}
@@ -1426,8 +1495,8 @@ export function Library({
         <button
           type="button"
           aria-pressed={livePreviews}
-          aria-label="Live previews"
-          title="Live previews, tiles with an active session show a live picture instead of the saved thumbnail"
+          aria-label={t("library.livePreviews")}
+          title={t("library.livePreviewsHint")}
           className={classNames(
             "overflow-hidden rounded-sm border border-subtle p-1.5",
             livePreviews ? "bg-accent text-accent-fg" : "text-secondary hover:bg-inset",
@@ -1446,17 +1515,17 @@ export function Library({
             </span>
           ) : null}
           <IconZap size={14} />
-          {scan.running ? "Scanning…" : "Scan network"}
+          {scan.running ? t("library.scanning") : t("about.scanNetwork")}
         </button>
         <button type="button" className="btn-primary" onClick={() => setHostDialog(draftFromHost(null))}>
-          <IconPlus size={14} /> New Host
+          <IconPlus size={14} /> {t("host.new")}
         </button>
         {/* Routed through the same event the native menu's About item emits,
             so one listener (App.tsx) owns opening the dialog everywhere. */}
         <button
           type="button"
-          aria-label="About and help"
-          title="About and help"
+          aria-label={t("library.aboutAndHelp")}
+          title={t("library.aboutAndHelp")}
           className="overflow-hidden rounded-sm border border-subtle p-1.5 text-secondary hover:bg-inset"
           onClick={() => void emit("menu://action", { id: "menu:about" })}
         >
@@ -1513,7 +1582,7 @@ export function Library({
           // starts on a heading or on the empty-state copy would otherwise
           // drag a text highlight along with the rectangle.
           className="min-w-0 flex-1 select-none overflow-y-auto p-4"
-          aria-label="Hosts"
+          aria-label={t("library.hosts")}
         >
           {loading ? (
             <div className={gridClass} style={gridCap(8, settings.compact)}>
@@ -1524,19 +1593,19 @@ export function Library({
           ) : nothingSaved && unsavedDiscovered.length === 0 ? (
             <EmptyState
               icon={<IconMonitor size={56} />}
-              title="Let's find your computers"
-              body="DeskVNCViewer can discover computers on your local network automatically, or you can add one by address."
-              primary={{ label: "Find computers on my network", onClick: () => void startScan().catch((err: unknown) => push("danger", describeError(err))) }}
-              secondary={{ label: "Add a computer manually", onClick: () => setHostDialog(draftFromHost(null)) }}
+              title={t("library.emptyTitle")}
+              body={t("library.emptyBody")}
+              primary={{ label: t("library.findOnNetwork"), onClick: () => void startScan().catch((err: unknown) => push("danger", describeError(err))) }}
+              secondary={{ label: t("library.addComputerManually"), onClick: () => setHostDialog(draftFromHost(null)) }}
             />
           ) : (
             <>
               {selection.kind !== "nearby" ? (
                 visibleHosts.length === 0 && search.trim() ? (
                   <EmptyState
-                    title={`No computers match “${search.trim()}”`}
+                    title={t("library.noMatch", { search: search.trim() })}
                     primary={{
-                      label: `Add “${search.trim()}” as a new host`,
+                      label: t("library.addAsHost", { search: search.trim() }),
                       onClick: () =>
                         setHostDialog(draftFromHost(null, { address: search.trim(), friendlyName: search.trim() })),
                     }}
@@ -1553,7 +1622,13 @@ export function Library({
                         onEdit={() => editHost(h)}
                         onWake={() =>
                           void wakeHost(h.id).catch((err: unknown) =>
-                            push("danger", `Could not wake ${h.friendlyName}: ${describeError(err)}`),
+                            push(
+                              "danger",
+                              t("library.wakeFailed", {
+                                name: h.friendlyName,
+                                reason: describeError(err),
+                              }),
+                            ),
                           )
                         }
                         onContextMenu={(e) => {
@@ -1580,9 +1655,9 @@ export function Library({
               ) : null}
 
               {showNearbyBand ? (
-                <section className="mt-6" aria-label="Nearby, not yet saved">
+                <section className="mt-6" aria-label={t("library.nearbyHeading")}>
                   <h2 className="mb-3 text-2xs font-semibold uppercase tracking-wider text-tertiary">
-                    Nearby, not yet saved
+                    {t("library.nearbyHeading")}
                   </h2>
                   <div className={gridClass} style={gridCap(unsavedDiscovered.length, settings.compact)}>
                     {unsavedDiscovered.map((d) => (
@@ -1607,10 +1682,10 @@ export function Library({
               ) : selection.kind === "nearby" && unsavedDiscovered.length === 0 ? (
                 <EmptyState
                   icon={<IconZap size={48} />}
-                  title="Nothing discovered yet"
-                  body="Some computers don't advertise themselves on the network. You can actively scan this subnet, or add a computer by address."
-                  primary={{ label: "Scan this network", onClick: () => void startScan().catch((err: unknown) => push("danger", describeError(err))) }}
-                  secondary={{ label: "Add manually", onClick: () => setHostDialog(draftFromHost(null)) }}
+                  title={t("library.nothingDiscovered")}
+                  body={t("library.nothingDiscoveredBody")}
+                  primary={{ label: t("library.scanThisNetwork"), onClick: () => void startScan().catch((err: unknown) => push("danger", describeError(err))) }}
+                  secondary={{ label: t("library.addManually"), onClick: () => setHostDialog(draftFromHost(null)) }}
                 />
               ) : null}
             </>
@@ -1655,7 +1730,7 @@ export function Library({
           style={{ left: drag.x + 14, top: drag.y + 14 }}
         >
           <IconMonitor size={13} className="text-tertiary" />
-          {drag.ids.length === 1 ? hostName(drag.ids[0]) : `${drag.ids.length} hosts`}
+          {drag.ids.length === 1 ? hostName(drag.ids[0]) : t("library.hostsCount", { count: drag.ids.length })}
         </div>
       ) : null}
       {ctxMenu ? (
@@ -1705,8 +1780,20 @@ export function Library({
             // appeared in the sidebar, and the only trace was a console
             // warning nobody sees in a packaged app.
             void created.then(
-              () => push("success", `Created the ${kind} ${name}`),
-              (err: unknown) => push("danger", `Could not create the ${kind}: ${String(err)}`),
+              () =>
+                push(
+                  "success",
+                  kind === "group"
+                    ? t("library.groupCreated", { name })
+                    : t("library.tagCreated", { name }),
+                ),
+              (err: unknown) =>
+                push(
+                  "danger",
+                  kind === "group"
+                    ? t("library.groupCreateFailed", { reason: String(err) })
+                    : t("library.tagCreateFailed", { reason: String(err) }),
+                ),
             );
             setNamePrompt(null);
           }}
@@ -1746,6 +1833,7 @@ function SelectionBar({
   onAddTag: (tagId: string) => void;
   onClear: () => void;
 }): ReactNode {
+  const t = useT();
   return (
     <div
       className="fade-in absolute bottom-4 right-4 z-30 flex max-w-[calc(100%-2rem)] flex-wrap items-center gap-2 rounded-md border border-strong bg-raised/95 px-3 py-2 text-sm shadow-(--shadow-pop) backdrop-blur-sm"
@@ -1754,17 +1842,17 @@ function SelectionBar({
           have a screen reader re-read every control each time the count
           changed, which during a marquee is constantly. */}
       <span className="font-medium text-primary" role="status">
-        {count} hosts selected
+        {t("library.selectedCount", { count })}
       </span>
       <span className="hidden text-xs text-tertiary lg:inline">
-        Drag onto a group or tag in the sidebar, or:
+        {t("library.dragHint")}
       </span>
       <label className="flex items-center gap-1.5 text-xs text-secondary">
-        Group
+        {t("host.group")}
         <Select
           wrapperClassName="!inline-block"
           className="!w-auto !py-1 text-xs"
-          aria-label="Move selected hosts to a group"
+          aria-label={t("library.moveToGroupAria")}
           value=""
           onChange={(e) => {
             const v = e.target.value;
@@ -1772,21 +1860,21 @@ function SelectionBar({
             e.target.value = "";
           }}
         >
-          <option value="">Move to…</option>
+          <option value="">{t("library.moveTo")}</option>
           {groups.map((g) => (
             <option key={g.id} value={g.id}>
               {g.name}
             </option>
           ))}
-          <option value="__none__">No group</option>
+          <option value="__none__">{t("host.noGroup")}</option>
         </Select>
       </label>
       <label className="flex items-center gap-1.5 text-xs text-secondary">
-        Tag
+        {t("host.tags")}
         <Select
           wrapperClassName="!inline-block"
           className="!w-auto !py-1 text-xs"
-          aria-label="Add a tag to the selected hosts"
+          aria-label={t("library.addTagAria")}
           value=""
           onChange={(e) => {
             const v = e.target.value;
@@ -1794,16 +1882,16 @@ function SelectionBar({
             e.target.value = "";
           }}
         >
-          <option value="">Add tag…</option>
-          {tags.map((t) => (
-            <option key={t.id} value={t.id}>
-              {t.name}
+          <option value="">{t("library.addTag")}</option>
+          {tags.map((tag) => (
+            <option key={tag.id} value={tag.id}>
+              {tag.name}
             </option>
           ))}
         </Select>
       </label>
       <button type="button" className="btn-secondary ml-auto !py-1 !text-xs" onClick={onClear}>
-        Clear selection
+        {t("library.clearSelection")}
       </button>
     </div>
   );
@@ -1836,13 +1924,13 @@ function HostListView({
       <table className="w-full border-collapse text-sm">
         <thead>
           <tr className="border-b border-subtle text-start text-xs text-tertiary">
-            <th className="px-3 py-2 font-medium">Name</th>
-            <th className="px-3 py-2 font-medium">Address</th>
-            <th className="px-3 py-2 font-medium">Group</th>
-            <th className="px-3 py-2 font-medium">Tags</th>
-            {showProtocol ? <th className="px-3 py-2 font-medium">Protocol</th> : null}
-            <th className="px-3 py-2 font-medium">OS</th>
-            <th className="px-3 py-2 font-medium">Last connected</th>
+            <th className="px-3 py-2 font-medium">{t("host.name")}</th>
+            <th className="px-3 py-2 font-medium">{t("host.address")}</th>
+            <th className="px-3 py-2 font-medium">{t("host.group")}</th>
+            <th className="px-3 py-2 font-medium">{t("host.tags")}</th>
+            {showProtocol ? <th className="px-3 py-2 font-medium">{t("library.colProtocol")}</th> : null}
+            <th className="px-3 py-2 font-medium">{t("host.os")}</th>
+            <th className="px-3 py-2 font-medium">{t("library.sortLastConnected")}</th>
           </tr>
         </thead>
         <tbody>
@@ -1878,7 +1966,7 @@ function HostListView({
                   <span
                     className={classNames("h-2 w-2 rounded-full", h.online ? "bg-success" : "bg-tertiary/60")}
                     role="img"
-                    aria-label={h.online ? "Online" : "Offline or unknown"}
+                    aria-label={h.online ? t("library.online") : t("library.offline")}
                   />
                   <span className="font-medium text-primary">{h.friendlyName}</span>
                   {selectedIds.has(h.id) ? (
@@ -1951,8 +2039,13 @@ function NamePromptDialog({
 }): ReactNode {
   const [name, setName] = useState("");
   const [color, setColor] = useState(TAG_COLORS[3]);
+  const t = useT();
   return (
-    <Dialog title={kind === "group" ? "New Group" : "New Tag"} onClose={onClose} width={400}>
+    <Dialog
+      title={kind === "group" ? t("library.newGroup") : t("library.newTag")}
+      onClose={onClose}
+      width={400}
+    >
       <form
         className="space-y-4"
         onSubmit={(e) => {
@@ -1963,20 +2056,20 @@ function NamePromptDialog({
         <input
           data-autofocus
           className="field"
-          placeholder={kind === "group" ? "Office" : "prod"}
-          aria-label={`${kind} name`}
+          placeholder={kind === "group" ? t("library.groupPlaceholder") : t("library.tagPlaceholder")}
+          aria-label={kind === "group" ? t("library.groupNameAria") : t("library.tagNameAria")}
           value={name}
           onChange={(e) => setName(e.target.value)}
         />
         {kind === "tag" ? (
-          <div className="flex gap-2" role="radiogroup" aria-label="Tag color">
+          <div className="flex gap-2" role="radiogroup" aria-label={t("library.tagColorAria")}>
             {TAG_COLORS.map((c) => (
               <button
                 key={c}
                 type="button"
                 role="radio"
                 aria-checked={color === c}
-                aria-label={`Color ${c}`}
+                aria-label={t("library.colorAria", { color: c })}
                 className={classNames(
                   "h-6 w-6 rounded-full border-2",
                   color === c ? "border-primary" : "border-transparent",
@@ -1989,10 +2082,10 @@ function NamePromptDialog({
         ) : null}
         <div className="flex justify-end gap-2.5">
           <button type="button" className="btn-secondary" onClick={onClose}>
-            Cancel
+            {t("host.cancel")}
           </button>
           <button type="submit" className="btn-primary" disabled={!name.trim()}>
-            Create
+            {t("library.create")}
           </button>
         </div>
       </form>

@@ -55,7 +55,7 @@ export function Onboarding({
     <div className="flex h-full items-center justify-center bg-canvas p-6">
       <div className="w-[520px] max-w-full rounded-lg border border-subtle bg-surface p-8 shadow-(--shadow-pop)">
         {/* progress */}
-        <div className="mb-6 flex items-center gap-2" aria-label={`Step ${step + 1} of 3`}>
+        <div className="mb-6 flex items-center gap-2" aria-label={t("onboarding.stepAria", { step: step + 1, total: 3 })}>
           {[0, 1, 2].map((i) => (
             <span
               key={i}
@@ -72,13 +72,11 @@ export function Onboarding({
             <div className="flex justify-center text-accent">
               <IconMonitor size={56} />
             </div>
-            <h1 className="text-center text-xl font-semibold text-primary">Welcome to DeskVNCViewer</h1>
-            <p className="text-center text-sm text-secondary">
-              See and control your other computers, fast, secure, and entirely yours. No account, ever.
-            </p>
+            <h1 className="text-center text-xl font-semibold text-primary">{t("onboarding.welcome")}</h1>
+            <p className="text-center text-sm text-secondary">{t("onboarding.tagline")}</p>
             <div>
-              <p className="mb-2 text-xs font-medium text-secondary">Appearance</p>
-              <div className="flex gap-2" role="radiogroup" aria-label="Theme">
+              <p className="mb-2 text-xs font-medium text-secondary">{t("onboarding.appearance")}</p>
+              <div className="flex gap-2" role="radiogroup" aria-label={t("onboarding.themeAria")}>
                 {(["system", "light", "dark"] as ThemeChoice[]).map((theme) => (
                   <button
                     key={theme}
@@ -93,7 +91,7 @@ export function Onboarding({
                     )}
                     onClick={() => update({ theme })}
                   >
-                    {theme === "system" ? "Follow System" : theme}
+                    {theme === "system" ? t("onboarding.themeSystem") : theme}
                   </button>
                 ))}
               </div>
@@ -106,7 +104,7 @@ export function Onboarding({
             <div className="flex justify-center text-accent">
               <IconZap size={56} />
             </div>
-            <h1 className="text-center text-xl font-semibold text-primary">Find your computers</h1>
+            <h1 className="text-center text-xl font-semibold text-primary">{t("onboarding.findComputers")}</h1>
             <p className="text-center text-sm text-secondary">
               DeskVNCViewer listens for computers advertising screen sharing on your local network.
               Your OS may ask permission to access the local network, that's this feature.
@@ -169,7 +167,7 @@ export function Onboarding({
             <div className="flex justify-center text-accent">
               <IconLock size={56} />
             </div>
-            <h1 className="text-center text-xl font-semibold text-primary">Save your first computer</h1>
+            <h1 className="text-center text-xl font-semibold text-primary">{t("onboarding.saveFirst")}</h1>
             <p className="text-center text-sm text-secondary">
               Give it a friendly name and, if you save a password, it's stored in your system
               keychain, never in a file.
