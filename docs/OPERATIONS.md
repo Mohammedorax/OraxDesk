@@ -80,7 +80,42 @@ npx.cmd wrangler versions deploy <version-id>
 ```
 تغييرات D1 لا تتراجع تلقائيًا؛ استخدم Time Travel بعد أخذ نسخة. الأسرار تبقى كما هي عند التراجع.
 
-## 9. أدلة التشغيل
+## 9. مراقبة السجل
+
+السجل صار **العمود الفقري** لنشر آلة: هو الذي يجعل «الرقم التسعيمي» قابلًا للبحث، وهو ما يربط النشر الخاص بالبحث الخاص. لا يكفي أن يعمل: يجب أن يُعرف **أنه لا يعمل**.
+
+### 9.1 ما يجب مراقبته
+
+| المؤشر | أين | ماذا يعني |
+|---|---|---|
+| **الصحة** | `GET /healthz` | `ok` يعني أن الإعداد سليم؛ `missing` يعني أن `INVITATION_KEY` غير مضبوط، و`invalid` يعني أنه ليس 32 بايت |
+| **أخطاء 5xx** | سجلات الـ Worker | أي 5xx يعني خطأً في الخادم. السجل يقدّم `method/path/status/ms` فقط، بلا أجسام ولا أسرار |
+| **الأجهزة الحيّة** | D1 | `SELECT count(*) FROM devices WHERE last_seen_at > unixepoch() - 3600` |
+| **الطلبات** | Cloudflare Analytics | القفزة أو الانهيار في عدد التسجيلات يعني مشكلة في الإصدار الجديد |
+
+### 9.2 الأوامر
+
+```powershell
+# السجلات الحيّة
+npx.cmd wrangler tail orax-registry --format pretty
+
+# هل يرى السجل الأجهزة؟
+npx.cmd wrangler d1 execute oraxdesk-db --remote --command "SELECT count(*) AS live FROM devices WHERE last_seen_at > unixepoch() - 3600"
+
+# هل تُنظَّف الجداول؟
+npx.cmd wrangler d1 execute oraxdesk-db --remote --command "SELECT (SELECT count(*) FROM signal_codes) AS codes, (SELECT count(*) FROM auth_nonces) AS nonces, (SELECT count(*) FROM audit_events) AS audit"
+```
+
+### 9.3 ما لا يوجد، بصراحة
+
+**لا توجد تنبيهات آلية.** السجلات موجودة (`observability` مفعّل) ولا يوجد فوقها جرس: التنبيه يحتاج مزوّدًا خارج هذا المستودع، وإعداده قرارٌ تشغيلي يخصّ من يملك الحساب.
+
+ما يبقى على المشغّل هو أن يفحص health على جدول، أو يراقب الـ 5xx من Cloudflare، أو يضع فحصًا خارجيًّا على `/healthz`. أي واحد منها يحوّل «السجل سقط» من شيء يكتشفه المستخدم — على شاشة لا يفهمها — إلى شيء يعرفه المشغّل أولًا.
+
+الواجهة نفسها تعرض الحالة: لوحة السجل في التطبيق تعرض سبب التعطّل (`missing` / `invalid`) بدل زرّ ميّت.
+
+
+## 10. أدلة التشغيل
 
 - النشر والتحقق: [CLOUDFLARE_DEPLOYMENT.md](CLOUDFLARE_DEPLOYMENT.md)
 - نموذج الأمان: [SECURITY_MODEL.md](SECURITY_MODEL.md)
