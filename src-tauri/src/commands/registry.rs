@@ -29,6 +29,9 @@ use crate::state::AppState;
 /// The setting the registry origin is stored under.
 const REGISTRY_ORIGIN_KEY: &str = "registry_origin";
 
+/// The setting the number the registry knows this computer by is stored under.
+const REGISTRY_NUMBER_KEY: &str = "registry_number";
+
 /// This computer's lasting identity, the same key Boundary already uses.
 fn machine_key() -> Result<SecretKey, String> {
     let dir = boundary_provision::platform::data_dir().map_err(|error| format!("{error:#}"))?;
@@ -121,7 +124,7 @@ pub struct MachineIdentity {
 }
 
 #[tauri::command]
-pub async fn machine_identity() -> Result<MachineIdentity, String> {
+pub async fn machine_identity(state: State<'_, AppState>) -> Result<MachineIdentity, String> {
     // The key lives on disk or in the keychain, so reading it is I/O. A
     // command that is not `async` runs inline on the IPC thread, which is the
     // main thread, and the window freezes behind it. The sibling commands
@@ -132,9 +135,17 @@ pub async fn machine_identity() -> Result<MachineIdentity, String> {
     let key = tokio::task::spawn_blocking(machine_key)
         .await
         .map_err(|error| error.to_string())??;
+    // The number the REGISTRY knows this computer by wins over the local
+    // derivation: two devices can derive the same one, and the registry
+    // takes the next free number when that happens. Showing the derived
+    // number then would be showing a number nobody can look up.
+    let number = match registered_number(&state).await {
+        Some(number) => number,
+        None => orax_registry::device_number(&key),
+    };
     Ok(MachineIdentity {
         id: boundary_session::unattended::machine_id(&key),
-        number: orax_registry::device_number(&key),
+        number,
     })
 }
 
@@ -302,10 +313,41 @@ pub async fn registry_register_device(
         .await
         .map_err(|error| error.to_string())??;
     let computer = boundary_provision::platform::computer_name();
-    client(&origin)?
+    let record = client(&origin)?
         .register(&keys, Some(computer.as_str()), env!("CARGO_PKG_VERSION"))
         .await
+        .map_err(|error| error.to_string())?;
+    // The number the REGISTRY has is the number this computer is known by.
+    //
+    // The number is derived from the key, so two devices can derive the same
+    // one, and the registry takes the next free number when that happens.
+    // The local derivation is only the starting point, so a device whose
+    // number was taken must show the registry's, or the number a person
+    // reads out loud is one nobody can look up.
+    if let Some(number) = record.number.as_deref() {
+        remember_registry_number(&state, number).await?;
+    }
+    Ok(record)
+}
+
+/// Remember the number the registry knows this computer by.
+async fn remember_registry_number(state: &AppState, number: &str) -> Result<(), String> {
+    let store = state.store.clone();
+    let number = number.to_owned();
+    super::blocking(move || store.set_setting(REGISTRY_NUMBER_KEY, &number))
+        .await
         .map_err(|error| error.to_string())
+}
+
+/// The number the registry knows this computer by, when it has said.
+async fn registered_number(state: &AppState) -> Option<String> {
+    let store = state.store.clone();
+    super::blocking(move || store.get_setting(REGISTRY_NUMBER_KEY))
+        .await
+        .ok()
+        .flatten()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
 }
 
 /// Register this helper under its lasting key. Separate from the machine

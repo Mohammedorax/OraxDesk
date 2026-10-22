@@ -210,31 +210,37 @@ export async function registerDevice(
   }
 
   const fingerprint = await sha256Hex(publicKey);
-  await env.DB.prepare(
-    `INSERT INTO devices
-       (id, public_key, fingerprint, number, label, client_version, protocol_version, created_at, updated_at, last_seen_at, registry_key)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  )
-    .bind(
-      id,
-      publicKey,
-      fingerprint,
-      number,
-      label,
-      clientVersion,
-      protocolVersion,
-      now,
-      now,
-      now,
-      registryKey,
-    )
-    .run();
+  // The number is DERIVED from the key, so two devices can derive the same
+  // one, and the space is a billion, so that is rare and it gets rarer as
+  // the registry grows.
+  //
+  // It still has to be handled, because the failure mode is not "one device
+  // has a different number". It is that the UNIQUE index refuses the
+  // insert, the refusal comes back as a 500, and the device can NEVER
+  // register: the number is derived from its identity, so retrying changes
+  // nothing. A computer that cannot register is a computer nobody can help.
+  //
+  // So the number is DISAMBIGUATED: the next free number in a small window
+  // is taken, and the client is told which one it got, because the number
+  // is what a person reads out loud and it has to be the one the registry
+  // has. The client shows the registry's number for exactly this reason.
+  const assigned = await insertWithFreeNumber(env, {
+    id,
+    publicKey,
+    fingerprint,
+    base: number,
+    label,
+    clientVersion,
+    protocolVersion,
+    now,
+    registryKey,
+  });
   await audit(env, "device.registered", id);
   return jsonResponse(
     deviceView({
       id,
       fingerprint,
-      number,
+      number: assigned,
       protocol_version: protocolVersion,
       client_version: clientVersion,
       created_at: now,
@@ -243,6 +249,84 @@ export async function registerDevice(
     }),
     201,
   );
+}
+
+/**
+ * Insert the device, taking the next free number if the derived one is
+ * taken.
+ *
+ * The check and the insert are not one statement, so two devices can pick
+ * the same disambiguated number at the same moment. The UNIQUE constraint is
+ * the real guard, and a loser of that race tries again with the next
+ * candidate. The number of attempts is bounded, and the last failure is a
+ * CONFLICT with a code the client can tell from a server fault: a 500 says
+ * "something broke", and a 409 says "this computer's number is taken", and
+ * only one of those is true.
+ */
+async function insertWithFreeNumber(
+  env: Env,
+  row: {
+    id: string;
+    publicKey: Uint8Array;
+    fingerprint: string;
+    base: string;
+    label: string | null;
+    clientVersion: string | null;
+    protocolVersion: number;
+    now: number;
+    registryKey: Uint8Array | null;
+  },
+): Promise<string> {
+  const start = Number(row.base);
+  // The window is small on purpose: the numbers are read out loud, so a
+  // number far from the derived one is a number a person will read wrong.
+  const WINDOW = 100;
+  for (let round = 0; round < 5; round += 1) {
+    for (let offset = 0; offset < WINDOW; offset += 1) {
+      const candidate = String((start + offset) % 1_000_000_000).padStart(9, "0");
+      const taken = await env.DB.prepare(
+        "SELECT id FROM devices WHERE number = ? LIMIT 1",
+      )
+        .bind(candidate)
+        .first<{ id: string }>();
+      if (taken !== null) continue;
+      try {
+        await env.DB.prepare(
+          `INSERT INTO devices
+             (id, public_key, fingerprint, number, label, client_version, protocol_version, created_at, updated_at, last_seen_at, registry_key)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+          .bind(
+            row.id,
+            row.publicKey,
+            row.fingerprint,
+            candidate,
+            row.label,
+            row.clientVersion,
+            row.protocolVersion,
+            row.now,
+            row.now,
+            row.now,
+            row.registryKey,
+          )
+          .run();
+        return candidate;
+      } catch (error) {
+        // Someone took it between the check and the insert. Try the next one.
+        if (!isUniqueViolation(error)) throw error;
+      }
+    }
+  }
+  throw new ApiError(
+    409,
+    "conflict",
+    "this computer's number is taken; contact the registry administrator",
+  );
+}
+
+/** Whether a D1 error is a UNIQUE constraint being refused. */
+function isUniqueViolation(error: unknown): boolean {
+  return String((error as Error)?.message ?? error).includes("UNIQUE");
 }
 
 /** Public record. It deliberately carries no address, label or secret. */

@@ -77,13 +77,16 @@ describe("last seen", () => {
   it("is recorded when the device calls", async () => {
     const device = await newDevice();
     await register(device);
+    // The call has to be one the Worker AUTHENTICATES, or it proves
+    // nothing: `GET /v1/devices` is not a route, so it answered 404 and the
+    // `last_seen_at` the assertion read was the one the REGISTRATION wrote.
+    // The test passed for the wrong reason, and it passed only because the
+    // registration and the call landed in the same second.
+    //
+    // Creating a code is an authenticated call, so it is the one that moves
+    // the stamp.
     const before = nowSeconds();
-    await SELF.fetch(
-      await signedRequest("/v1/devices", device, {
-        method: "GET",
-        body: { public_key: b64urlEncode(device.publicKey) },
-      }),
-    );
+    await createSignal(device, makeInvitation());
     const row = await testDb
       .prepare("SELECT last_seen_at FROM devices WHERE id = ?")
       .bind(device.id)
@@ -532,6 +535,90 @@ describe("the device directory", () => {
     expect(response.status).toBe(400);
   });
 });
+
+describe("the device number", () => {
+  it("gives a device another number rather than refusing it forever", async () => {
+    // The number is DERIVED from the key, so two devices can derive the same
+    // one. The space is a billion, so it is rare, and it gets rarer as the
+    // registry grows.
+    //
+    // It still has to be handled, because the failure was not "one device has
+    // a different number": it was that the UNIQUE index refused the insert,
+    // the refusal came back as a 500, and the device could NEVER register.
+    // The number comes from its identity, so retrying changed nothing. A
+    // computer that cannot register is a computer nobody can help.
+    //
+    // So the second device is given the next free number, and it is told
+    // which one, because the number is what a person reads out loud.
+    const first = await newDevice();
+    const second = await newDevice();
+
+    // The first device takes the number derived from its key.
+    const registered = await register(first);
+    expect(registered.status).toBe(201);
+    const firstBody = await jsonBody<{ number: string }>(registered);
+    expect(firstBody.number).toBe(await derivedNumber(first.publicKey));
+
+    // The second device's number is now taken: the first device is moved
+    // onto it, which is exactly what a collision looks like from the
+    // registry's side.
+    const secondNumber = await derivedNumber(second.publicKey);
+    expect(secondNumber).not.toBe(firstBody.number);
+    const taken = await testDb
+      .prepare("UPDATE devices SET number = ? WHERE id = ?")
+      .bind(secondNumber, first.id)
+      .run();
+    expect(taken.meta.changes).toBe(1);
+
+    const collided = await register(second);
+    expect(collided.status).toBe(201);
+    const secondBody = await jsonBody<{ number: string }>(collided);
+    // A different number, and a real one.
+    expect(secondBody.number).not.toBe(secondNumber);
+    expect(secondBody.number).toMatch(/^\d{9}$/);
+    // And it is the number the registry stored, so a helper can look it up.
+    const stored = await testDb
+      .prepare("SELECT number FROM devices WHERE id = ?")
+      .bind(second.id)
+      .first<{ number: string }>();
+    expect(stored?.number).toBe(secondBody.number);
+  });
+
+  it("keeps the number a registered device already has", async () => {
+    // A refresh must not move a device to a different number: the number is
+    // on a screen and in a conversation, and a number that changes under
+    // the person who read it out is worse than one that was never unique.
+    const device = await newDevice();
+    await register(device);
+    const first = await jsonBody<{ number: string }>(
+      await register(device),
+    );
+    const moved = await testDb
+      .prepare("UPDATE devices SET number = ? WHERE id = ?")
+      .bind("999999999", device.id)
+      .run();
+    expect(moved.meta.changes).toBe(1);
+    const again = await jsonBody<{ number: string }>(await register(device));
+    expect(again.number).toBe("999999999");
+  });
+});
+
+/**
+ * The number a key derives, the way the registry derives it.
+ *
+ * The test needs it because a collision is two devices deriving the SAME
+ * number, and two keys with the same derivation cannot be made. So the
+ * registry's own rule is used to move one device onto the other's number,
+ * which is what a collision looks like from its side.
+ */
+async function derivedNumber(publicKey: Uint8Array): Promise<string> {
+  const digest = new Uint8Array(
+    await crypto.subtle.digest("SHA-256", publicKey as unknown as BufferSource),
+  );
+  const value =
+    ((digest[0]! << 24) | (digest[1]! << 16) | (digest[2]! << 8) | digest[3]!) >>> 0;
+  return String(value % 1_000_000_000).padStart(9, "0");
+}
 
 describe("the limits", () => {
   it("refuses a flood of registrations from one address", async () => {
