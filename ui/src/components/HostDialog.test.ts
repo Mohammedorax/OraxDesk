@@ -5,6 +5,7 @@ import { act } from "react";
 import { HostDialog, draftFromHost, type HostDraft } from "./HostDialog";
 import { blankHostProfile } from "../lib/types";
 import { vncCredentialPayload, vncTakesUsername } from "../lib/hostDraft";
+import { translatorFor } from "../lib/i18n";
 
 // The editor asks the keychain for saved names and whether a password is
 // there. Those answers are what a host saved by 0.29.0 would give.
@@ -29,6 +30,20 @@ afterEach(() => {
   act(() => root.unmount());
   host.remove();
 });
+
+/**
+ * The labels the dialog will show.
+ *
+ * They come from the catalogue rather than from a literal, because the
+ * dialog is rendered here WITHOUT the i18n provider, and the provider-less
+ * fallback is the language the app starts in: ARABIC. A test that hardcoded
+ * the English label would have been testing a build of the app that does not
+ * exist.
+ *
+ * So the test asks the catalogue what the label is, in the language the
+ * dialog will use, and a change to the wording moves the test with it.
+ */
+const t = translatorFor("ar");
 
 /** A Mac saved with Apple Screen Sharing whose library row says "no password". */
 function savedMac(): HostDraft {
@@ -82,17 +97,17 @@ async function open(onSave: (d: HostDraft) => void): Promise<void> {
 describe("editing a saved Mac", () => {
   it("shows the saved user name and says a password is kept", async () => {
     await open(() => {});
-    expect(field("User name").value).toBe("alice");
-    expect(field("Password").placeholder).toContain("unchanged");
+    expect(field(t("host.userName")).value).toBe("alice");
+    expect(field(t("host.password")).placeholder).toContain(t("host.unchanged"));
   });
 
   it("saves a new user name and password typed over the old ones", async () => {
     const saved: HostDraft[] = [];
     await open((d) => saved.push(d));
-    type(field("User name"), "bob");
-    type(field("Password"), "new-secret");
+    type(field(t("host.userName")), "bob");
+    type(field(t("host.password")), "new-secret");
     await act(async () => {
-      button("Save Changes").click();
+      button(t("host.saveChanges")).click();
     });
     expect(saved).toHaveLength(1);
     const d = saved[0];
@@ -107,7 +122,7 @@ describe("editing a saved Mac", () => {
     const saved: HostDraft[] = [];
     await open((d) => saved.push(d));
     await act(async () => {
-      button("Save Changes").click();
+      button(t("host.saveChanges")).click();
     });
     const d = saved[0];
     expect(d.password).toBe("");

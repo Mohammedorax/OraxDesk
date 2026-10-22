@@ -4,7 +4,7 @@ import { DeviceNumber } from "./DeviceNumber";
 import { RegistryCodePanel } from "./RegistryCodePanel";
 import { writeClipboard } from "../lib/tauri";
 import { Dialog } from "./primitives";
-import { useI18n } from "../lib/i18n";
+import { useI18n, useT } from "../lib/i18n";
 import {
   setCodeService,
   shortId,
@@ -108,6 +108,7 @@ function Body({ view }: { view: SupportView }): ReactNode {
 type Run = (action: () => Promise<unknown>) => void;
 
 function Copy({ text, label }: { text: string; label: string }): ReactNode {
+  const t = useT();
   const [done, setDone] = useState(false);
   return (
     <button
@@ -120,21 +121,22 @@ function Copy({ text, label }: { text: string; label: string }): ReactNode {
         });
       }}
     >
-      {done ? "Copied" : label}
+      {done ? t("gethelp.copied") : label}
     </button>
   );
 }
 
 function ScreenPermission(): ReactNode {
+  const t = useT();
   return (
     <div className="flex flex-col gap-2 text-sm">
-      <p>Screen Recording permission is needed to share.</p>
+      <p>{t("gethelp.screenPermission")}</p>
       <div>
         <button type="button" className="btn-secondary" onClick={() => void support.requestScreenPermission()}>
-          Allow screen recording
+          {t("gethelp.allowScreenRecording")}
         </button>
       </div>
-      <p className="text-xs text-secondary">After granting it, quit and reopen DeskVNC if sharing still fails.</p>
+      <p className="text-xs text-secondary">{t("gethelp.screenPermissionHint")}</p>
     </div>
   );
 }
@@ -163,13 +165,13 @@ function Share({ view, run }: { view: SupportView; run: Run }): ReactNode {
   let body: ReactNode;
   if (!view.sharing) {
     if (!view.screenPermission) body = <ScreenPermission />;
-    else if (view.displays.length === 0) body = <p className="text-sm text-danger">No display found to share.</p>;
+    else if (view.displays.length === 0) body = <p className="text-sm text-danger">{t("gethelp.noDisplayToShare")}</p>;
     else
       body = (
         <>
           {view.displays.length > 1 ? (
             <label className="text-sm">
-              Sharing
+              {t("gethelp.shareScreen")}
               <div className="mt-1">
                 <DisplayPicker view={view} run={run} />
               </div>
@@ -189,11 +191,11 @@ function Share({ view, run }: { view: SupportView; run: Run }): ReactNode {
   } else if (!view.invitation || view.codeBusy) {
     body = (
       <>
-        <p className="text-sm text-secondary">{view.invitation ? "Getting your code…" : "Creating your code…"}</p>
+        <p className="text-sm text-secondary">{view.invitation ? t("gethelp.gettingCode") : t("gethelp.creatingCode")}</p>
         {view.invitation ? (
           <div>
             <button type="button" className="btn-secondary px-3 py-1 text-xs" onClick={() => run(support.fullInvitation)}>
-              Use the full invitation instead
+              {t("gethelp.useFullInvitation")}
             </button>
           </div>
         ) : null}
@@ -221,9 +223,9 @@ function Share({ view, run }: { view: SupportView; run: Run }): ReactNode {
           onFocus={(event) => event.target.select()}
         />
         <div>
-          <Copy text={view.invitation} label="Copy invitation" />
+          <Copy text={view.invitation} label={t("gethelp.copyInvitationText")} />
         </div>
-        <p className="text-xs text-secondary">Send it in any chat and keep it private. It is valid for one session.</p>
+        <p className="text-xs text-secondary">{t("gethelp.sendPrivately")}</p>
         {view.codeMessage ? <p className="text-sm text-danger">{view.codeMessage}</p> : null}
       </>
     );
@@ -231,10 +233,11 @@ function Share({ view, run }: { view: SupportView; run: Run }): ReactNode {
   return (
     <div className="flex flex-col gap-3">
       <div>
-        <h3 className="font-semibold">Allow remote control</h3>
+        <h3 className="font-semibold">{t("gethelp.allowRemoteControl")}</h3>
         <p className="text-sm text-secondary">
-          Give the person helping you {view.codesAvailable ? "this code" : "this invitation"}. They see nothing until you
-          approve them.
+          {t("gethelp.giveAccess", {
+            what: view.codesAvailable ? t("gethelp.thisCode") : t("gethelp.thisInvitation"),
+          })}
         </p>
       </div>
       {view.unattended.machineId ? <DeviceNumber machineId={view.unattended.machineId} /> : null}
@@ -243,7 +246,7 @@ function Share({ view, run }: { view: SupportView; run: Run }): ReactNode {
       {view.sharing ? (
         <div>
           <button type="button" className="btn-secondary" onClick={() => run(support.stop)}>
-            Cancel
+            {t("support.cancel")}
           </button>
         </div>
       ) : null}
@@ -258,11 +261,11 @@ function UnattendedSummary({ view }: { view: SupportView }): ReactNode {
   return (
     <div className="mt-2 border-t border-subtle pt-3 text-sm">
       <p>
-        Unattended access:{" "}
+        {t("gethelp.unattended")}:{" "}
         {u.enabled ? (
-          <span className="text-success">{u.reachable ? "On" : "Starting"}</span>
+          <span className="text-success">{u.reachable ? t("gethelp.on") : t("gethelp.starting")}</span>
         ) : (
-          <span className="text-secondary">Off. Change it under Settings.</span>
+          <span className="text-secondary">{t("gethelp.offInSettings")}</span>
         )}
       </p>
       {u.enabled ? (
@@ -280,14 +283,13 @@ function UnattendedSummary({ view }: { view: SupportView }): ReactNode {
 
 /** While a helper is connected. */
 function Sharing({ view, run }: { view: SupportView; run: Run }): ReactNode {
+  const t = useT();
   const helper = view.helper;
   return (
     <div className="flex flex-col gap-3">
       <div>
-        <h3 className="font-semibold">Your screen is being shared</h3>
-        <p className="text-sm text-secondary">
-          The helper can see the selected display, including notifications and this window.
-        </p>
+        <h3 className="font-semibold">{t("gethelp.screenShared")}</h3>
+        <p className="text-sm text-secondary">{t("gethelp.helperSees")}</p>
       </div>
       <label className="flex items-center gap-2 text-sm">
         <input
@@ -296,13 +298,13 @@ function Sharing({ view, run }: { view: SupportView; run: Run }): ReactNode {
           disabled={!view.inputPermission}
           onChange={(event) => run(() => support.setControl(event.target.checked))}
         />
-        Allow the helper to control my mouse and keyboard
+        {t("gethelp.allowControl")}
       </label>
       {!view.inputPermission ? (
         <div className="text-sm">
-          <p className="text-secondary">Control needs Accessibility permission. Viewing works without it.</p>
+          <p className="text-secondary">{t("gethelp.controlNeedsAccessibility")}</p>
           <button type="button" className="btn-secondary mt-1" onClick={() => void support.openInputSettings()}>
-            Open Accessibility settings
+            {t("gethelp.openAccessibility")}
           </button>
         </div>
       ) : null}
@@ -314,11 +316,11 @@ function Sharing({ view, run }: { view: SupportView; run: Run }): ReactNode {
               checked={view.tools}
               onChange={(event) => run(() => support.setTools(event.target.checked))}
             />
-            Allow the helper's tools to run commands and copy files
+            {t("gethelp.allowTools")}
           </label>
           {view.activity.length > 0 ? (
             <div>
-              <p className="text-xs text-secondary">What their tools did</p>
+              <p className="text-xs text-secondary">{t("gethelp.toolsDid")}</p>
               {view.activity.map((line, index) => (
                 <p key={index} className="mono truncate text-xs">
                   {line}
@@ -330,26 +332,23 @@ function Sharing({ view, run }: { view: SupportView; run: Run }): ReactNode {
       ) : null}
       {helper ? (
         helper.paired ? (
-          <p className="text-sm text-secondary">
-            {helper.name} can connect to this computer any time. Remove them under Settings, Unattended access, to stop
-            it.
-          </p>
+          <p className="text-sm text-secondary">{t("gethelp.pairedHelperNote", { name: helper.name })}</p>
         ) : (
           <div>
             <button
               type="button"
               className="btn-secondary"
-              title="They are remembered by their connection's key. You can remove them later under Settings."
+              title={t("gethelp.pairTitle")}
               onClick={() => run(support.pair)}
             >
-              Let {helper.name} connect any time, even when I am away
+              {t("gethelp.pairButton", { name: helper.name })}
             </button>
           </div>
         )
       ) : null}
       <div>
         <button type="button" className="btn-danger" onClick={() => run(support.stop)}>
-          End session
+          {t("gethelp.endSession")}
         </button>
       </div>
     </div>
@@ -370,27 +369,26 @@ function StatusLine({ view }: { view: SupportView }): ReactNode {
 }
 
 function ScreenSettings({ view, run }: { view: SupportView; run: Run }): ReactNode {
+  const t = useT();
   return (
     <section className="flex flex-col gap-2">
-      <h3 className="font-semibold">Screen to share</h3>
+      <h3 className="font-semibold">{t("gethelp.screenToShare")}</h3>
       {view.displays.length > 0 ? (
         <div className="flex gap-2">
           <DisplayPicker view={view} run={run} />
           <button type="button" className="btn-secondary shrink-0" onClick={() => run(support.refreshDisplays)}>
-            Refresh
+            {t("gethelp.refresh")}
           </button>
         </div>
       ) : (
-        <p className="text-sm text-danger">No display found.</p>
+        <p className="text-sm text-danger">{t("gethelp.noDisplay")}</p>
       )}
       {!view.screenPermission ? <ScreenPermission /> : null}
       {!view.inputPermission ? (
         <div className="text-sm">
-          <p className="text-secondary">
-            Accessibility permission is needed for a helper to control this computer. Viewing works without it.
-          </p>
+          <p className="text-secondary">{t("gethelp.accessibilityNeeded")}</p>
           <button type="button" className="btn-secondary mt-1" onClick={() => void support.openInputSettings()}>
-            Open Accessibility settings
+            {t("gethelp.openAccessibility")}
           </button>
         </div>
       ) : null}
@@ -423,38 +421,29 @@ function UnattendedSettings({ view, run }: { view: SupportView; run: Run }): Rea
   };
   return (
     <section className="flex flex-col gap-2 text-sm">
-      <h3 className="font-semibold">Unattended access</h3>
-      <p className="text-secondary">
-        Let people you trust connect to this computer when nobody is here to approve. Off unless you switch it on.
-        DeskVNC must be running for it to work.
-      </p>
+      <h3 className="font-semibold">{t("gethelp.unattended")}</h3>
+      <p className="text-secondary">{t("gethelp.unattendedIntro")}</p>
       <label className="flex items-center gap-2">
         <input type="checkbox" checked={u.enabled} onChange={(event) => run(() => support.setUnattended(event.target.checked))} />
-        Allow unattended access to this computer
+        {t("gethelp.allowUnattended")}
       </label>
       {u.enabled ? (
         <div>
-          <p className="text-xs text-secondary">
-            {u.reachable ? "This computer's ID, reachable now" : t("device.id")}
-          </p>
+          <p className="text-xs text-secondary">{u.reachable ? t("gethelp.idReachable") : t("device.id")}</p>
           <div className="flex items-center gap-2">
             <span className="mono break-all text-xs" dir="ltr">{u.machineId}</span>
             <Copy text={u.machineId} label={t("device.copyId")} />
           </div>
-          <p className="mt-1 text-xs text-secondary">
-            A helper enters it as the computer ID, with the unattended password unless they were paired here.
-          </p>
+          <p className="mt-1 text-xs text-secondary">{t("gethelp.helperEntersId")}</p>
         </div>
       ) : null}
       <label className="flex items-center gap-2">
         <input type="checkbox" checked={u.autostart} onChange={(event) => run(() => support.setAutostart(event.target.checked))} />
-        Start DeskVNC when I sign in, so it is ready
+        {t("gethelp.autostart")}
       </label>
-      <p className="mt-2 text-xs text-secondary">Paired helpers</p>
+      <p className="mt-2 text-xs text-secondary">{t("gethelp.paired")}</p>
       {u.helpers.length === 0 ? (
-        <p className="text-xs text-secondary">
-          None yet. During a support session, choose Let them connect any time to pair the helper.
-        </p>
+        <p className="text-xs text-secondary">{t("gethelp.noPairedYet")}</p>
       ) : (
         <ul className="flex flex-col gap-1">
           {u.helpers.map((helper) => (
@@ -467,36 +456,33 @@ function UnattendedSettings({ view, run }: { view: SupportView; run: Run }): Rea
                   checked={helper.control}
                   onChange={(event) => run(() => support.setHelper(helper.id, event.target.checked, helper.tools))}
                 />
-                may control
+                {t("gethelp.mayControl")}
               </label>
               <label
                 className="flex items-center gap-1 text-xs"
-                title="For a helper whose tools, such as DeskVNC's agents, work on this computer while you are away. Commands run as you."
+                title={t("gethelp.toolsNote")}
               >
                 <input
                   type="checkbox"
                   checked={helper.tools}
                   onChange={(event) => run(() => support.setHelper(helper.id, helper.control, event.target.checked))}
                 />
-                may run commands and copy files
+                {t("gethelp.mayRunTools")}
               </label>
               <button type="button" className="btn-secondary ml-auto px-2.5 py-1 text-xs" onClick={() => run(() => support.removeHelper(helper.id))}>
-                Remove
+                {t("gethelp.remove")}
               </button>
             </li>
           ))}
         </ul>
       )}
-      <p className="mt-2 text-xs text-secondary">Unattended password</p>
-      <p className="text-xs text-secondary">
-        Optional. Lets a helper who was never paired connect with this computer's ID and the password. At least{" "}
-        {u.minPassword} characters. Five wrong tries pause it for 15 minutes.
-      </p>
+      <p className="mt-2 text-xs text-secondary">{t("gethelp.unattendedPassword")}</p>
+      <p className="text-xs text-secondary">{t("gethelp.unattendedPasswordHint", { min: u.minPassword })}</p>
       <div className="flex flex-wrap gap-2">
         <input
           type="password"
           autoComplete="new-password"
-          placeholder="New password"
+          placeholder={t("gethelp.newPassword")}
           className="field max-w-48"
           value={password}
           onChange={(event) => setPassword(event.target.value)}
@@ -504,7 +490,7 @@ function UnattendedSettings({ view, run }: { view: SupportView; run: Run }): Rea
         <input
           type="password"
           autoComplete="new-password"
-          placeholder="Repeat it"
+          placeholder={t("gethelp.repeatPassword")}
           className="field max-w-48"
           value={confirm}
           onChange={(event) => setConfirm(event.target.value)}
@@ -518,11 +504,11 @@ function UnattendedSettings({ view, run }: { view: SupportView; run: Run }): Rea
           disabled={password === "" || confirm === ""}
           onClick={setNewPassword}
         >
-          Set password
+          {t("gethelp.setPassword")}
         </button>
         {u.hasPassword ? (
           <button type="button" className="btn-secondary" onClick={() => run(() => support.setPassword(null))}>
-            Remove the password
+            {t("gethelp.removePassword")}
           </button>
         ) : null}
       </div>
@@ -535,6 +521,7 @@ function UnattendedSettings({ view, run }: { view: SupportView; run: Run }): Rea
 type Choice = "Automatic" | "Provider" | "Private" | "Relay";
 
 function ConnectionSettings({ view }: { view: SupportView }): ReactNode {
+  const t = useT();
   const [choice, setChoice] = useState<Choice>(view.network.mode);
   const [address, setAddress] = useState(view.network.mode === "Private" ? view.network.address : "");
   const [relay, setRelay] = useState(view.network.mode === "Relay" ? view.network.url : "");
@@ -549,7 +536,7 @@ function ConnectionSettings({ view }: { view: SupportView }): ReactNode {
     setMessage("");
     support
       .saveNetwork(profile())
-      .then(() => setMessage("Saved. Get a code to try it with your helper."))
+      .then(() => setMessage(t("gethelp.savedTry")))
       .catch((err) => setMessage(String(err)));
   };
   const radio = (value: Choice, label: string) => (
@@ -561,82 +548,70 @@ function ConnectionSettings({ view }: { view: SupportView }): ReactNode {
   const ready = choice === "Automatic" || (choice === "Relay" ? relay.trim() !== "" : address.trim() !== "");
   return (
     <section className="flex flex-col gap-2 text-sm">
-      <h3 className="font-semibold">Connection</h3>
-      <p className="text-secondary">Now: {view.networkLabel}</p>
+      <h3 className="font-semibold">{t("gethelp.connection")}</h3>
+      <p className="text-secondary">{t("gethelp.now", { network: view.networkLabel })}</p>
       {view.networkError ? <p className="text-danger">{view.networkError}</p> : null}
       <fieldset disabled={view.sharing} className="flex flex-col gap-2">
-        {radio("Automatic", "Automatic (recommended for a support call)")}
-        {radio("Provider", "Set up my Tailscale or Cloudflare network")}
-        {radio("Private", "Use another existing private network")}
-        {radio("Relay", "Use my compatible relay server")}
+        {radio("Automatic", t("gethelp.automatic"))}
+        {radio("Provider", t("gethelp.provider"))}
+        {radio("Private", t("gethelp.private"))}
+        {radio("Relay", t("gethelp.relay"))}
         {choice === "Automatic" ? (
-          <p className="text-xs text-secondary">
-            Tries a direct connection with encrypted relay fallback. No provider account is needed. Public relays have
-            capacity limits and no uptime guarantee.
-          </p>
+          <p className="text-xs text-secondary">{t("gethelp.automaticHint")}</p>
         ) : null}
         {choice === "Provider" ? (
           <>
             <BoundaryProviderSetup
               active
-              intro="Install and connect this computer to your own provider account. Run setup on the helper's device too."
+              intro={t("gethelp.providerIntro")}
               onAddress={setAddress}
             />
-            {address ? <p className="text-xs">This computer's address on that network: {address}</p> : null}
+            {address ? <p className="text-xs">{t("gethelp.addressOnNetwork", { address })}</p> : null}
           </>
         ) : null}
         {choice === "Private" ? (
           <label>
-            Local interface IP address
+            {t("gethelp.localIp")}
             <input className="field mt-1" value={address} onChange={(event) => setAddress(event.target.value)} />
-            <span className="mt-1 block text-xs text-secondary">
-              For an existing Headscale, WireGuard, Cloudflare private network or other routed network. Both machines
-              need a permitted route. Entering an IP does not enroll either device.
-            </span>
+            <span className="mt-1 block text-xs text-secondary">{t("gethelp.localIpHint")}</span>
           </label>
         ) : null}
         {choice === "Relay" ? (
           <label>
-            Relay URL
+            {t("gethelp.relayUrl")}
             <input className="field mt-1" value={relay} onChange={(event) => setRelay(event.target.value)} />
-            <span className="mt-1 block text-xs text-secondary">
-              A compatible iroh relay. The invitation carries it to your helper.
-            </span>
+            <span className="mt-1 block text-xs text-secondary">{t("gethelp.relayUrlHint")}</span>
           </label>
         ) : null}
         {choice === "Provider" || choice === "Private" ? (
-          <p className="text-xs text-secondary">
-            If this network is unavailable or the address changes, connecting fails instead of using a public relay.
-          </p>
+          <p className="text-xs text-secondary">{t("gethelp.privateWarning")}</p>
         ) : null}
         <div>
           <button type="button" className="btn-secondary" disabled={!ready} onClick={save}>
-            Save connection settings
+            {t("gethelp.saveConnection")}
           </button>
         </div>
       </fieldset>
-      {view.sharing ? <p className="text-xs text-secondary">End the session to change this.</p> : null}
+      {view.sharing ? <p className="text-xs text-secondary">{t("gethelp.endSessionToChange")}</p> : null}
       {message ? <p role="status">{message}</p> : null}
     </section>
   );
 }
 
 function CodeSettings({ view }: { view: SupportView }): ReactNode {
+  const t = useT();
   const [url, setUrl] = useState(view.codeService);
   const [message, setMessage] = useState("");
   const save = () => {
     setMessage("");
     setCodeService(url)
-      .then(() => setMessage("Saved"))
+      .then(() => setMessage(t("gethelp.saved")))
       .catch((err) => setMessage(String(err)));
   };
   return (
     <section className="flex flex-col gap-2 text-sm">
-      <h3 className="font-semibold">Short codes</h3>
-      <p className="text-secondary">
-        A short code is easier to read out than a full invitation. Both people must use the same code service, and it
-        can read the invitations it is given, so use one you trust.
-      </p>
+      <h3 className="font-semibold">{t("gethelp.shortCodes")}</h3>
+      <p className="text-secondary">{t("gethelp.shortCodesHint")}</p>
       <div className="flex gap-2">
         <input
           type="url"
@@ -647,12 +622,10 @@ function CodeSettings({ view }: { view: SupportView }): ReactNode {
           onChange={(event) => setUrl(event.target.value)}
         />
         <button type="button" className="btn-secondary shrink-0" disabled={view.sharing} onClick={save}>
-          Save
+          {t("gethelp.save")}
         </button>
       </div>
-      <p className="text-xs text-secondary">
-        Leave empty for the shared Boundary service. Private infrastructure needs its own service here.
-      </p>
+      <p className="text-xs text-secondary">{t("gethelp.codeServiceHint")}</p>
       {message ? <p role="status">{message}</p> : null}
     </section>
   );

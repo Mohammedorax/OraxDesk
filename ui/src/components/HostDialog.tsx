@@ -25,8 +25,6 @@ import {
   blankSshTunnel,
   hostProtocol,
   parseSshTunnel,
-  protocolName,
-  protocolShortName,
 } from "../lib/types";
 import type { RdpResolution, RdpSettings } from "../lib/rdp";
 import { rdpDefaults } from "../lib/rdpDefaults";
@@ -50,11 +48,11 @@ import {
 } from "../lib/tauri";
 import { MOCK_LOCAL_KEYS, useMockData } from "../lib/mock";
 import { portOnProtocolChange, portWasTouched, vncTakesUsername } from "../lib/hostDraft";
-import { parseConnectTarget } from "../lib/address";
+import { addressErrorText, parseConnectTarget } from "../lib/address";
 import { Dialog, Select } from "./primitives";
 import { IconChevronDown, IconChevronRight } from "./icons";
 import { classNames } from "../lib/util";
-import { useT } from "../lib/i18n";
+import { useT, type MessageKey, type Translate } from "../lib/i18n";
 
 export interface HostDraft {
   id?: string;
@@ -240,17 +238,41 @@ const PROTOCOL_CAPS: Record<ProtocolKind, ProtocolCaps> = {
  * reach for them. Password and key file come first because they are the two
  * everybody knows; the agent is last because it is the one that needs
  * nothing typed and nothing chosen, so it is the one nobody goes looking for.
+ *
+ * The choices are catalogue keys rather than words: the label on the button
+ * and the hint under it are both said in the language the app is in.
  */
-const SSH_AUTH_CHOICES: ReadonlyArray<readonly [SshAuthKind, string]> = [
-  ["password", "Password"],
-  ["key-file", "Key file"],
-  ["agent", "SSH agent"],
+const SSH_AUTH_CHOICES: ReadonlyArray<readonly [SshAuthKind, MessageKey]> = [
+  ["password", "host.sshAuthPassword"],
+  ["key-file", "host.sshAuthKeyFile"],
+  ["agent", "host.sshAuthAgent"],
 ];
 
-const SSH_AUTH_HINT: Record<SshAuthKind, string> = {
-  password: "The password for your account on that computer, kept in your system keychain.",
-  "key-file": "A private key on this computer. It is read when you connect and never leaves this machine.",
-  agent: "Uses your running ssh-agent, Pageant, or the Windows OpenSSH pipe. Stores nothing.",
+const SSH_AUTH_HINT: Record<SshAuthKind, MessageKey> = {
+  password: "host.sshAuthPasswordHint",
+  "key-file": "host.sshAuthKeyFileHint",
+  agent: "host.sshAuthAgentHint",
+};
+
+/**
+ * The protocol names, in the language the app is in.
+ *
+ * The names come from `lib/types.ts`, which has no translator of its own, so
+ * the dialog asks the catalogue for them instead. The long name goes in the
+ * tooltip and the short one on the button, and both are said.
+ */
+const PROTOCOL_NAME_KEYS: Record<ProtocolKind, MessageKey> = {
+  boundary: "host.protocolNameBoundary",
+  rdp: "host.protocolNameRdp",
+  ssh: "host.protocolNameSsh",
+  vnc: "host.protocolNameVnc",
+};
+
+const PROTOCOL_SHORT_NAME_KEYS: Record<ProtocolKind, MessageKey> = {
+  boundary: "host.protocolBoundary",
+  rdp: "host.protocolRdp",
+  ssh: "host.protocolSsh",
+  vnc: "host.protocolVnc",
 };
 
 export function HostDialog({
@@ -266,6 +288,7 @@ export function HostDialog({
   onSave: (draft: HostDraft) => void | Promise<void>;
   onClose: () => void;
 }): ReactNode {
+  const t = useT();
   const [d, setD] = useState<HostDraft>(initial);
   /**
    * A save is in flight.
@@ -367,7 +390,9 @@ export function HostDialog({
     [d.address, d.protocol],
   );
 
-  const addressError = touched && !parsed.ok ? parsed.error : null;
+  // The parser answers with a catalogue key, so it is translated here: the
+  // sentence the person reads is the one in THEIR language.
+  const addressError = touched && !parsed.ok ? addressErrorText(parsed, t) : null;
 
   /**
    * The port has to be a number the backend can hold. It is a `u16` there,
@@ -376,7 +401,7 @@ export function HostDialog({
    */
   const portError =
     !isBoundary && (!Number.isInteger(d.port) || d.port < 1 || d.port > 65535)
-      ? "The port must be between 1 and 65535"
+      ? t("host.portRange")
       : null;
 
   /**
@@ -397,16 +422,16 @@ export function HostDialog({
   const sshError = !isSsh
     ? null
     : sshNameChanged
-      ? sessionNameError(ssh.sessionName)
+      ? sessionNameError(ssh.sessionName, t)
       : sshDistroChanged
-        ? distroNameError(ssh.wslDistro ?? "")
+        ? distroNameError(ssh.wslDistro ?? "", t)
         : null;
 
   /**
    * The MAC address, checked where it is typed rather than when the person
    * finally presses "Wake" on an evening they needed the machine awake.
    */
-  const macError = macAddressError(d.wolMac);
+  const macError = macAddressError(d.wolMac, t);
 
   /**
    * Everything that would refuse the save, in one place.
@@ -422,7 +447,7 @@ export function HostDialog({
   // repeated in the summary once that field has been left or the save has
   // been attempted. Before that, an empty address is not a mistake, it is
   // just an empty form.
-  if (touched && !parsed.ok) blockers.push(parsed.error);
+  if (touched && !parsed.ok) blockers.push(addressErrorText(parsed, t));
   if (portError) blockers.push(portError);
   if (sshError) blockers.push(sshError);
   if (macError) blockers.push(macError);
@@ -448,7 +473,7 @@ export function HostDialog({
   };
 
   return (
-    <Dialog title={d.isNew ? "New Host" : "Edit Host"} onClose={onClose} width={540}>
+    <Dialog title={d.isNew ? t("host.new") : t("host.edit")} onClose={onClose} width={540}>
       <form
         className="space-y-4"
         onSubmit={(e) => {
@@ -457,14 +482,14 @@ export function HostDialog({
         }}
       >
         <Field
-          label="Name"
+          label={t("host.name")}
           optional
-          hint="How this computer appears in your library. Leave blank to use its address."
+          hint={t("host.nameHint")}
         >
           <input
             className="field"
             value={d.friendlyName}
-            placeholder="Living Room Mac"
+            placeholder={t("host.namePlaceholder")}
             onChange={(e) => set({ friendlyName: e.target.value })}
           />
         </Field>
@@ -473,11 +498,11 @@ export function HostDialog({
           Above the address row, because it changes what the rest of the form
           means and a control that reorganises a form comes before the form.
         */}
-        <Field label="Connect using">
+        <Field label={t("host.connectUsing")}>
           <div
             className="flex gap-1 rounded-md border border-subtle p-0.5"
             role="radiogroup"
-            aria-label="Connection protocol"
+            aria-label={t("host.protocolAria")}
           >
             {HOST_PROTOCOLS.map((p) => (
               <button
@@ -485,7 +510,7 @@ export function HostDialog({
                 type="button"
                 role="radio"
                 aria-checked={d.protocol === p}
-                title={protocolName(p)}
+                title={t(PROTOCOL_NAME_KEYS[p])}
                 className={classNames(
                   "flex-1 rounded-sm px-3 py-1.5 text-sm",
                   d.protocol === p
@@ -494,7 +519,7 @@ export function HostDialog({
                 )}
                 onClick={() => changeProtocol(p)}
               >
-                {protocolShortName(p)}
+                {t(PROTOCOL_SHORT_NAME_KEYS[p])}
               </button>
             ))}
           </div>
@@ -502,19 +527,15 @@ export function HostDialog({
 
         <div className={isBoundary ? "grid grid-cols-1 gap-3" : "grid grid-cols-[1fr_120px] gap-3"}>
           <Field
-            label={isBoundary ? "Computer ID" : "Address"}
+            label={isBoundary ? t("host.computerId") : t("host.address")}
             required
             error={addressError}
-            hint={
-              isBoundary
-                ? "Shown under Unattended access in DeskVNC Support on that computer. If you are not paired, the person there approves you, or you use the password below."
-                : "192.168.1.42, or a name like office. A number after the colon under 100 is a screen number, so :1 is screen 1 on port 5901; 100 and above is a port."
-            }
+            hint={isBoundary ? t("host.computerIdHint") : t("host.addressHint")}
           >
             <input
               className="field mono"
               value={d.address}
-              placeholder={isBoundary ? "64 character computer ID" : "192.168.1.42 or hostname"}
+              placeholder={isBoundary ? t("host.computerIdPlaceholder") : t("host.addressPlaceholder")}
               spellCheck={false}
               dir="ltr"
               aria-invalid={addressError !== null}
@@ -549,7 +570,7 @@ export function HostDialog({
             />
           </Field>
           {isBoundary ? null : (
-            <Field label="Port" error={portError}>
+            <Field label={t("host.port")} error={portError}>
               <input
                 className="field mono"
                 type="number"
@@ -589,11 +610,11 @@ export function HostDialog({
         */}
         {showVncUser ? (
           <Field
-            label="User name"
+            label={t("host.userName")}
             hint={
               d.hasPassword && !d.vncUser
-                ? "Leave blank to keep the saved one."
-                : "Leave blank to be asked when you connect"
+                ? t("host.keepSaved")
+                : t("host.askedAtConnect")
             }
           >
             <input
@@ -601,10 +622,10 @@ export function HostDialog({
               value={d.vncUser}
               placeholder={
                 d.hasPassword
-                  ? "(unchanged)"
+                  ? t("host.unchanged")
                   : d.osHint === "macos"
-                    ? "Your account on that Mac"
-                    : "Optional"
+                    ? t("host.macAccount")
+                    : t("host.optional")
               }
               autoComplete="off"
               autoCapitalize="none"
@@ -618,17 +639,17 @@ export function HostDialog({
           caps.domain ? (
             <div className="grid grid-cols-2 gap-3">
               <Field
-                label="User name"
+                label={t("host.userName")}
                 hint={
                   d.hasPassword && !d.rdpUser
-                    ? "Leave blank to keep the saved one."
-                    : "The account to sign in with"
+                    ? t("host.keepSaved")
+                    : t("host.accountToSignIn")
                 }
               >
                 <input
                   className="field"
                   value={d.rdpUser}
-                  placeholder={d.hasPassword ? "(unchanged)" : "Administrator"}
+                  placeholder={d.hasPassword ? t("host.unchanged") : t("host.administrator")}
                   autoComplete="off"
                   autoCapitalize="none"
                   autoCorrect="off"
@@ -642,14 +663,11 @@ export function HostDialog({
                 this app will do it for the user, so the field has to say when
                 to leave itself empty.
               */}
-              <Field
-                label="Domain"
-                hint="Leave blank for a local account, or if your user name is already an email-style name like you@company.com."
-              >
+              <Field label={t("host.domain")} hint={t("host.domainHint")}>
                 <input
                   className="field"
                   value={d.rdpDomain}
-                  placeholder="Optional"
+                  placeholder={t("host.optional")}
                   autoComplete="off"
                   autoCapitalize="none"
                   autoCorrect="off"
@@ -660,17 +678,17 @@ export function HostDialog({
             </div>
           ) : (
             <Field
-              label="User name"
+              label={t("host.userName")}
               hint={
                 d.hasPassword && !d.sshUser
-                  ? "Leave blank to keep the saved one."
-                  : "Leave blank to sign in as the same user as this computer"
+                  ? t("host.keepSaved")
+                  : t("host.sameUserAsComputer")
               }
             >
               <input
                 className="field"
                 value={d.sshUser}
-                placeholder={d.hasPassword ? "(unchanged)" : "Same as this computer"}
+                placeholder={d.hasPassword ? t("host.unchanged") : t("host.sameAsThisComputer")}
                 autoComplete="off"
                 autoCapitalize="none"
                 autoCorrect="off"
@@ -690,11 +708,11 @@ export function HostDialog({
           main form now, directly above the secret it decides the meaning of.
         */}
         {isSsh ? (
-          <Field label="Sign in with" hint={SSH_AUTH_HINT[ssh.auth]}>
+          <Field label={t("host.signInWith")} hint={t(SSH_AUTH_HINT[ssh.auth])}>
             <div
               className="flex gap-1 rounded-md border border-subtle p-0.5"
               role="radiogroup"
-              aria-label="SSH authentication"
+              aria-label={t("host.sshAuthAria")}
             >
               {SSH_AUTH_CHOICES.map(([kind, label]) => (
                 <button
@@ -710,7 +728,7 @@ export function HostDialog({
                   )}
                   onClick={() => setSsh({ auth: kind })}
                 >
-                  {label}
+                  {t(label)}
                 </button>
               ))}
             </div>
@@ -734,26 +752,24 @@ export function HostDialog({
           <Field
             label={
               isSsh && ssh.auth === "key-file"
-                ? "Key passphrase"
-                : isBoundary
-                  ? "Password"
-                  : "Password"
+                ? t("host.keyPassphrase")
+                : t("host.password")
             }
             hint={
               d.hasPassword && !d.password
-                ? "A secret is saved in your system keychain. Leave blank to keep it."
+                ? t("host.secretSavedHint")
                 : isSsh && ssh.auth === "key-file"
-                  ? "Only needed if the key itself is protected. Stored in your system keychain, never in a file."
+                  ? t("host.keyPassphraseHint")
                   : isBoundary
-                    ? "The password you use to reach this computer when nobody is there to approve you. It is the one set on that computer under Unattended access. Stored in your system keychain, never in a file."
-                    : "Stored in your system keychain, never in a file"
+                    ? t("host.boundaryPasswordHint")
+                    : t("host.storedInKeychain")
             }
           >
             <input
               className="field"
               type="password"
               value={d.password}
-              placeholder={d.hasPassword ? "••••••••  (unchanged)" : "Optional"}
+              placeholder={d.hasPassword ? t("host.passwordUnchanged") : t("host.optional")}
               autoComplete="off"
               onChange={(e) => set({ password: e.target.value })}
             />
@@ -761,12 +777,12 @@ export function HostDialog({
         )}
 
         <div className="grid grid-cols-2 gap-3">
-          <Field label="Group">
+          <Field label={t("host.group")}>
             <Select
               value={d.groupId ?? ""}
               onChange={(e) => set({ groupId: e.target.value || null })}
             >
-              <option value="">No group</option>
+              <option value="">{t("host.noGroup")}</option>
               {groups.map((g) => (
                 <option key={g.id} value={g.id}>
                   {g.name}
@@ -774,22 +790,22 @@ export function HostDialog({
               ))}
             </Select>
           </Field>
-          <Field label="Operating system">
+          <Field label={t("host.os")}>
             <Select
               value={d.osHint}
               onChange={(e) => set({ osHint: e.target.value as OsHint })}
             >
-              <option value="unknown">Unknown</option>
+              <option value="unknown">{t("host.osUnknown")}</option>
               <option value="macos">macOS</option>
               <option value="windows">Windows</option>
               <option value="linux">Linux</option>
-              <option value="qemu">QEMU / VM</option>
+              <option value="qemu">{t("host.osQemu")}</option>
             </Select>
           </Field>
         </div>
 
         {tags.length > 0 ? (
-          <Field label="Tags">
+          <Field label={t("host.tags")}>
             <div className="flex flex-wrap gap-1.5">
               {tags.map((t) => {
                 const on = d.tagIds.includes(t.id);
@@ -826,7 +842,7 @@ export function HostDialog({
             onClick={() => setAdvanced((a) => !a)}
           >
             {advanced ? <IconChevronDown size={14} /> : <IconChevronRight size={14} />}
-            Advanced
+            {t("host.advanced")}
           </button>
           {advanced ? (
             <div className="space-y-4 border-t border-subtle p-3">
@@ -843,29 +859,25 @@ export function HostDialog({
                     {/* RFB security types are VNC's own negotiation; RDP's
                         equivalent is the Security disclosure below. */}
                     {caps.rfbSecurity ? (
-                      <Field label="Security type" hint="Auto negotiates the strongest supported">
+                      <Field label={t("host.securityType")} hint={t("host.securityTypeHint")}>
                         <Select
                           value={d.securityPref ?? "auto"}
                           onChange={(e) =>
                             set({ securityPref: e.target.value === "auto" ? null : e.target.value })
                           }
                         >
-                          <option value="auto">Auto</option>
+                          <option value="auto">{t("host.auto")}</option>
                           <option value="vencrypt-x509">VeNCrypt (TLS + X.509)</option>
                           <option value="ra2">RSA-AES (RA2)</option>
-                          <option value="apple-dh">Apple Screen Sharing</option>
-                          <option value="vncauth">VNC password only</option>
-                          <option value="none">None</option>
+                          <option value="apple-dh">{t("host.securityAppleDh")}</option>
+                          <option value="vncauth">{t("host.securityVncPassword")}</option>
+                          <option value="none">{t("host.none")}</option>
                         </Select>
                       </Field>
                     ) : null}
                     <Field
-                      label="Quality"
-                      hint={
-                        isRdp
-                          ? "Auto adapts to network conditions. Lower settings turn off wallpaper and effects on the remote desktop."
-                          : "How sharp the picture is against how quickly the screen answers you."
-                      }
+                      label={t("host.quality")}
+                      hint={isRdp ? t("host.qualityRdpHint") : t("host.qualityHint")}
                     >
                       <Select
                         value={d.qualityPref}
@@ -878,10 +890,10 @@ export function HostDialog({
                           person who set one and later opened the other could
                           not tell it was the same choice.
                         */}
-                        <option value="auto">Auto</option>
-                        <option value="high">Sharp</option>
-                        <option value="medium">Balanced</option>
-                        <option value="low">Responsive</option>
+                        <option value="auto">{t("host.auto")}</option>
+                        <option value="high">{t("host.qualitySharp")}</option>
+                        <option value="medium">{t("host.qualityBalanced")}</option>
+                        <option value="low">{t("host.qualityResponsive")}</option>
                         {/*
                           Black and White is a shader in this app, not a wire
                           setting, so the toolbar keeps offering it live for
@@ -890,23 +902,20 @@ export function HostDialog({
                           grey screen on every connect", which is not what
                           choosing a saved default is for.
                         */}
-                        {isRdp ? null : <option value="bw">Black &amp; White</option>}
+                        {isRdp ? null : <option value="bw">{t("host.qualityBw")}</option>}
                       </Select>
                     </Field>
                   </div>
                   <div className="grid grid-cols-2 gap-3">
-                    <Field
-                      label="Scaling"
-                      hint="How the remote screen fits the window. This is the starting point; the toolbar can change it during a session."
-                    >
+                    <Field label={t("host.scaling")} hint={t("host.scalingHint")}>
                       <Select
                         value={d.scalingMode}
                         onChange={(e) => set({ scalingMode: e.target.value as ScalingMode })}
                       >
-                        <option value="aspect-fit">Aspect fit</option>
-                        <option value="fit">Fit to window</option>
-                        <option value="actual">Actual size (1:1)</option>
-                        <option value="remote-resize">Remote resize</option>
+                        <option value="aspect-fit">{t("host.scalingAspectFit")}</option>
+                        <option value="fit">{t("host.scalingFit")}</option>
+                        <option value="actual">{t("host.scalingActual")}</option>
+                        <option value="remote-resize">{t("host.scalingRemoteResize")}</option>
                       </Select>
                     </Field>
                     {/*
@@ -923,14 +932,14 @@ export function HostDialog({
                 </>
               ) : null}
               <Field
-                label="MAC address (for Wake-on-LAN)"
+                label={t("host.macLabel")}
                 error={macError}
                 hint={
                   macError
                     ? undefined
                     : d.macFromDiscovery
-                      ? "Filled in automatically, this is the address we saw when we found this machine on your network. Lets you wake it from the library."
-                      : "Filled in automatically when the machine was discovered on your network. Lets you wake this computer from the library."
+                      ? t("host.macFoundHint")
+                      : t("host.macAutoHint")
                 }
               >
                 <input
@@ -939,7 +948,7 @@ export function HostDialog({
                   placeholder="aa:bb:cc:dd:ee:ff"
                   spellCheck={false}
                   dir="ltr"
-                  aria-label="MAC address for Wake-on-LAN"
+                  aria-label={t("host.macAria")}
                   aria-invalid={macError !== null}
                   onChange={(e) => set({ wolMac: e.target.value || null, macFromDiscovery: false })}
                 />
@@ -957,11 +966,9 @@ export function HostDialog({
                     onChange={(e) => set({ passthrough: e.target.checked })}
                   />
                   <span>
-                    Capture system shortcuts by default
+                    {t("host.captureShortcuts")}
                     <span className="block text-xs text-tertiary">
-                      {isRdp
-                        ? "Sends shortcuts like Alt+Tab and the Windows key to the remote computer"
-                        : "Sends shortcuts like Cmd+Tab / Alt+Tab to the remote computer"}
+                      {isRdp ? t("host.captureShortcutsRdp") : t("host.captureShortcutsOther")}
                     </span>
                   </span>
                 </label>
@@ -1020,10 +1027,10 @@ export function HostDialog({
             </p>
           ) : null}
           <button type="button" className="btn-secondary" onClick={onClose} disabled={saving}>
-            Cancel
+            {t("host.cancel")}
           </button>
           <button type="submit" className="btn-primary" disabled={saving}>
-            {saving ? "Saving…" : d.isNew ? "Add Host" : "Save Changes"}
+            {saving ? t("host.saving") : d.isNew ? t("host.add") : t("host.saveChanges")}
           </button>
         </div>
       </form>
@@ -1045,30 +1052,31 @@ function RdpOptionsSection({
   rdp: RdpSettings;
   onChange: (patch: Partial<RdpSettings>) => void;
 }): ReactNode {
+  const t = useT();
   const [codecs, setCodecs] = useState(false);
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-2 gap-3">
-        <Field label="Colour depth" hint="Auto follows the quality setting">
+        <Field label={t("host.colourDepth")} hint={t("host.colourDepthHint")}>
           <Select
             value={rdp.colorDepth}
             onChange={(e) => onChange({ colorDepth: e.target.value as RdpSettings["colorDepth"] })}
           >
-            <option value="auto">Auto</option>
-            <option value="bpp32">32-bit</option>
-            <option value="bpp24">24-bit</option>
-            <option value="bpp16">16-bit</option>
-            <option value="bpp15">15-bit</option>
+            <option value="auto">{t("host.auto")}</option>
+            <option value="bpp32">{t("host.bits32")}</option>
+            <option value="bpp24">{t("host.bits24")}</option>
+            <option value="bpp16">{t("host.bits16")}</option>
+            <option value="bpp15">{t("host.bits15")}</option>
           </Select>
         </Field>
-        <Field label="Sound">
+        <Field label={t("host.sound")}>
           <Select
             value={rdp.audio}
             onChange={(e) => onChange({ audio: e.target.value as RdpSettings["audio"] })}
           >
-            <option value="play-locally">Play here</option>
-            <option value="leave-at-server">Play there</option>
-            <option value="off">Do not play</option>
+            <option value="play-locally">{t("host.soundHere")}</option>
+            <option value="leave-at-server">{t("host.soundThere")}</option>
+            <option value="off">{t("host.soundOff")}</option>
           </Select>
         </Field>
       </div>
@@ -1076,19 +1084,19 @@ function RdpOptionsSection({
       <Check
         checked={rdp.monitors === "all"}
         onChange={(on) => onChange({ monitors: on ? "all" : "primary" })}
-        label="Use all of my monitors"
-        hint="Makes the Displays menu list the remote monitors instead of just the one."
+        label={t("host.allMonitors")}
+        hint={t("host.allMonitorsHint")}
       />
       <ResolutionField value={rdp.resolution} onChange={(resolution) => onChange({ resolution })} />
       <Check
         checked={rdp.clipboard}
         onChange={(clipboard) => onChange({ clipboard })}
-        label="Share my clipboard"
+        label={t("host.shareClipboard")}
       />
       <Check
         checked={rdp.consoleSession}
         onChange={(consoleSession) => onChange({ consoleSession })}
-        label="Connect to the console session"
+        label={t("host.consoleSession")}
       />
 
       <div className="rounded-md border border-subtle">
@@ -1099,14 +1107,11 @@ function RdpOptionsSection({
           onClick={() => setCodecs((v) => !v)}
         >
           {codecs ? <IconChevronDown size={14} /> : <IconChevronRight size={14} />}
-          Codecs
+          {t("host.codecs")}
         </button>
         {codecs ? (
           <div className="space-y-3 border-t border-subtle p-3">
-            <p className="text-xs text-tertiary">
-              Turn one of these off only to work around a server whose picture is
-              wrong. They all make the connection faster.
-            </p>
+            <p className="text-xs text-tertiary">{t("host.codecsHint")}</p>
             {(
               [
                 ["remotefx", "RemoteFX"],
@@ -1136,10 +1141,10 @@ function RdpOptionsSection({
 const SESSION_NAME_RE = /^[A-Za-z0-9_-]{1,64}$/;
 
 /** `null` when the session name is fine to save. */
-function sessionNameError(name: string): string | null {
-  if (name.trim() === "") return "Required";
-  if (name.length > 64) return "64 characters or fewer";
-  if (!SESSION_NAME_RE.test(name)) return "Only letters, numbers, underscore and hyphen";
+function sessionNameError(name: string, t: Translate): string | null {
+  if (name.trim() === "") return t("host.required");
+  if (name.length > 64) return t("host.max64");
+  if (!SESSION_NAME_RE.test(name)) return t("host.sessionNameChars");
   return null;
 }
 
@@ -1154,11 +1159,11 @@ const DISTRO_NAME_RE = /^[A-Za-z0-9._-]{1,64}$/;
 
 /** `null` when a typed distribution name is fine to save. Empty is legal, it
  *  means the Windows default, so only a non-empty, invalid name is an error. */
-function distroNameError(name: string): string | null {
+function distroNameError(name: string, t: Translate): string | null {
   const trimmed = name.trim();
   if (trimmed === "") return null;
-  if (trimmed.length > 64) return "64 characters or fewer";
-  if (!DISTRO_NAME_RE.test(trimmed)) return "Only letters, numbers, dot, underscore and hyphen";
+  if (trimmed.length > 64) return t("host.max64");
+  if (!DISTRO_NAME_RE.test(trimmed)) return t("host.distroNameChars");
   return null;
 }
 
@@ -1171,12 +1176,12 @@ function distroNameError(name: string): string | null {
  * typo is caught while it is being typed, rather than on the one evening the
  * person needed the machine to be awake.
  */
-function macAddressError(value: string | null): string | null {
+function macAddressError(value: string | null, t: Translate): string | null {
   const raw = (value ?? "").trim();
   if (raw === "") return null;
   const cleaned = raw.replace(/[:.\- ]/g, "");
   if (cleaned.length !== 12 || !/^[0-9a-fA-F]{12}$/.test(cleaned)) {
-    return "A MAC address is twelve hex digits, like aa:bb:cc:dd:ee:ff";
+    return t("host.macFormat");
   }
   return null;
 }
@@ -1228,8 +1233,9 @@ function SshOptionsSection({
   // Touched on blur rather than checked from the first keystroke, the same
   // rule the address field uses: typing a fresh name a character at a time
   // must not flash red before the user has finished it.
+  const t = useT();
   const [nameTouched, setNameTouched] = useState(false);
-  const nameError = nameTouched ? sessionNameError(ssh.sessionName) : null;
+  const nameError = nameTouched ? sessionNameError(ssh.sessionName, t) : null;
 
   // `null` means Detect has never run this dialog session: show the free-text
   // field with no "could not read" line, since nothing has actually failed
@@ -1238,7 +1244,7 @@ function SshOptionsSection({
   const [distros, setDistros] = useState<string[] | null>(null);
   const [detecting, setDetecting] = useState(false);
   const [distroTouched, setDistroTouched] = useState(false);
-  const distroError = distroTouched ? distroNameError(ssh.wslDistro ?? "") : null;
+  const distroError = distroTouched ? distroNameError(ssh.wslDistro ?? "", t) : null;
 
   const detectDistros = async (): Promise<void> => {
     setDetecting(true);
@@ -1270,18 +1276,18 @@ function SshOptionsSection({
       <Check
         checked={ssh.wsl}
         onChange={(wsl) => onChange({ wsl })}
-        label="Connect inside WSL"
-        hint="On a Windows host, land inside the Windows Subsystem for Linux instead of PowerShell, and look for the multiplexer there instead of on Windows."
+        label={t("host.wsl")}
+        hint={t("host.wslHint")}
       />
 
       {ssh.wsl ? (
         <Field
-          label="Distribution"
+          label={t("host.distribution")}
           error={distroError}
           hint={
             distros !== null && distros.length === 0
-              ? "The list of installed distributions could not be read, so type a name instead. Leave blank for the default distribution."
-              : "Leave blank for the default distribution."
+              ? t("host.distrosUnreadable")
+              : t("host.defaultDistribution")
           }
         >
           <div className="flex gap-2">
@@ -1290,7 +1296,7 @@ function SshOptionsSection({
                 value={ssh.wslDistro ?? ""}
                 onChange={(e) => onChange({ wslDistro: e.target.value || null })}
               >
-                <option value="">Default distribution</option>
+                <option value="">{t("host.defaultDistributionOption")}</option>
                 {distros.map((name) => (
                   <option key={name} value={name}>
                     {name}
@@ -1301,7 +1307,7 @@ function SshOptionsSection({
               <input
                 className="field mono"
                 value={ssh.wslDistro ?? ""}
-                placeholder="Default distribution"
+                placeholder={t("host.defaultDistributionOption")}
                 maxLength={64}
                 spellCheck={false}
                 autoCapitalize="none"
@@ -1316,7 +1322,7 @@ function SshOptionsSection({
               disabled={detecting}
               onClick={() => void detectDistros()}
             >
-              {detecting ? "Detecting…" : "Detect"}
+              {detecting ? t("host.detecting") : t("host.detect")}
             </button>
           </div>
         </Field>
@@ -1332,27 +1338,27 @@ function SshOptionsSection({
         to be the only option on a Windows box.
       */}
       <Field
-        label="Terminal multiplexer"
-        hint="Auto finds tmux or psmux on the remote machine, so your work survives a dropped connection. Without one, a disconnect ends your session."
+        label={t("host.multiplexer")}
+        hint={t("host.multiplexerHint")}
       >
         <Select
           value={ssh.multiplexer}
           onChange={(e) => onChange({ multiplexer: e.target.value as MultiplexerKind })}
         >
-          <option value="auto">Auto (recommended)</option>
+          <option value="auto">{t("host.multiplexerAuto")}</option>
           <option value="psmux">psmux</option>
           <option value="tmux">tmux</option>
           <option value="screen">screen</option>
           <option value="zellij">zellij</option>
-          <option value="none">None, always a plain shell</option>
-          <option value="custom">Custom command</option>
+          <option value="none">{t("host.multiplexerNone")}</option>
+          <option value="custom">{t("host.customCommand")}</option>
         </Select>
       </Field>
 
       <Field
-        label="Session name"
+        label={t("host.sessionName")}
         error={nameError}
-        hint="This is placed on the remote command line to attach or create the session, so only letters, numbers, underscore and hyphen are accepted, up to 64 characters."
+        hint={t("host.sessionNameHint")}
       >
         <input
           className="field mono"
@@ -1368,8 +1374,8 @@ function SshOptionsSection({
 
       {ssh.multiplexer === "custom" ? (
         <Field
-          label="Custom command"
-          hint="Runs on the remote machine instead of attaching to tmux, psmux or another multiplexer. {session} is replaced with the session name above."
+          label={t("host.customCommand")}
+          hint={t("host.customCommandHint")}
         >
           <input
             className="field mono"
@@ -1384,13 +1390,13 @@ function SshOptionsSection({
       ) : null}
 
       <Field
-        label="Startup command"
-        hint="Runs once connected, instead of your login shell. Leave blank to sign in normally."
+        label={t("host.startupCommand")}
+        hint={t("host.startupCommandHint")}
       >
         <input
           className="field mono"
           value={ssh.startupCommand ?? ""}
-          placeholder="Optional"
+          placeholder={t("host.optional")}
           spellCheck={false}
           autoCapitalize="none"
           autoCorrect="off"
@@ -1408,13 +1414,13 @@ function SshOptionsSection({
         <Check
           checked={ssh.fallbackToShell}
           onChange={(fallbackToShell) => onChange({ fallbackToShell })}
-          label="Fall back to a plain shell"
-          hint="If the chosen multiplexer is not installed on the remote machine, connect with an ordinary shell instead of refusing to connect."
+          label={t("host.fallbackShell")}
+          hint={t("host.fallbackShellHint")}
         />
       ) : null}
 
       <div className="grid grid-cols-2 gap-3">
-        <Field label="Font size">
+        <Field label={t("host.fontSize")}>
           <input
             className="field"
             type="number"
@@ -1424,7 +1430,7 @@ function SshOptionsSection({
             onChange={(e) => onChange({ fontSize: Number(e.target.value) || ssh.fontSize })}
           />
         </Field>
-        <Field label="Scrollback" hint="Lines kept for scrolling back">
+        <Field label={t("host.scrollback")} hint={t("host.scrollbackHint")}>
           <input
             className="field"
             type="number"
@@ -1458,6 +1464,7 @@ function SecuritySection({
   onToggle: () => void;
   onChange: (patch: Partial<RdpSettings>) => void;
 }): ReactNode {
+  const t = useT();
   return (
     <div className="rounded-md border border-subtle">
       <button
@@ -1467,22 +1474,22 @@ function SecuritySection({
         onClick={onToggle}
       >
         {open ? <IconChevronDown size={14} /> : <IconChevronRight size={14} />}
-        Security
+        {t("host.security")}
       </button>
       {open ? (
         <div className="space-y-4 border-t border-subtle p-3">
           <Check
             checked={rdp.nla === "allow-fallback"}
             onChange={(on) => onChange({ nla: on ? "allow-fallback" : "required" })}
-            label="Allow connecting without network level authentication"
-            hint="Some older or misconfigured servers refuse network level authentication. Without it your password is sent to a computer whose identity has not been checked yet."
+            label={t("host.allowNoNla")}
+            hint={t("host.allowNoNlaHint")}
           />
           <div>
             <Check
               checked={rdp.legacyTls}
               onChange={(legacyTls) => onChange({ legacyTls })}
-              label="Allow legacy TLS (1.0 and 1.1)"
-              hint="For Windows 7 and Server 2008 R2 era computers that were never updated. Those machines offer only TLS 1.0 or 1.1, which this app normally refuses. Leave this off unless a connection has already failed for that reason."
+              label={t("host.allowLegacyTls")}
+              hint={t("host.allowLegacyTlsHint")}
             />
             {/*
               Shown only while the box is ticked, in the same danger colour
@@ -1500,14 +1507,7 @@ function SecuritySection({
             */}
             {rdp.legacyTls ? (
               <p className="mt-2 text-xs text-danger" role="status">
-                TLS 1.0 and 1.1 are old and weak. Someone who can sit between you
-                and this computer has a better chance of reading or changing the
-                traffic than they would over TLS 1.2. What still protects you is
-                the certificate this app pinned the first time you connected,
-                which is checked on every connection whichever version is used,
-                and network level authentication, which proves the computer is
-                the one you signed in to before your password is sent. Turn this
-                on for one computer at a time, not as a habit.
+                {t("host.legacyTlsWarning")}
               </p>
             ) : null}
           </div>
@@ -1551,6 +1551,7 @@ function KeyFileField({
   // the same three-state list the real one would, exactly as the library
   // shows mock hosts.
   const mock = useMockData();
+  const t = useT();
 
   useEffect(() => {
     let live = true;
@@ -1578,13 +1579,13 @@ function KeyFileField({
 
   return (
     <Field
-      label="Private key"
+      label={t("host.privateKey")}
       hint={
         chosen?.encrypted
-          ? "This key is protected by a passphrase. Put the passphrase in the box below and it is kept in your system keychain."
+          ? t("host.keyProtectedHint")
           : found.keys.length === 0
-            ? "An OpenSSH or PuTTY (.ppk) private key on this computer."
-            : "Keys found in your .ssh folder, or browse for one somewhere else."
+            ? t("host.keyOnDiskHint")
+            : t("host.keysFoundHint")
       }
     >
       <div className="space-y-2">
@@ -1603,16 +1604,16 @@ function KeyFileField({
                 onChange(picked || null);
               }}
             >
-              <option value="">Choose a key...</option>
+              <option value="">{t("host.chooseKey")}</option>
               {found.keys.map((k) => (
                 <option key={k.path} value={k.path}>
                   {keyLabel(k.name, k.kind, k.comment)}
                 </option>
               ))}
-              <option value={BROWSE}>Another file...</option>
+              <option value={BROWSE}>{t("host.anotherFile")}</option>
             </Select>
             <button type="button" className="btn-secondary shrink-0" onClick={() => void browse()}>
-              Browse...
+              {t("host.browse")}
             </button>
           </div>
         ) : null}
@@ -1625,7 +1626,7 @@ function KeyFileField({
               spellCheck={false}
               autoCapitalize="none"
               autoCorrect="off"
-              aria-label="Private key path"
+              aria-label={t("host.privateKeyPathAria")}
               onChange={(e) => {
                 setManual(true);
                 onChange(e.target.value || null);
@@ -1637,7 +1638,7 @@ function KeyFileField({
                 className="btn-secondary shrink-0"
                 onClick={() => void browse()}
               >
-                Browse...
+                {t("host.browse")}
               </button>
             )}
           </div>
@@ -1698,8 +1699,9 @@ function SshTunnelSection({
   onChange: (tunnel: SshTunnelSettings) => void;
   onPassphrase: (passphrase: string) => void;
 }): ReactNode {
-  const t = tunnel ?? blankSshTunnel();
-  const patch = (p: Partial<SshTunnelSettings>): void => onChange({ ...t, ...p });
+  const settings = tunnel ?? blankSshTunnel();
+  const patch = (p: Partial<SshTunnelSettings>): void => onChange({ ...settings, ...p });
+  const t = useT();
 
   return (
     <div className="space-y-4 rounded-md border border-subtle p-3">
@@ -1707,36 +1709,33 @@ function SshTunnelSection({
         <input
           type="checkbox"
           className="mt-0.5 accent-(--accent)"
-          checked={t.enabled}
+          checked={settings.enabled}
           onChange={(e) => patch({ enabled: e.target.checked })}
         />
         <span>
-          Tunnel over SSH
-          <span className="block text-xs text-tertiary">
-            Runs the connection through an SSH login, so it works for servers that
-            only listen on the remote computer&apos;s own loopback, and is encrypted end to end
-          </span>
+          {t("host.tunnelOverSsh")}
+          <span className="block text-xs text-tertiary">{t("host.tunnelHint")}</span>
         </span>
       </label>
-      {t.enabled ? (
+      {settings.enabled ? (
         <>
           <div className="grid grid-cols-[1fr_120px] gap-3">
-            <Field label="SSH host" hint="Leave blank to SSH to the address above">
+            <Field label={t("host.sshHost")} hint={t("host.sshHostHint")}>
               <input
                 className="field mono"
-                value={t.host}
-                placeholder="Same as the address above"
+                value={settings.host}
+                placeholder={t("host.sameAsAddress")}
                 spellCheck={false}
                 onChange={(e) => patch({ host: e.target.value })}
               />
             </Field>
-            <Field label="SSH port">
+            <Field label={t("host.sshPort")}>
               <input
                 className="field mono"
                 type="number"
                 min={1}
                 max={65535}
-                value={t.port}
+                value={settings.port}
                 onChange={(e) => {
                   // Clamped, like the main port field and for the same
                   // reason: this port is read as a `u16` out of the settings
@@ -1755,42 +1754,45 @@ function SshTunnelSection({
             </Field>
           </div>
           <div className="grid grid-cols-2 gap-3">
-            <Field label="User" hint="Leave blank to use your local username">
+            <Field label={t("host.user")} hint={t("host.userHint")}>
               <input
                 className="field mono"
-                value={t.user}
-                placeholder="Same as this computer"
+                value={settings.user}
+                placeholder={t("host.sameAsThisComputer")}
                 spellCheck={false}
                 autoComplete="off"
                 onChange={(e) => patch({ user: e.target.value })}
               />
             </Field>
-            <Field label="Authentication" hint="Secrets stay in your keychain / agent">
+            <Field label={t("host.authentication")} hint={t("host.authHint")}>
               <Select
-                value={t.auth}
+                value={settings.auth}
                 onChange={(e) =>
                   patch({ auth: e.target.value as SshTunnelSettings["auth"] })
                 }
               >
-                <option value="stored">Saved passphrase (or agent)</option>
-                <option value="agent">SSH agent</option>
-                <option value="key-file">Private key file</option>
+                <option value="stored">{t("host.authStored")}</option>
+                <option value="agent">{t("host.sshAuthAgent")}</option>
+                <option value="key-file">{t("host.authKeyFile")}</option>
               </Select>
             </Field>
           </div>
-          {t.auth === "key-file" ? (
-            <KeyFileField value={t.keyPath} onChange={(keyPath) => patch({ keyPath })} />
+          {settings.auth === "key-file" ? (
+            <KeyFileField
+              value={settings.keyPath}
+              onChange={(keyPath) => patch({ keyPath })}
+            />
           ) : null}
-          {t.auth !== "agent" ? (
+          {settings.auth !== "agent" ? (
             <Field
-              label={t.auth === "key-file" ? "Key passphrase" : "SSH password"}
-              hint="Stored in your system keychain, shared with the Files panel. Leave blank to keep what is already saved."
+              label={settings.auth === "key-file" ? t("host.keyPassphrase") : t("host.sshPassword")}
+              hint={t("host.tunnelSecretHint")}
             >
               <input
                 className="field"
                 type="password"
                 value={passphrase}
-                placeholder="Optional"
+                placeholder={t("host.optional")}
                 autoComplete="off"
                 onChange={(e) => onPassphrase(e.target.value)}
               />
@@ -1836,6 +1838,7 @@ function ResolutionField({
   };
 
   const custom = value.mode === "fixed" && !listed;
+  const t = useT();
   // Held as a number so a half typed value does not snap; the profile is only
   // written when the dialog is saved, and the range is checked on read.
   //
@@ -1865,29 +1868,29 @@ function ResolutionField({
 
   return (
     <Field
-      label="Resolution"
+      label={t("host.resolution")}
       hint={
         value.mode === "follow-window"
-          ? "The remote desktop resizes as you resize this window. Windows rearranges its icons each time."
+          ? t("host.resolutionFollowHint")
           : value.mode === "window-at-connect"
-            ? "The remote desktop is sized to this window when you connect, then left alone."
-            : "The remote desktop is always this size. This window scales it to fit."
+            ? t("host.resolutionAtConnectHint")
+            : t("host.resolutionFixedHint")
       }
     >
       <Select value={selected} onChange={(e) => pick(e.target.value)}>
-        <option value="window-at-connect">Match this window when connecting</option>
-        <option value="follow-window">Match this window, and keep matching</option>
+        <option value="window-at-connect">{t("host.resolutionAtConnect")}</option>
+        <option value="follow-window">{t("host.resolutionFollow")}</option>
         {RDP_FIXED_SIZES.map(([w, h]) => (
           <option key={`${w}x${h}`} value={`${w}x${h}`}>
             {w} x {h}
           </option>
         ))}
-        <option value="custom">Custom...</option>
+        <option value="custom">{t("host.resolutionCustom")}</option>
       </Select>
       {custom && value.mode === "fixed" ? (
         <div className="mt-2 grid grid-cols-2 gap-3">
-          {dim(value.width, (width) => onChange({ ...value, width }), "Width in pixels")}
-          {dim(value.height, (height) => onChange({ ...value, height }), "Height in pixels")}
+          {dim(value.width, (width) => onChange({ ...value, width }), t("host.widthPixels"))}
+          {dim(value.height, (height) => onChange({ ...value, height }), t("host.heightPixels"))}
         </div>
       ) : null}
     </Field>

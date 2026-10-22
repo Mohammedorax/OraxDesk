@@ -20,7 +20,8 @@ import { useTabs } from "../state/TabsContext";
 import { useToasts } from "../state/ToastContext";
 import { hostProtocol, protocolName, type ProtocolKind } from "../lib/types";
 import { inTauri, openSessionWindow, safeInvoke } from "../lib/tauri";
-import { parseConnectTarget, presetProtocol } from "../lib/address";
+import { addressErrorText, parseConnectTarget, presetProtocol } from "../lib/address";
+import { useT } from "../lib/i18n";
 import { classNames, describeError } from "../lib/util";
 import { IconMonitor, IconSearch, IconTerminal, IconX } from "./icons";
 
@@ -50,6 +51,7 @@ export function PanePicker({
   const owns = usePaneVisible();
   const { sessions, open, adopt } = useTabs();
   const { push } = useToasts();
+  const t = useT();
   const [query, setQuery] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
   /** One connect at a time, a double click must not dial twice. */
@@ -102,7 +104,7 @@ export function PanePicker({
       return `${host.friendlyName} — ${protocolName(hostProtocol(host))}, ${host.address}:${host.port}`;
     }
     const parsed = parseConnectTarget(raw);
-    if (!parsed.ok) return parsed.error;
+    if (!parsed.ok) return addressErrorText(parsed, t);
     const protocol = parsed.target.protocol ?? presetProtocol(parsed.target);
     return `${parsed.target.address}:${parsed.target.port} — ${protocolName(protocol)}`;
   }, [query, matchingHosts, matchingSessions.length]);
@@ -152,7 +154,7 @@ export function PanePicker({
   const connectAddress = async (raw: string): Promise<void> => {
     const parsed = parseConnectTarget(raw);
     if (!parsed.ok) {
-      push("danger", parsed.error);
+      push("danger", addressErrorText(parsed, t));
       return;
     }
     if (busy.current) return;

@@ -28,6 +28,7 @@
  */
 
 import { DEFAULT_PORT, type ProtocolKind } from "./types";
+import type { Translate } from "./i18n";
 
 export const DEFAULT_VNC_PORT = DEFAULT_PORT.vnc;
 export const DEFAULT_RDP_PORT = DEFAULT_PORT.rdp;
@@ -51,9 +52,32 @@ export interface Endpoint {
   explicitPort: boolean;
 }
 
+/**
+ * The reasons an address can be refused, as keys into the message catalogue.
+ *
+ * The parser used to answer with an English SENTENCE, and the sentence was
+ * shown verbatim next to the field. The app's default language is Arabic, so
+ * every refusal was in a language the reader does not use, and the field said
+ * "Enter an address" to somebody whose whole interface is in Arabic.
+ *
+ * A key is better than a sentence for another reason: it is CHECKED. The
+ * parser cannot spell a key the catalogue does not have, so a refusal cannot
+ * disappear into a message that was never written.
+ */
+export type AddressErrorKey =
+  | "address.needHost"
+  | "address.beforeColon"
+  | "address.afterColon"
+  | "address.portRange"
+  | "address.noSpaces"
+  | "address.badChars"
+  | "address.ipv6"
+  | "address.ipv6Invalid"
+  | "address.needComputerId";
+
 export type AddressResult =
   | { ok: true; endpoint: Endpoint }
-  | { ok: false; error: string };
+  | { ok: false; error: AddressErrorKey; detail?: string };
 
 export interface Target extends Endpoint {
   /**
@@ -69,7 +93,22 @@ export interface Target extends Endpoint {
 
 export type TargetResult =
   | { ok: true; target: Target }
-  | { ok: false; error: string };
+  | { ok: false; error: AddressErrorKey; detail?: string };
+
+/**
+ * The sentence for a refusal, in the app's language.
+ *
+ * The parser answers with a KEY and, where the sentence needs to name the
+ * thing that was wrong, the value to name. The two are kept apart here so
+ * that the places which show the refusal do not have to know which keys
+ * carry a value.
+ */
+export function addressErrorText(
+  failure: { error: AddressErrorKey; detail?: string },
+  t: Translate,
+): string {
+  return failure.detail ? t(failure.error, { address: failure.detail }) : t(failure.error);
+}
 
 const IPV4 = /^(?:\d{1,3}\.){3}\d{1,3}$/;
 
@@ -112,11 +151,11 @@ export function isIpv6Literal(value: string): boolean {
 }
 
 function endpoint(address: string, digits: string, allowDisplayNumber: boolean): AddressResult {
-  if (address === "") return { ok: false, error: "Enter an address before the colon" };
+  if (address === "") return { ok: false, error: "address.beforeColon" };
   const typed = Number(digits);
   const port = allowDisplayNumber && typed < MAX_DISPLAY_NUMBER ? DEFAULT_VNC_PORT + typed : typed;
   if (!Number.isInteger(port) || port < 1 || port > 65535) {
-    return { ok: false, error: "Port must be between 1 and 65535" };
+    return { ok: false, error: "address.portRange" };
   }
   return { ok: true, endpoint: { address, port, explicitPort: true } };
 }
@@ -147,7 +186,7 @@ function readScheme(raw: string): { protocol: ProtocolKind | null; rest: string;
  */
 export function parseConnectTarget(input: string, assume?: ProtocolKind): TargetResult {
   const trimmed = input.trim();
-  if (trimmed === "") return { ok: false, error: "Enter an address" };
+  if (trimmed === "") return { ok: false, error: "address.needHost" };
 
   const { protocol: named, rest, url } = readScheme(trimmed);
 
@@ -157,7 +196,7 @@ export function parseConnectTarget(input: string, assume?: ProtocolKind): Target
     if (!/^[0-9a-fA-F]{64}$/.test(trimmed)) {
       return {
         ok: false,
-        error: "Enter the 64 character ID shown under Unattended access in DeskVNC Support",
+        error: "address.needComputerId",
       };
     }
     return {
@@ -222,9 +261,9 @@ export function parseConnectTarget(input: string, assume?: ProtocolKind): Target
     }
   }
 
-  if (raw === "") return { ok: false, error: "Enter an address" };
-  if (/\s/.test(raw)) return { ok: false, error: "An address cannot contain spaces" };
-  if (/[/?#@]/.test(raw)) return { ok: false, error: "An address cannot contain / ? # or @" };
+  if (raw === "") return { ok: false, error: "address.needHost" };
+  if (/\s/.test(raw)) return { ok: false, error: "address.noSpaces" };
+  if (/[/?#@]/.test(raw)) return { ok: false, error: "address.badChars" };
 
   // Display numbers are a VNC convention and do not exist for RDP or SSH, so
   // `rdp://box:1` is port 1 and not 3390, and `ssh://box:1` is port 1 and not
@@ -248,7 +287,9 @@ export function parseConnectTarget(input: string, assume?: ProtocolKind): Target
   const bracketed = /^\[([^\]]+)\](?::(\d+))?$/.exec(raw);
   if (bracketed) {
     const [, inner, digits] = bracketed;
-    if (!isIpv6Literal(inner)) return { ok: false, error: `${inner} is not a valid IPv6 address` };
+    if (!isIpv6Literal(inner)) {
+      return { ok: false, error: "address.ipv6Invalid", detail: inner };
+    }
     // Brackets exist to delimit the address, so a number after them is always
     // a literal port. Reading `[::1]:1` as display 1 would be a nasty surprise.
     if (digits === undefined) {
@@ -260,7 +301,7 @@ export function parseConnectTarget(input: string, assume?: ProtocolKind): Target
     return done(endpoint(inner, digits, false));
   }
   if (raw.includes("[") || raw.includes("]")) {
-    return { ok: false, error: "Write an IPv6 address as [::1] or [::1]:5901" };
+    return { ok: false, error: "address.ipv6" };
   }
 
   // Before the `host::port` rule below, or `fe80::1` would parse as host
@@ -284,7 +325,7 @@ export function parseConnectTarget(input: string, assume?: ProtocolKind): Target
     // as host `1::2` port 3 would be a guess dressed up as an answer. An IPv6
     // address with a port has exactly one spelling and it has brackets.
     if (isIpv6Literal(explicit[1])) {
-      return { ok: false, error: "Write an IPv6 address as [::1] or [::1]:5901" };
+      return { ok: false, error: "address.ipv6" };
     }
     return done(endpoint(explicit[1], explicit[2], false));
   }
@@ -292,8 +333,8 @@ export function parseConnectTarget(input: string, assume?: ProtocolKind): Target
   const suffixed = /^(.+?):(\d+)$/.exec(raw);
   if (suffixed) return done(endpoint(suffixed[1], suffixed[2], displayNumbers));
 
-  if (raw.startsWith(":")) return { ok: false, error: "Enter an address before the colon" };
-  if (raw.includes(":")) return { ok: false, error: "Add a port or display number after the colon" };
+  if (raw.startsWith(":")) return { ok: false, error: "address.beforeColon" };
+  if (raw.includes(":")) return { ok: false, error: "address.afterColon" };
   return {
     ok: true,
     target: { address: raw, port: fallbackPort, explicitPort: false, protocol, username },

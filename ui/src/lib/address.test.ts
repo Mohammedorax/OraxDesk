@@ -53,9 +53,11 @@ describe("existing behaviour, unchanged", () => {
   });
 
   it("keeps the error strings", () => {
-    expect(err("1::2::3")).toMatch(/IPv6/);
+    // The refusals are CATALOGUE KEYS now, so this test says WHICH refusal
+    // happened and says nothing about the wording of it.
+    expect(err("1::2::3")).toBe("address.ipv6");
     expect(err("::1]:5901")).toBeTruthy();
-    expect(err("office 2")).toMatch(/spaces/);
+    expect(err("office 2")).toBe("address.noSpaces");
   });
 
   it("reports no protocol when the input named none", () => {
@@ -91,8 +93,8 @@ describe("the rdp:// grammar", () => {
   });
 
   it("still refuses what it always refused", () => {
-    expect(err("rdp://")).toMatch(/Enter an address/);
-    expect(err("rdp://box:0")).toMatch(/between 1 and 65535/);
+    expect(err("rdp://")).toBe("address.needHost");
+    expect(err("rdp://box:0")).toBe("address.portRange");
   });
 
   it("keeps resolving a bare user@host to RDP when the host dialog assumes it", () => {
@@ -129,8 +131,8 @@ describe("the ssh:// grammar", () => {
   });
 
   it("still refuses what it always refused", () => {
-    expect(err("ssh://")).toMatch(/Enter an address/);
-    expect(err("ssh://box:0")).toMatch(/between 1 and 65535/);
+    expect(err("ssh://")).toBe("address.needHost");
+    expect(err("ssh://box:0")).toBe("address.portRange");
   });
 });
 
