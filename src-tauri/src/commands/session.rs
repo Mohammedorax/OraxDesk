@@ -1299,9 +1299,14 @@ pub async fn connect_session(
             // the regions that were JPEG-compressed at full quality. Global
             // preference, on a metered link the user may prefer to keep the
             // saved bandwidth.
-            vnc.lossless_refresh = state
-                .store
-                .get_setting("lossless_refresh")
+            //
+            // The store is synchronous SQLite behind a lock, so it is read on
+            // a blocking thread: this is the connect path, and a thread that
+            // waits for a disk while holding the connection lock is a stall
+            // every window open would feel.
+            let store = state.store.clone();
+            vnc.lossless_refresh = super::blocking(move || store.get_setting("lossless_refresh"))
+                .await
                 .ok()
                 .flatten()
                 .map(|v| v != "false")
@@ -2510,10 +2515,13 @@ pub async fn open_session_window(
     // One window per machine, unless the user opted out (globally or for this
     // one call). Reading the setting here, not in the webview, is what makes
     // every entry point obey it.
+    //
+    // Off the runtime: the store is synchronous SQLite behind a lock, and
+    // this is the path every connect gesture takes.
+    let store = state.store.clone();
     let allow_multiple = allow_multiple_sessions(
-        state
-            .store
-            .get_setting(ALLOW_MULTIPLE_SESSIONS_KEY)
+        super::blocking(move || store.get_setting(ALLOW_MULTIPLE_SESSIONS_KEY))
+            .await
             .unwrap_or_default()
             .as_deref(),
     );
