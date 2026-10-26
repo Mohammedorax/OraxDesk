@@ -1,6 +1,6 @@
 //! # vnc-core
 //!
-//! UI-agnostic RFB (VNC) protocol core for DeskVNCViewer.
+//! UI-agnostic RFB (VNC) protocol core for OraxDesk.
 //!
 //! This crate MUST NOT depend on Tauri or any UI framework, it is the durable
 //! layer that outlives frontend choices (see PRD/01-architecture.md §1).

@@ -56,7 +56,7 @@ import { loadRdpDefaults } from "../lib/rdpDefaults";
 import { QuickConnect } from "../components/QuickConnect";
 import { mustInvoke } from "../lib/tauri";
 import { DeviceIdentityCard } from "../components/DeviceIdentityCard";
-import { rememberedRegistryUrl, registry } from "../lib/support";
+import { rememberRegistryUrl, registry } from "../lib/support";
 import { ContextMenu, Dialog, EmptyState, Select, TileSkeleton, type MenuItem } from "../components/primitives";
 import {
   IconActivity,
@@ -269,18 +269,18 @@ export function Library({
   );
 
   const connectAdHoc = useCallback(
-    (protocol: ProtocolKind, address: string, port: number): void => {
+    (protocol: ProtocolKind, address: string, port: number, label = address): void => {
       // Say what is being attempted. The session opens in another window or
       // tab, so without this the address bar goes empty and nothing at all
       // happens where the person is looking.
       push(
         "info",
         port
-          ? t("library.connectingToPort", { address, port })
-          : t("library.connectingTo", { address }),
+          ? t("library.connectingToPort", { address: label, port })
+          : t("library.connectingTo", { address: label }),
       );
       if (inTauri()) {
-        void openSession({ address, port, protocol }, address);
+        void openSession({ address, port, protocol }, label);
         return;
       }
       // Endpoint rides along exactly as the shell sets it: an ad-hoc session
@@ -318,23 +318,33 @@ export function Library({
   const connectAdHocResolved = useCallback(
     (protocol: ProtocolKind, address: string, port: number): void => {
       const digits = address.trim().replaceAll(" ", "");
-      const registryUrl = rememberedRegistryUrl();
-      if (/^\d{9}$/.test(digits) && registryUrl !== "" && inTauri()) {
+      if (/^\d{9}$/.test(digits) && inTauri()) {
         void (async () => {
           try {
+            const registryUrl = await registry.origin();
+            if (registryUrl === "") {
+              push("danger", t("library.numberNeedsRegistry"));
+              return;
+            }
+            await rememberRegistryUrl(registryUrl);
             const record = await registry.lookupNumber(registryUrl, digits);
-            connectAdHoc("boundary", record.id, 0);
-          } catch {
-            // No such number in the registry, or the registry is down. Fall
-            // back to what the user typed rather than doing nothing.
-            connectAdHoc(protocol, address, port);
+            connectAdHoc("boundary", record.id, 0, digits);
+          } catch (err) {
+            const reason = describeError(err);
+            const missing = /404|not_found|No such device/i.test(reason);
+            push(
+              "danger",
+              missing
+                ? t("library.numberNotRegistered", { number: digits })
+                : t("library.numberLookupFailed", { number: digits, reason }),
+            );
           }
         })();
         return;
       }
       connectAdHoc(protocol, address, port);
     },
-    [connectAdHoc],
+    [connectAdHoc, push, t],
   );
 
   /**
@@ -1417,7 +1427,7 @@ export function Library({
         control they cannot see.
       */}
       <header className="flex flex-wrap items-center gap-3 border-b border-subtle bg-surface/80 px-4 py-2.5">
-        <h1 className="mr-1 text-sm font-semibold tracking-tight text-primary">DeskVNCViewer</h1>
+        <h1 className="mr-1 text-sm font-semibold tracking-tight text-primary">OraxDesk</h1>
         <div className="relative min-w-56 max-w-md flex-1">
           <IconSearch size={15} className="pointer-events-none absolute start-2.5 top-1/2 -translate-y-1/2 text-tertiary" />
           <input

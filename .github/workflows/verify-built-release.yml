@@ -49,18 +49,18 @@ jobs:
           gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir assets
           VERSION=${TAG#v}
           for name in \
-            "DeskVNCViewer_${VERSION}_x64-setup.exe" \
-            "DeskVNCViewer_${VERSION}_x64_en-US.msi" \
-            "DeskVNCViewer_${VERSION}_amd64.deb" \
-            "DeskVNCViewer_${VERSION}_amd64.AppImage" \
-            "DeskVNCViewer_${VERSION}_universal.dmg" \
-            "DeskVNC-Support-macOS.zip"; do
+            "OraxDesk_${VERSION}_x64-setup.exe" \
+            "OraxDesk_${VERSION}_x64_en-US.msi" \
+            "OraxDesk_${VERSION}_amd64.deb" \
+            "OraxDesk_${VERSION}_amd64.AppImage" \
+            "OraxDesk_${VERSION}_universal.dmg" \
+            "OraxDesk-Support-macOS.zip"; do
             test -s "assets/$name"
           done
-          DMG="assets/DeskVNCViewer_${VERSION}_universal.dmg"
+          DMG="assets/OraxDesk_${VERSION}_universal.dmg"
           hdiutil attach -readonly -nobrowse -mountpoint "$PWD/mounted" "$DMG"
           trap 'hdiutil detach "$PWD/mounted" || true' EXIT
-          APP="$PWD/mounted/DeskVNCViewer.app"
+          APP="$PWD/mounted/OraxDesk.app"
           test "$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$APP/Contents/Info.plist")" = "$VERSION"
           lipo "$APP/Contents/MacOS/dvv" -verify_arch arm64
           lipo "$APP/Contents/MacOS/dvv" -verify_arch x86_64
@@ -70,11 +70,11 @@ jobs:
           codesign -dvv "$APP" 2>&1 | grep 'Authority=Developer ID Application'
           xcrun stapler validate "$APP"
           spctl -a -vv -t exec "$APP"
-          ditto -x -k assets/DeskVNC-Support-macOS.zip support
-          codesign --verify --strict --deep "support/DeskVNC Support.app"
-          xcrun stapler validate "support/DeskVNC Support.app"
-          spctl -a -vv -t exec "support/DeskVNC Support.app"
-          (cd assets && shasum -a 256 -c SHA256SUMS-DeskVNC-Support-macOS.txt)
+          ditto -x -k assets/OraxDesk-Support-macOS.zip support
+          codesign --verify --strict --deep "support/OraxDesk Support.app"
+          xcrun stapler validate "support/OraxDesk Support.app"
+          spctl -a -vv -t exec "support/OraxDesk Support.app"
+          (cd assets && shasum -a 256 -c SHA256SUMS-OraxDesk-Support-macOS.txt)
           hdiutil detach "$PWD/mounted"
           trap - EXIT
 
@@ -86,7 +86,7 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           set -euo pipefail
-          DMG="assets/DeskVNCViewer_${TAG#v}_universal.dmg"
+          DMG="assets/OraxDesk_${TAG#v}_universal.dmg"
           xcrun notarytool submit "$DMG" \
             --apple-id "$APPLE_ID" --password "$APPLE_PASSWORD" \
             --team-id "$APPLE_TEAM_ID" --wait

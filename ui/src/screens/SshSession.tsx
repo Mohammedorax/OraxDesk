@@ -32,6 +32,7 @@ import { CredentialPrompt } from "../components/CredentialPrompt";
 import { SshHostKeyPrompt } from "../components/SshHostKeyPrompt";
 import { ToastShelf } from "../components/primitives";
 import { useToasts } from "../state/ToastContext";
+import { useT } from "../lib/i18n";
 import { classNames } from "../lib/util";
 import { inTauri, safeInvoke } from "../lib/tauri";
 import type { SessionState } from "../lib/types";
@@ -80,16 +81,16 @@ export interface SshSessionProps {
 
 /** Status pill next to the host name; mirrors `SshTerminal`'s but keyed off
  *  `useSession`'s state machine rather than the sidecar's own. */
-function statusPill(state: SessionState): { label: string; dot: string } {
+function statusPill(state: SessionState, t: ReturnType<typeof useT>): { label: string; dot: string } {
   switch (state.state) {
     case "connected":
-      return { label: "Connected", dot: "bg-success" };
+      return { label: t("ssh.connected"), dot: "bg-success" };
     case "authenticating":
-      return { label: `Authenticating (${authMethodLabel(state.method)})`, dot: "bg-tertiary animate-pulse" };
+      return { label: t("ssh.authenticating", { method: authMethodLabel(state.method) }), dot: "bg-tertiary animate-pulse" };
     case "reconnecting":
-      return { label: `Reconnecting (attempt ${state.attempt})`, dot: "bg-warning animate-pulse" };
+      return { label: t("ssh.reconnecting", { attempt: state.attempt }), dot: "bg-warning animate-pulse" };
     case "disconnected":
-      return { label: "Disconnected", dot: "bg-danger" };
+      return { label: t("ssh.disconnected"), dot: "bg-danger" };
     default:
       return { label: "Connecting…", dot: "bg-tertiary animate-pulse" };
   }
@@ -122,6 +123,7 @@ export function SshSession({
   onClose,
   onState,
 }: SshSessionProps): ReactNode {
+  const t = useT();
   const params = paramsProp ?? readSessionParams();
   /**
    * A terminal in a background pane keeps running and keeps taking output; the
@@ -341,7 +343,7 @@ export function SshSession({
     }
     if (session.sshAttached?.resumed && !resumeToasted.current) {
       resumeToasted.current = true;
-      push("success", `Reattached to your ${multiplexerLabel(session.sshAttached.multiplexer)} session`);
+      push("success", t("ssh.reattached", { multiplexer: multiplexerLabel(session.sshAttached.multiplexer) }));
     }
   }, [session.state.state, session.sshAttached, push]);
 
@@ -391,7 +393,7 @@ export function SshSession({
   const showConnecting =
     st.state === "resolving" || st.state === "connecting" ||
     st.state === "authenticating" || st.state === "negotiating" || st.state === "idle";
-  const pill = statusPill(st);
+  const pill = statusPill(st, t);
 
   return (
     <div className="relative flex h-full w-full flex-col overflow-hidden bg-canvas">

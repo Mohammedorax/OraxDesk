@@ -145,7 +145,7 @@ export function PanePicker({
         void safeInvoke("touch_connected", { hostId: profileId }, null);
       }
     } catch (err) {
-      push("danger", `Could not connect to ${label}: ${describeError(err)}`);
+      push("danger", t("pane.connectFailed", { label, reason: describeError(err) }));
     } finally {
       busy.current = false;
     }
@@ -188,7 +188,7 @@ export function PanePicker({
         );
       }
     } catch (err) {
-      push("danger", `Could not connect: ${describeError(err)}`);
+      push("danger", t("pane.connectFailedGeneric", { reason: describeError(err) }));
     } finally {
       busy.current = false;
     }
@@ -232,7 +232,7 @@ export function PanePicker({
         <input
           ref={inputRef}
           className="min-w-0 flex-1 bg-transparent text-sm text-primary outline-none placeholder:text-tertiary"
-          placeholder="Search hosts, or type an address"
+          placeholder={t("common.searchHosts")}
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           onKeyDown={(e) => {
@@ -252,7 +252,7 @@ export function PanePicker({
               onClose();
             }
           }}
-          aria-label="Choose what to show in this pane"
+          aria-label={t("common.choosePane")}
           // Focused as a courtesy, not because anyone asked. A secondary click
           // on the chrome lets it go, so the webview has no focused text field
           // to build an editing menu around. See `lib/contextMenu.ts`.
@@ -262,8 +262,8 @@ export function PanePicker({
           type="button"
           className="rounded-sm p-1 text-tertiary hover:bg-strong/20 hover:text-primary"
           onClick={onClose}
-          aria-label="Close this pane"
-          title="Close this pane"
+          aria-label={t("common.closePane")}
+          title={t("common.closePaneTitle")}
         >
           <IconX size={13} />
         </button>
@@ -281,7 +281,7 @@ export function PanePicker({
           </p>
         ) : null}
         {matchingSessions.length > 0 ? (
-          <Section title="Move a connected session here">
+          <Section title={t("common.moveSessionHere")}>
             {matchingSessions.map((s) => (
               <Row
                 key={s.id}
@@ -295,7 +295,7 @@ export function PanePicker({
         ) : null}
 
         {matchingHosts.length > 0 ? (
-          <Section title="Connect">
+          <Section title={t("quick.connect")}>
             {matchingHosts.slice(0, 50).map((h) => (
               <Row
                 key={h.id}
@@ -311,8 +311,8 @@ export function PanePicker({
         {matchingSessions.length === 0 && matchingHosts.length === 0 ? (
           <p className="px-2 py-6 text-center text-xs text-tertiary">
             {needle
-              ? "Nothing matches. Press Enter to connect to it as an address."
-              : "No saved hosts yet."}
+              ? t("common.nothingMatches")
+              : t("common.noSavedHosts")}
           </p>
         ) : null}
       </div>

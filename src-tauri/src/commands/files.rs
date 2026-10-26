@@ -1011,7 +1011,7 @@ async fn agent_sidecar(app: &AppHandle, session_id: &str) -> Result<Arc<FilesEnt
         let sessions = app_state.sessions.lock();
         let entry = sessions.get(session_id).ok_or_else(|| {
             FileRefusal::unavailable(format!(
-                "there is no session {session_id} in DeskVNCViewer, so there is no machine to open a file transfer to. Call limb.list for the sessions that exist"
+                "there is no session {session_id} in OraxDesk, so there is no machine to open a file transfer to. Call limb.list for the sessions that exist"
             ))
         })?;
         // An SSH session already names the port SFTP rides on.
@@ -1088,7 +1088,7 @@ async fn agent_sidecar(app: &AppHandle, session_id: &str) -> Result<Arc<FilesEnt
             fingerprint,
         }) => {
             return Err(FileRefusal::unavailable(format!(
-                "the SSH host key for {host}:{port} has never been trusted on this machine ({key_type} {fingerprint}). Trust on first use means a PERSON looks at that fingerprint and accepts it, and an agent cannot accept it on their behalf. Nothing was transferred. Ask the user to open the Files panel for that machine once in DeskVNCViewer and accept the key, then call this again"
+                "the SSH host key for {host}:{port} has never been trusted on this machine ({key_type} {fingerprint}). Trust on first use means a PERSON looks at that fingerprint and accepts it, and an agent cannot accept it on their behalf. Nothing was transferred. Ask the user to open the Files panel for that machine once in OraxDesk and accept the key, then call this again"
             )))
         }
         Err(FilesError::HostKeyChanged {

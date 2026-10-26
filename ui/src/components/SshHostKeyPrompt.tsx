@@ -15,6 +15,7 @@
  * the user can compare against `ssh-keygen -lf` output on the server.
  */
 import type { ReactNode } from "react";
+import { useT } from "../lib/i18n";
 import { Dialog } from "./primitives";
 import type { SshHostKeyPromptState } from "../hooks/useSession";
 import { IconAlert, IconLock } from "./icons";
@@ -28,13 +29,14 @@ export function SshHostKeyPrompt({
   onAccept: () => void;
   onCancel: () => void;
 }): ReactNode {
+  const t = useT();
   const endpoint = `${data.host}:${data.port}`;
   const gateway = data.gateway;
 
   if (data.changed) {
     return (
       <Dialog
-        title={gateway ? "SSH gateway identity has CHANGED" : "This machine's identity has CHANGED"}
+        title={gateway ? t("sshHostKey.changedTitleGateway") : t("sshHostKey.changedTitle")}
         onClose={onCancel}
         danger
         width={560}
@@ -46,18 +48,14 @@ export function SshHostKeyPrompt({
               <IconAlert size={20} />
             </span>
             <p className="text-sm break-words text-primary">
-              The SSH server at <strong className="mono">{endpoint}</strong> is presenting a
-              different host key than the one you trusted before. This can mean the machine was
-              reinstalled, or that someone is intercepting your connection. The connection was
-              refused. If you know the key legitimately changed, remove the saved key for this
-              machine and connect again.
+              {t("sshHostKey.changedBody", { endpoint })}
             </p>
           </div>
-          <KeyBlock label="Previously trusted" value={data.expected ?? ""} />
-          <KeyBlock label="Presented now" value={data.fingerprint} />
+          <KeyBlock label={t("sshHostKey.previouslyTrusted")} value={data.expected ?? ""} />
+          <KeyBlock label={t("sshHostKey.presentedNow")} value={data.fingerprint} />
           <div className="flex justify-end">
             <button type="button" data-cancel className="btn-primary" onClick={onCancel}>
-              Close
+              {t("common.close")}
             </button>
           </div>
         </div>
@@ -67,7 +65,7 @@ export function SshHostKeyPrompt({
 
   return (
     <Dialog
-      title={gateway ? `Verify SSH gateway ${data.host}` : `Verify ${data.host}`}
+      title={gateway ? t("sshHostKey.verifyGatewayTitle", { host: data.host }) : t("sshHostKey.verifyTitle", { host: data.host })}
       onClose={onCancel}
       width={560}
       initialFocusSelector="[data-cancel]"
@@ -78,30 +76,19 @@ export function SshHostKeyPrompt({
             <IconLock size={20} />
           </span>
           <p className="text-sm break-words text-secondary">
-            {gateway ? (
-              <>
-                Your connection will be tunnelled through the SSH server at{" "}
-                <span className="mono">{endpoint}</span>, and this is the first time it has
-                identified itself.
-              </>
-            ) : (
-              <>
-                This is the first time <span className="mono">{endpoint}</span> has identified
-                itself, so there is nothing saved to compare it against yet.
-              </>
-            )}{" "}
-            Verify the fingerprint below matches the server&apos;s
-            (<span className="mono">ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub</span>)
-            before trusting it.
+            {gateway
+              ? t("sshHostKey.gatewayBody", { endpoint })
+              : t("sshHostKey.firstBody", { endpoint })}{" "}
+            {t("sshHostKey.verifyHint", { command: "ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub" })}
           </p>
         </div>
-        <KeyBlock label={data.keyType ?? "host key"} value={data.fingerprint} />
+        <KeyBlock label={data.keyType ?? t("sshHostKey.hostKey")} value={data.fingerprint} />
         <div className="flex flex-wrap justify-end gap-2.5">
           <button type="button" data-cancel className="btn-secondary" onClick={onCancel}>
-            Cancel
+            {t("support.cancel")}
           </button>
           <button type="button" className="btn-primary" onClick={onAccept}>
-            Trust and connect
+            {t("sshHostKey.trust")}
           </button>
         </div>
       </div>

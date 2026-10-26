@@ -1,6 +1,6 @@
-//! A paired computer opened by its machine ID takes DeskVNC's pointer and
+//! A paired computer opened by its machine ID takes OraxDesk's pointer and
 //! keys, the same as an invitation session does. Uses the real network for
-//! discovery, like DeskVNC itself.
+//! discovery, like OraxDesk itself.
 use boundary_driver::BoundaryDriver;
 use boundary_session::{
     unattended::{self, Access, Notice},
@@ -47,7 +47,7 @@ async fn a_paired_computer_takes_pointer_input() {
         let mut access = Access::default();
         access.enabled = true;
         access
-            .trust(&helper.public().to_string(), "DeskVNC", true)
+            .trust(&helper.public().to_string(), "OraxDesk", true)
             .unwrap();
         access.save(&access_path).unwrap();
         let inputs = Arc::new(AtomicUsize::new(0));

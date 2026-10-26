@@ -271,7 +271,7 @@ mod imp {
         }
         ensure!(
             crate::install::translocated().is_none(),
-            "Move DeskVNC Support to Applications first"
+            "Move OraxDesk Support to Applications first"
         );
         let exe = std::env::current_exe().context("This app cannot find itself")?;
         let home = std::env::var("HOME").context("No home folder")?;
@@ -370,8 +370,8 @@ mod imp {
     fn installed() -> Result<PathBuf> {
         let base = std::env::var_os("ProgramFiles").context("No Program Files folder")?;
         Ok(PathBuf::from(base)
-            .join("DeskVNC Support")
-            .join("DeskVNC Support.exe"))
+            .join("OraxDesk Support")
+            .join("OraxDesk Support.exe"))
     }
     /// Run elevated, from [`set`].
     pub fn install(owner: &str) -> Result<()> {
@@ -399,7 +399,7 @@ mod imp {
             sc(&format!("config {SERVICE} {path} start= auto"))?
         } else {
             sc(&format!(
-                "create {SERVICE} {path} start= auto DisplayName= \"DeskVNC Support\""
+                "create {SERVICE} {path} start= auto DisplayName= \"OraxDesk Support\""
             ))?
         };
         ensure!(configured, "Windows did not accept the service");

@@ -1,7 +1,7 @@
-//! Get help: this computer shared over Boundary, from inside DeskVNC.
+//! Get help: this computer shared over Boundary, from inside OraxDesk.
 //!
-//! Everything DeskVNC Support does for the person being helped is here too,
-//! so someone who already has DeskVNC needs nothing else: a code or an
+//! Everything OraxDesk Support does for the person being helped is here too,
+//! so someone who already has OraxDesk needs nothing else: a code or an
 //! invitation, approving the helper, control and their tools as separate
 //! choices, what the tools did, pairing, and unattended access with its
 //! helpers, password and start at sign in.
@@ -37,14 +37,14 @@ use tokio::{
 pub const SUPPORT_EVENT: &str = "support://state";
 /// How many lines of what a helper's tools did are kept on screen.
 const ACTIVITY_LINES: usize = 8;
-/// DeskVNC's own sign in entry, separate from DeskVNC Support's.
+/// OraxDesk's own sign in entry, separate from OraxDesk Support's.
 const AUTOSTART: autostart::Entry = autostart::Entry {
-    name: "DeskVNC",
+    name: "OraxDesk",
     label: "com.deskvncviewer.desktop.background",
     file: "deskvnc",
 };
 /// How often a switched on but stopped listener tries again, for when
-/// DeskVNC Support held the lock and has since quit.
+/// OraxDesk Support held the lock and has since quit.
 const RETRY: Duration = Duration::from_secs(15);
 
 pub struct Support {
@@ -492,7 +492,7 @@ impl Model {
         match boundary_provision::platform::claim_unattended() {
             Ok(Some(claim)) => self.claim = Some(claim),
             Ok(None) => {
-                self.fail("DeskVNC Support on this computer is already answering unattended connections. DeskVNC takes over when it quits".into());
+                self.fail("OraxDesk Support on this computer is already answering unattended connections. OraxDesk takes over when it quits".into());
                 return;
             }
             Err(error) => {

@@ -191,7 +191,7 @@ export function parseConnectTarget(input: string, assume?: ProtocolKind): Target
   const { protocol: named, rest, url } = readScheme(trimmed);
 
   // A Boundary computer has no host or port, only the machine ID that
-  // DeskVNC Support shows under unattended access.
+  // OraxDesk Support shows under unattended access.
   if (assume === "boundary" && named === null) {
     if (!/^[0-9a-fA-F]{64}$/.test(trimmed)) {
       return {
@@ -414,6 +414,11 @@ export function formatEndpoint(address: string, port: number): string {
 export function presetProtocol(target: { port: number }): ProtocolKind {
   if (target.port === DEFAULT_SSH_PORT) return "ssh";
   return target.port === DEFAULT_RDP_PORT ? "rdp" : "vnc";
+}
+
+export function compactDeviceNumber(input: string): string {
+  const trimmed = input.trim();
+  return /^\d{3}(?:\s+\d{3}){2}$/.test(trimmed) ? trimmed.replace(/\s+/g, "") : input;
 }
 
 /**

@@ -1,4 +1,4 @@
--- Orax Remote — device registry and signal codes.
+-- OraxDesk — device registry and signal codes.
 --
 -- Safe to re-run: every statement is idempotent. The authoritative migration
 -- tracker is `wrangler d1 migrations`, but this file is also applied directly by

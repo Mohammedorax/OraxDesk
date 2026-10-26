@@ -1,4 +1,4 @@
-# خطة تنفيذ Orax Remote — Cloudflare Workers + D1
+# خطة تنفيذ OraxDesk — Cloudflare Workers + D1
 
 > **هذه خطة للاعتماد، لا تنفيذ.** لم يُعدَّل أي كود، ولم يُنشأ أي مورد Cloudflare، ولم يُنشر شيء.
 > الأساس: [CLOUDFLARE_ARCHITECTURE_AUDIT.md](CLOUDFLARE_ARCHITECTURE_AUDIT.md) (المرحلة الأولى).
@@ -64,7 +64,7 @@
 ## 3. البنية الهدف وتدفّق البيانات
 
 ```
-المضيف (DeskVNC Support)                            المساعد (DeskVNC)
+المضيف (OraxDesk Support)                            المساعد (OraxDesk)
 ┌──────────────────────────────┐                  ┌──────────────────────────────┐
 │ boundary-session::host        │                  │ boundary-session::viewer      │
 │ machine.key (ed25519)         │                  │ boundary-helper.key (ed25519) │

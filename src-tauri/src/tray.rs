@@ -15,7 +15,7 @@ const MAX_RECENT: usize = 5;
 
 pub fn install(app: &AppHandle) -> tauri::Result<()> {
     let mut builder = MenuBuilder::new(app)
-        .item(&MenuItemBuilder::with_id("tray:open", "Open DeskVNCViewer").build(app)?);
+        .item(&MenuItemBuilder::with_id("tray:open", "Open OraxDesk").build(app)?);
 
     let recent = recent_hosts(app);
     if !recent.is_empty() {
@@ -29,13 +29,13 @@ pub fn install(app: &AppHandle) -> tauri::Result<()> {
     }
     let menu = builder
         .separator()
-        .item(&MenuItemBuilder::with_id("tray:quit", "Quit DeskVNCViewer").build(app)?)
+        .item(&MenuItemBuilder::with_id("tray:quit", "Quit OraxDesk").build(app)?)
         .build()?;
 
     let mut tray = TrayIconBuilder::with_id("main")
         .menu(&menu)
         .show_menu_on_left_click(true)
-        .tooltip("DeskVNCViewer")
+        .tooltip("OraxDesk")
         .on_menu_event(|app, event| handle_tray_event(app, event.id().as_ref()));
     if let Some(icon) = app.default_window_icon() {
         tray = tray.icon(icon.clone());

@@ -89,13 +89,13 @@ mod tests {
     #[test]
     fn finds_the_bundle_behind_a_translocated_copy() {
         let mounts = "/dev/disk3s1s1 on / (apfs, sealed, local, read-only, journaled)\n\
-/private/tmp/tl/DeskVNC Support.app on /private/var/folders/tn/w3/T/AppTranslocation/00A1 (nullfs, local, nodev, nosuid, read-only, nobrowse, mounted by someone)\n";
+/private/tmp/tl/OraxDesk Support.app on /private/var/folders/tn/w3/T/AppTranslocation/00A1 (nullfs, local, nodev, nosuid, read-only, nobrowse, mounted by someone)\n";
         let exe = Path::new(
-            "/private/var/folders/tn/w3/T/AppTranslocation/00A1/d/DeskVNC Support.app/Contents/MacOS/boundary",
+            "/private/var/folders/tn/w3/T/AppTranslocation/00A1/d/OraxDesk Support.app/Contents/MacOS/boundary",
         );
         assert_eq!(
             original(exe, mounts),
-            Some(PathBuf::from("/private/tmp/tl/DeskVNC Support.app"))
+            Some(PathBuf::from("/private/tmp/tl/OraxDesk Support.app"))
         );
         let elsewhere =
             Path::new("/var/folders/tn/w3/T/AppTranslocation/FFFF/d/X.app/Contents/MacOS/boundary");

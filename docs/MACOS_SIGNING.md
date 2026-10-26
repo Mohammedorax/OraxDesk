@@ -2,7 +2,7 @@
 
 ## The problem
 
-An unsigned DeskVNCViewer build re-asks for keychain access on every launch,
+An unsigned OraxDesk build re-asks for keychain access on every launch,
 and clicking **Always Allow** does not help. The same happens to the Local
 Network and Accessibility permissions.
 
@@ -16,7 +16,7 @@ no signing certificate, the linker applies an ad-hoc signature, and the
 designated requirement degrades to a pin on the binary's own hash:
 
 ```
-$ codesign -d -r- target/release/bundle/macos/DeskVNCViewer.app
+$ codesign -d -r- target/release/bundle/macos/OraxDesk.app
 # designated => cdhash H"7d9582c92f2afed265a09bed01f79147a455353f"
 ```
 
@@ -44,7 +44,7 @@ scripts/package-macos.sh            # build + sign + DMG
 ```
 
 `macos-codesign-setup.sh` creates a self-signed code-signing certificate
-(`DeskVNCViewer Local Dev`) in your login keychain and writes
+(`OraxDesk Local Dev`) in your login keychain and writes
 `.cargo/config.toml`, which routes macOS links through
 `scripts/codesign-linker.sh`. That shim re-signs the app binary after every
 relink, so `cargo tauri dev` builds carry the same identity as the bundled app
@@ -143,7 +143,7 @@ Verify the way a download is actually assessed. A plain `spctl -a` on a file
 that was never quarantined is lenient and will pass even unnotarized builds:
 
 ```sh
-cp DeskVNCViewer_0.1.0_aarch64.dmg /tmp/t.dmg
+cp OraxDesk_0.1.0_aarch64.dmg /tmp/t.dmg
 xattr -w com.apple.quarantine "0083;0;Safari;" /tmp/t.dmg
 spctl -a -vv -t open --context context:primary-signature /tmp/t.dmg
 # want: source=Notarized Developer ID
@@ -165,8 +165,8 @@ never asked again, including across app updates.
 ## Verifying
 
 ```sh
-codesign -d -r- /Applications/DeskVNCViewer.app     # must NOT say cdhash
-codesign --verify --strict /Applications/DeskVNCViewer.app
+codesign -d -r- /Applications/OraxDesk.app     # must NOT say cdhash
+codesign --verify --strict /Applications/OraxDesk.app
 ```
 
 `sign-macos.sh` performs this check itself and fails if the requirement is

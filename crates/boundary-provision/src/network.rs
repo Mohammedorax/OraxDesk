@@ -1,6 +1,6 @@
 //! How this computer reaches a helper when it shares: the saved connection
-//! mode, kept as `network.json` in the shared data folder so DeskVNC and
-//! DeskVNC Support on one computer use the same one.
+//! mode, kept as `network.json` in the shared data folder so OraxDesk and
+//! OraxDesk Support on one computer use the same one.
 
 use anyhow::{Context, Result, ensure};
 use boundary_session::HostOptions;

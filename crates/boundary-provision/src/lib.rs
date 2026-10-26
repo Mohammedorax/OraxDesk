@@ -121,7 +121,7 @@ fn setup_lock() -> Result<std::fs::File> {
         .write(true)
         .open(directory.join("provider-setup.lock"))?;
     file.try_lock()
-        .context("Provider setup is already running in Boundary or DeskVNC")?;
+        .context("Provider setup is already running in Boundary or OraxDesk")?;
     Ok(file)
 }
 fn status(tx: &watch::Sender<Progress>, message: &str) {

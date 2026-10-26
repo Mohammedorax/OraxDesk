@@ -42,7 +42,7 @@ async fn main() {
 
     let mut cfg = MockConfig::new()
         .size(w, h)
-        .name("DeskVNC mock server")
+        .name("OraxDesk mock server")
         .update(frame);
     if let Some(pw) = &password {
         // `password` only sets the secret; the advertised security type is

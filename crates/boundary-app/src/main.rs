@@ -530,7 +530,7 @@ impl App {
             return;
         };
         theme::card(ui, |ui| {
-            ui.label(RichText::new("Move DeskVNC Support to Applications").strong());
+            ui.label(RichText::new("Move OraxDesk Support to Applications").strong());
             theme::muted(
                 ui,
                 "It is running from your Downloads, so macOS runs a temporary copy. Unattended access will not start after a restart, and a newer download is not used until it is moved.",
@@ -861,7 +861,7 @@ impl App {
             theme::small(
                 ui,
                 format!(
-                    "Boundary {} · Attended and unattended support · No DeskVNC installation required",
+                    "Boundary {} · Attended and unattended support · No OraxDesk installation required",
                     env!("CARGO_PKG_VERSION")
                 ),
             );
@@ -1173,7 +1173,7 @@ impl App {
         if let Some(profile) = self.wizard.show(ui.ctx()) {
             self.network = profile;
             self.network_error = None;
-            self.status = "Network settings saved. Get a code to test with DeskVNC".into();
+            self.status = "Network settings saved. Get a code to test with OraxDesk".into();
         }
         ui.horizontal(|ui| {
             ui.label(

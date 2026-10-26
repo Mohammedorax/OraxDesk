@@ -1,4 +1,4 @@
-# Contributing to DeskVNCViewer
+# Contributing to OraxDesk
 
 Thanks for considering it. This document covers what you need to build the
 project and what a reviewable change looks like.

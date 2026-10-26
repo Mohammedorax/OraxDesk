@@ -2,13 +2,13 @@
 //!
 //! # Why a second process
 //!
-//! A `WH_KEYBOARD_LL` hook installed inside the DeskVNC process is not called
-//! while a DeskVNC window is the foreground window, which is exactly when it is
+//! A `WH_KEYBOARD_LL` hook installed inside the OraxDesk process is not called
+//! while a OraxDesk window is the foreground window, which is exactly when it is
 //! needed. Measured on Windows 11 with a trace at the first line of the hook
 //! procedure: typing into a focused session produced no calls at all, Windows
 //! performed Alt+Tab itself, and calls resumed the moment another application
 //! came to the front. The same backend running in a separate process swallows
-//! Alt+Tab and Win+Tab reliably while DeskVNC is in front, and while such a
+//! Alt+Tab and Win+Tab reliably while OraxDesk is in front, and while such a
 //! process is hooked, even the in-process hook starts being called through its
 //! `CallNextHookEx`. A dedicated hook thread with its own message pump, which
 //! the in-process backend already had, did not avoid it, and neither did

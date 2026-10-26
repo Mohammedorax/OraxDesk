@@ -1,6 +1,6 @@
 //! Commands and files over a Boundary session.
 //!
-//! A helper's tools, such as DeskVNC's `dvv_run` and `dvv_files`, need two
+//! A helper's tools, such as OraxDesk's `dvv_run` and `dvv_files`, need two
 //! things a screen cannot give them: a command's own output and exit status,
 //! and a file's exact bytes. Over SSH both ride a second channel. Here they
 //! ride a second QUIC stream on the connection the session already has, one
@@ -39,7 +39,7 @@ use tokio::{
 /// of entries and a long command with its environment.
 pub const MAX_HEADER: usize = 1024 * 1024;
 /// The raw half of a frame: a file window, stdin, or a command's output.
-/// Above DeskVNC's own four megabyte window so a full window always fits.
+/// Above OraxDesk's own four megabyte window so a full window always fits.
 pub const MAX_BODY: usize = 9 * 1024 * 1024;
 /// The most a run keeps of each output stream, whatever the helper asked.
 pub const MAX_OUTPUT: u64 = 4 * 1024 * 1024;
@@ -287,7 +287,7 @@ pub(crate) async fn serve(
         });
     }
 }
-const REFUSED: &str = "The person at that computer has not allowed commands and files for this session. Ask them to tick Allow commands and files in DeskVNC Support, or, for an unattended computer, to allow it for this helper under Settings, Unattended access";
+const REFUSED: &str = "The person at that computer has not allowed commands and files for this session. Ask them to tick Allow commands and files in OraxDesk Support, or, for an unattended computer, to allow it for this helper under Settings, Unattended access";
 
 /// Do one allowed request.
 pub async fn answer(request: Request, body: Vec<u8>) -> (Reply, Vec<u8>) {

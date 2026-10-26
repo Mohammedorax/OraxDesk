@@ -97,7 +97,7 @@ impl Wizard {
                 ui.heading("Review connection settings");
                 ui.label(profile.label());
                 ui.label("These settings are saved on this device. Existing sessions are unchanged.");
-                ui.label("This checks local configuration only. A successful DeskVNC session verifies the complete path. Sharing still needs approval.");
+                ui.label("This checks local configuration only. A successful OraxDesk session verifies the complete path. Sharing still needs approval.");
                 if matches!(profile, Profile::Private { .. }) {
                     ui.label("If this network is unavailable or your address changes, connection will fail instead of using a public relay. Run setup again to select the new address.");
                 }
@@ -131,7 +131,7 @@ impl Wizard {
                         ui.text_edit_singleline(&mut self.address);
                     },
                     Choice::Relay => {
-                        ui.label("Enter a compatible iroh relay URL. The invitation carries it to DeskVNC. This can run on your own server; this wizard does not deploy that server.");
+                        ui.label("Enter a compatible iroh relay URL. The invitation carries it to OraxDesk. This can run on your own server; this wizard does not deploy that server.");
                         ui.text_edit_singleline(&mut self.relay);
                         ui.hyperlink_to("Relay hosting options", "https://www.iroh.computer/services/hosting");
                     },

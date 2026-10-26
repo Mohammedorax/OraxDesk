@@ -1,4 +1,4 @@
-# DeskVNC
+# OraxDesk
 
 One window for every machine you look after, whether it speaks **VNC**, **RDP**
 or **SSH**. Native, written in Rust on Tauri 2, and it runs on Windows, macOS
@@ -9,7 +9,7 @@ control plane that lets an **AI agent drive those same machines**, with nothing
 installed on the far end, and a person able to take the wheel back mid task.
 
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
-[![Download](https://img.shields.io/badge/download-latest%20release-2ea44f.svg)](https://github.com/psmux/DeskVNC/releases/latest)
+[![Download](https://img.shields.io/badge/download-latest%20release-2ea44f.svg)](https://github.com/Mohammedorax/OraxDesk/releases/latest)
 
 ![The host library, with live thumbnails of every saved machine](docs/images/library.png)
 
@@ -25,7 +25,7 @@ cupboard, a terminal for everything else, and a text file of addresses nobody
 trusts. The connection managers that fix this are mostly paid, and several of
 them run on a .NET runtime that security teams are busy removing.
 
-DeskVNC puts the three protocols in one library. Your hosts carry their own
+OraxDesk puts the three protocols in one library. Your hosts carry their own
 credentials and settings, they connect on a double click, and each tile shows
 what that machine looked like when you last left it. Passwords go into the
 operating system keychain rather than a database next to the profiles. There is
@@ -34,7 +34,7 @@ no account, no telemetry, and no paid tier holding a feature back.
 ## Get started in about a minute
 
 1. Download the build for your machine from the
-   [latest release](https://github.com/psmux/DeskVNC/releases/latest).
+   [latest release](https://github.com/Mohammedorax/OraxDesk/releases/latest).
    macOS is signed and notarized, so it opens normally. The Windows installer
    is signed too. Because the certificate is new, SmartScreen may still ask
    once: choose **More info**, then **Run anyway**.
@@ -44,11 +44,11 @@ no account, no telemetry, and no paid tier holding a feature back.
 
 ### Need to support someone outside your network?
 
-If the person who needs help has DeskVNC, they press **Get help** in it. If
-not, send them **DeskVNC Support** from the same release page, a small app that
+If the person who needs help has OraxDesk, they press **Get help** in it. If
+not, send them **OraxDesk Support** from the same release page, a small app that
 runs without installing. Either way they press **Get a code** (or **Create
 invitation** when no code service is configured) and approve your connection.
-You press **Help someone** in DeskVNC, enter their code or paste the
+You press **Help someone** in OraxDesk, enter their code or paste the
 invitation, and connect. Boundary tries a direct encrypted path first and uses its relay
 fallback when the networks do not allow a direct path.
 
@@ -62,7 +62,7 @@ No account is required for an attended support session. Screen Recording and
 Accessibility permissions are requested on macOS when sharing or control needs
 them. The recipient can revoke control or end the session at any time.
 
-DeskVNC Support ships for macOS, signed and notarized; for Windows, signed;
+OraxDesk Support ships for macOS, signed and notarized; for Windows, signed;
 and for Linux as an x86_64 binary in a tarball. Browser access and automatic
 private provider deployment are still in development. The release page
 contains the runnable support apps and the
@@ -70,7 +70,7 @@ repository's `14-support-codes.md` file documents private code services.
 
 Addresses can be written the way you already think of them: `10.0.0.4`,
 `10.0.0.4:5901`, `rdp://frontdesk`, `ssh://ops@jump-01`. If you do not know the
-address, press **Scan network** and DeskVNC will find what is listening nearby.
+address, press **Scan network** and OraxDesk will find what is listening nearby.
 
 Full install notes, checksum verification and the permissions the app asks for
 are in [docs/INSTALL.md](docs/INSTALL.md).
@@ -110,7 +110,7 @@ special mode.
 
 ![An agent holding the wheel on two machines at once](docs/images/agent.png)
 
-This is the part that does not exist anywhere else. DeskVNC ships `dvv`, an MCP
+This is the part that does not exist anywhere else. OraxDesk ships `dvv`, an MCP
 server that hands an AI agent the same connections you use by hand. The agent
 opens one of your saved machines, looks at the screen, clicks and types. Nothing
 is installed on the target, because the connection is the ordinary VNC, RDP or
@@ -124,7 +124,7 @@ A protocol those machines already speak gets in anyway.
 Switch the plane on in the **AI Agents** panel, then register it once:
 
 ```sh
-claude mcp add deskvnc -- /Applications/DeskVNCViewer.app/Contents/MacOS/dvv mcp --stdio
+claude mcp add deskvnc -- /Applications/OraxDesk.app/Contents/MacOS/dvv mcp --stdio
 ```
 
 There is a button in that panel that does this for Claude Code for you, and
@@ -153,7 +153,7 @@ several machines as one.
 
 `dvv_run` and `dvv_files` work over SSH, and over a Boundary support session
 with no SSH on the far side at all. On Boundary the person at that computer
-has to allow it first: Get help or DeskVNC Support asks them separately from viewing and
+has to allow it first: Get help or OraxDesk Support asks them separately from viewing and
 control, shows each command as it runs, and lets them take it back. For an
 unattended computer they allow it per paired helper under Settings,
 Unattended access. Until they do, an agent cannot attach to the session.
@@ -229,7 +229,7 @@ The protocol feature list, the security model and the crate layout are in
 Pre 1.0 and under active development. The protocol cores are well covered by
 tests and interoperability work is ongoing. Stored data and the IPC contract may
 change between minor versions. [CHANGELOG.md](CHANGELOG.md) records every
-release, and the [issue tracker](https://github.com/psmux/DeskVNC/issues) is
+release, and the [issue tracker](https://github.com/Mohammedorax/OraxDesk/issues) is
 where several of those releases came from.
 
 ## Building from source
@@ -256,13 +256,13 @@ the first time, and the release workflow signs them properly.
 
 ## Support and commercial use
 
-DeskVNC is free and open source and stays that way. It is built and maintained
+OraxDesk is free and open source and stays that way. It is built and maintained
 by one engineer.
 
 [Sponsoring the project](https://github.com/sponsors/psmux) funds the roadmap
 and the signed Windows builds.
 
-If your company depends on DeskVNC, or you want the agent control plane inside
+If your company depends on OraxDesk, or you want the agent control plane inside
 your own product (a no install tier for driving legacy or locked down Windows
 desktops, a hardened `dvv`, or protocol work on the Rust RDP, VNC and SSH
 cores), [contact the maintainer](https://github.com/psmux). Paid priority support and fixed scope

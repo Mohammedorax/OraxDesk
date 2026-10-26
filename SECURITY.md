@@ -4,7 +4,7 @@
 
 **Please do not open a public issue for security problems.**
 
-Use [private vulnerability reporting](https://github.com/psmux/DeskVNC/security/advisories/new)
+Use [private vulnerability reporting](https://github.com/Mohammedorax/OraxDesk/security/advisories/new)
 on this repository. It keeps the discussion private and attached to the code.
 
 Useful things to include, as far as you have them:

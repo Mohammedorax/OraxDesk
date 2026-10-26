@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""limbs: the diagnostic limbs for DeskVNCViewer. Nothing runs unless invoked.
+"""limbs: the diagnostic limbs for OraxDesk. Nothing runs unless invoked.
 
 A "limb" is one self-contained probe that answers exactly one question about a
 live VNC session. They exist because the interesting failures in this project

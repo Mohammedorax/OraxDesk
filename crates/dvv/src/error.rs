@@ -163,7 +163,7 @@ pub fn hint_for(code: &str) -> &'static str {
             "This verb does not exist on this kind of limb. Call dvv_limbs and pick the sibling that does: read through the terminal, act through the desktop."
         }
         "POLICY_DENIED" => {
-            "This grant does not carry what the call costs, and a grant's capabilities and hosts are fixed when a person approves it. Tell the user which capability is missing and ask them to reapprove in DeskVNCViewer."
+            "This grant does not carry what the call costs, and a grant's capabilities and hosts are fixed when a person approves it. Tell the user which capability is missing and ask them to reapprove in OraxDesk."
         }
         "HOST_NOT_IN_GRANT" => {
             "The grant names its hosts literally and there is no wildcard, so a different spelling will not work. Tell the user which host you needed."
@@ -178,7 +178,7 @@ pub fn hint_for(code: &str) -> &'static str {
             "That limb is not attached. Call dvv_limbs for the current ids; a limb id is reproducible, so the same machine at the same slot has the same id when it comes back."
         }
         "CREDENTIALS_REQUIRED" => {
-            "This machine is asking for a password. You cannot supply one. Tell the user to answer the prompt in DeskVNCViewer, then call dvv_status again."
+            "This machine is asking for a password. You cannot supply one. Tell the user to answer the prompt in OraxDesk, then call dvv_status again."
         }
         "RATE_LIMITED" | "INTENT_IN_FLIGHT" | "INTENT_BLOCKED" => {
             "Slow down. One batch at a time per limb, and the message says which limit was reached. Wait for the call you already made to settle."
@@ -272,7 +272,7 @@ mod tests {
         // an agent trying to find a password somewhere.
         let hint = hint_for(codes::CREDENTIALS_REQUIRED);
         assert!(hint.contains("You cannot supply one"));
-        assert!(hint.contains("DeskVNCViewer"));
+        assert!(hint.contains("OraxDesk"));
     }
 
     #[test]

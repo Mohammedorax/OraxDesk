@@ -922,7 +922,7 @@ $ DVV_TRACE_PROTOCOL=1 RUST_LOG=vnc_core=info DVV_HOST=127.0.0.1 \
     DVV_PORT=64172 DVV_SECONDS=4 ./target/release/examples/live_quality
 
 connecting to 127.0.0.1:64172 as Auto for 4s
-INFO vnc_core::session::connection: server init complete name=DeskVNC mock server width=640 height=480 security=None quality=Auto
+INFO vnc_core::session::connection: server init complete name=OraxDesk mock server width=640 height=480 security=None quality=Auto
 [  0.0s] connected
 INFO vnc_core::session::run_loop: TX FramebufferUpdateRequest incremental=true x=0 y=0 w=640 h=480 screen_fraction=1.0
 [  1.0s]     9.83 Mbit/s | jpeg q6 | enc 0 |   1.0 fps | decode   0.3 ms | rtt   0.0 ms | 1200 KiB

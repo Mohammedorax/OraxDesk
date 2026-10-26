@@ -16,7 +16,7 @@ import {
 
 /**
  * Get help: let someone see or control this computer, with nothing else to
- * download. Everything DeskVNC Support offers the person being helped is
+ * download. Everything OraxDesk Support offers the person being helped is
  * here: a code or invitation, the approval, control and their tools as
  * separate choices, pairing, and unattended access.
  *

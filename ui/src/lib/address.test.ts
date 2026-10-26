@@ -11,6 +11,7 @@ import {
   DEFAULT_RDP_PORT,
   DEFAULT_SSH_PORT,
   DEFAULT_VNC_PORT,
+  compactDeviceNumber,
   formatTarget,
   isDisplayNumber,
   parseConnectTarget,
@@ -257,6 +258,19 @@ describe("round trips", () => {
     expect(formatTarget("rdp", "box", 3389)).toBe("rdp://box");
     expect(formatTarget("ssh", "box", 22)).toBe("ssh://box");
     expect(formatTarget("vnc", "box", 5900)).toBe("box");
+  });
+});
+
+describe("compactDeviceNumber", () => {
+  it("accepts the grouped form a person reads off the screen", () => {
+    expect(compactDeviceNumber("123 456 789")).toBe("123456789");
+    expect(compactDeviceNumber(" 123  456\t789 ")).toBe("123456789");
+  });
+
+  it("leaves addresses and other shapes alone", () => {
+    expect(compactDeviceNumber("office 2")).toBe("office 2");
+    expect(compactDeviceNumber("12 345 6789")).toBe("12 345 6789");
+    expect(compactDeviceNumber("123456789")).toBe("123456789");
   });
 });
 

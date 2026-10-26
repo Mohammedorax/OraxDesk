@@ -142,7 +142,7 @@ impl VncError {
                     .into()
             }
             VncError::NoSupportedSecurityType(_) => {
-                "This server uses an authentication method DeskVNCViewer does not support.".into()
+                "This server uses an authentication method OraxDesk does not support.".into()
             }
             other => other.to_string(),
         }

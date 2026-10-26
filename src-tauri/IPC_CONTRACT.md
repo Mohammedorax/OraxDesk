@@ -795,10 +795,10 @@ registered is lost.
 ```jsonc
 // invoke("agent_status")
 { "enabled": true,                                  // is the socket really there
-  "socket": "/Users/…/DeskVNCViewer/agent.sock",    // or null
+  "socket": "/Users/…/OraxDesk/agent.sock",    // or null
   // The absolute path of the `dvv` that shipped inside this app bundle, or
   // null. See below.
-  "binary": "/Applications/DeskVNCViewer.app/Contents/MacOS/dvv",
+  "binary": "/Applications/OraxDesk.app/Contents/MacOS/dvv",
   "attachments": [ /* one `lease` shaped payload per attached session */ ],
   // The status bar's three numbers, flat, exactly as the `counts` event
   // spells them. Zero and zero with the plane off; `sessionsLive` is
@@ -818,7 +818,7 @@ not take the build with it.
 
 **`binary`** is the agent binary the connect instructions name, and it really
 ships: `scripts/package-macos.sh` builds `dvv` and copies it into
-`DeskVNCViewer.app/Contents/MacOS/dvv`, beside the main executable, where it is
+`OraxDesk.app/Contents/MacOS/dvv`, beside the main executable, where it is
 signed with the same identity, notarized in the same submission and deleted
 with the app. The path is derived from `std::env::current_exe()` and never
 composed from a guess, so it is correct wherever a person dragged the bundle,
@@ -885,7 +885,7 @@ way as `allow_multiple_sessions_per_host`: only `"true"`, `"1"`, `"yes"` or
 a restart. **With it off there is no socket, no task and no file.**
 
 The socket is a unix domain socket at
-`~/Library/Application Support/DeskVNCViewer/agent.sock` on macOS,
+`~/Library/Application Support/OraxDesk/agent.sock` on macOS,
 `$XDG_RUNTIME_DIR/deskvncviewer/agent.sock` on Linux, mode `0600`. Note that
 this is the product-name directory, not `app_data_dir()`'s bundle-identifier
 one: it is the path `dvv doctor` prints. There is no TCP listener and no

@@ -5,7 +5,7 @@
 //! probe host
 //! # On the helper: connect with that invitation and report the first frame
 //! probe view <invitation>
-//! # The same, declaring tools the way DeskVNC does
+//! # The same, declaring tools the way OraxDesk does
 //! probe tools <invitation>
 //! ```
 use boundary_session::{Approval, Desktop, Event, Frame, HostOptions, Input, Route};
@@ -53,7 +53,7 @@ async fn main() -> anyhow::Result<()> {
             }
         }
         Some(mode @ ("view" | "tools")) => {
-            // `tools` connects the way DeskVNC does, declaring commands and files.
+            // `tools` connects the way OraxDesk does, declaring commands and files.
             let mut session = if mode == "tools" {
                 boundary_session::viewer_with_tools(
                     args[1].clone(),

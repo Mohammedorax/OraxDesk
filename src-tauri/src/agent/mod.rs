@@ -39,7 +39,7 @@
 //! the path `dvv doctor` has been printing to users all along and the two must
 //! not disagree. Note that it is NOT `AppHandle::app_data_dir()`: that resolves
 //! to the bundle identifier (`com.deskvncviewer.desktop`) while `dvv` publishes
-//! the product name (`DeskVNCViewer`). The published path wins, and the
+//! the product name (`OraxDesk`). The published path wins, and the
 //! directory is created here if it is missing.
 
 pub mod mirror;
@@ -104,7 +104,7 @@ pub fn socket_path() -> PathBuf {
     {
         let home = std::env::var("HOME").unwrap_or_default();
         PathBuf::from(format!(
-            "{home}/Library/Application Support/DeskVNCViewer/agent.sock"
+            "{home}/Library/Application Support/OraxDesk/agent.sock"
         ))
     }
     #[cfg(target_os = "linux")]
@@ -123,7 +123,7 @@ pub fn socket_path() -> PathBuf {
             return PathBuf::from(format!("{runtime}/deskvncviewer/agent.sock"));
         }
         let home = std::env::var("HOME").unwrap_or_default();
-        PathBuf::from(format!("{home}/.local/share/DeskVNCViewer/agent.sock"))
+        PathBuf::from(format!("{home}/.local/share/OraxDesk/agent.sock"))
     }
     #[cfg(target_os = "windows")]
     {
@@ -239,7 +239,7 @@ const REGISTER_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20)
 /// The arguments `claude` is run with, after the program itself.
 ///
 /// A vector and never a shell string. The bundled path can contain a space
-/// (`/Volumes/My Disk/DeskVNCViewer.app/...`) and passing it through `sh -c`
+/// (`/Volumes/My Disk/OraxDesk.app/...`) and passing it through `sh -c`
 /// would both break that path and turn any character in it into something the
 /// shell could act on. `argv` has neither problem.
 pub fn register_argv(dvv: &std::path::Path) -> Vec<String> {
@@ -909,7 +909,7 @@ impl AgentPlane {
             return Err(RpcError {
                 code: -32000,
                 message: format!(
-                    "a person took the wheel on {session_id} in DeskVNCViewer. Nothing was sent. Do not act on this machine and do not try to acquire control: report back to the user instead"
+                    "a person took the wheel on {session_id} in OraxDesk. Nothing was sent. Do not act on this machine and do not try to acquire control: report back to the user instead"
                 ),
                 tag: Some("LEASE_REVOKED"),
             });
@@ -1110,7 +1110,7 @@ pub fn start(plane: &Arc<AgentPlane>, ctx: Arc<Ctx>, path: PathBuf) -> std::io::
             return Err(std::io::Error::new(
                 std::io::ErrorKind::AddrInUse,
                 format!(
-                    "another DeskVNCViewer is already serving the agent plane on {}",
+                    "another OraxDesk is already serving the agent plane on {}",
                     path.display()
                 ),
             ));
@@ -1201,7 +1201,7 @@ async fn reaper(plane: Arc<AgentPlane>, cancel: tokio_util::sync::CancellationTo
 /// # Errors
 ///
 /// An [`std::io::Error`] when the pipe cannot be created, including when
-/// another DeskVNCViewer already serves it.
+/// another OraxDesk already serves it.
 #[cfg(windows)]
 pub fn start(plane: &Arc<AgentPlane>, ctx: Arc<Ctx>, path: PathBuf) -> std::io::Result<()> {
     let mut running = plane.running.lock();
@@ -1220,7 +1220,7 @@ pub fn start(plane: &Arc<AgentPlane>, ctx: Arc<Ctx>, path: PathBuf) -> std::io::
         if e.kind() == std::io::ErrorKind::PermissionDenied {
             std::io::Error::new(
                 std::io::ErrorKind::AddrInUse,
-                format!("another DeskVNCViewer is already serving the agent plane on {name}"),
+                format!("another OraxDesk is already serving the agent plane on {name}"),
             )
         } else {
             e
@@ -1808,7 +1808,7 @@ mod tests {
         #[cfg(target_os = "macos")]
         assert!(
             path.to_string_lossy()
-                .contains("Library/Application Support/DeskVNCViewer"),
+                .contains("Library/Application Support/OraxDesk"),
             "not the bundle identifier directory: dvv publishes the product name path ({})",
             path.display()
         );
@@ -2275,7 +2275,7 @@ mod tests {
 
     /// A bundle shaped tree with a `dvv` in it, and the main binary's path.
     fn fake_bundle(root: &std::path::Path, with_dvv: bool) -> PathBuf {
-        let macos = root.join("DeskVNCViewer.app/Contents/MacOS");
+        let macos = root.join("OraxDesk.app/Contents/MacOS");
         std::fs::create_dir_all(&macos).expect("the bundle directory");
         let exe = macos.join("deskvncviewer");
         std::fs::write(&exe, b"main").expect("the main binary");
@@ -2339,7 +2339,7 @@ mod tests {
     /// installed would pass on one machine and be skipped on every other.
     #[test]
     fn the_registration_builds_the_argv_claude_expects() {
-        let dvv = PathBuf::from("/Volumes/My Disk/DeskVNCViewer.app/Contents/MacOS/dvv");
+        let dvv = PathBuf::from("/Volumes/My Disk/OraxDesk.app/Contents/MacOS/dvv");
         assert_eq!(
             register_argv(&dvv),
             vec![
@@ -2349,7 +2349,7 @@ mod tests {
                 "user",
                 "deskvnc",
                 "--",
-                "/Volumes/My Disk/DeskVNCViewer.app/Contents/MacOS/dvv",
+                "/Volumes/My Disk/OraxDesk.app/Contents/MacOS/dvv",
                 "mcp",
                 "--stdio",
             ]

@@ -14,18 +14,18 @@ to stored data and to the IPC contract between the Rust core and the frontend.
 
 ### Added
 
-* **Get help** in DeskVNC. Someone who already has DeskVNC can now be helped
-  without downloading DeskVNC Support. It has everything that app offers the
+* **Get help** in OraxDesk. Someone who already has OraxDesk can now be helped
+  without downloading OraxDesk Support. It has everything that app offers the
   person being helped: a short code or a full invitation, the approval dialog,
   control and the helper's tools as separate choices with a list of what the
   tools did, letting a helper connect any time, and unattended access with
-  paired helpers, a password, and starting DeskVNC at sign in.
+  paired helpers, a password, and starting OraxDesk at sign in.
 * The approval and a banner naming whoever is connected show over the whole
-  DeskVNC window, and the window comes forward when a helper asks to be let in.
+  OraxDesk window, and the window comes forward when a helper asks to be let in.
 * The **Get help** dialog lists every helper connected unattended, each with
   its own banner and its own End and Stop buttons.
 * Unattended access works before anyone signs in. On Windows, switching on
-  "Also before anyone signs in" in DeskVNC Support installs a small service
+  "Also before anyone signs in" in OraxDesk Support installs a small service
   that starts a host on the sign in screen and on a locked screen, and hands
   over to the signed in app once someone is in. On macOS a login window agent
   does the same, except on a Mac with FileVault, which has no screen to show
@@ -33,7 +33,7 @@ to stored data and to the IPC contract between the Rust core and the frontend.
   so only paired helpers and the password get in, and a helper's tools stay off.
 * Up to eight helpers can be connected unattended at the same time. A ninth is
   told the computer already has eight helpers connected.
-* DeskVNC Support writes unattended connections, refusals and why each session
+* OraxDesk Support writes unattended connections, refusals and why each session
   ended to a log beside the machine ID.
 
 ### Changed
@@ -41,11 +41,11 @@ to stored data and to the IPC contract between the Rust core and the frontend.
 * The **Boundary support** button is now **Help someone**, so it is clear it
   is for connecting to another person, and it accepts a short code as well as
   an invitation.
-* DeskVNC and DeskVNC Support on the same computer share one computer ID, one
+* OraxDesk and OraxDesk Support on the same computer share one computer ID, one
   list of paired helpers and one connection setting. Only one of them answers
-  unattended connections at a time; if both have it switched on, DeskVNC takes
-  over when DeskVNC Support quits.
-* Closing the DeskVNC Support window while unattended access is on keeps it in
+  unattended connections at a time; if both have it switched on, OraxDesk takes
+  over when OraxDesk Support quits.
+* Closing the OraxDesk Support window while unattended access is on keeps it in
   the tray, so the computer stays reachable. It used to pop back up.
 
 ### Fixed
@@ -65,21 +65,21 @@ to stored data and to the IPC contract between the Rust core and the frontend.
   background holder.
 * `cargo tauri build` on macOS puts `dvv` in the app, as the release build
   always did. An app built that way and copied to Applications had no `dvv`,
-  so every agent configured for it failed to start the DeskVNC tools.
+  so every agent configured for it failed to start the OraxDesk tools.
 * RDP clipboard to and from Windows (#9). Windows ignored every clipboard
-  message from DeskVNC, because the clipboard channel was not opened with its
+  message from OraxDesk, because the clipboard channel was not opened with its
   header shown, which Windows requires and xrdp does not. Text now goes both
   ways with Windows 10 and 11.
 * The credential prompt starts with Remember ticked when the host already has a
   saved password, so reconnecting does not quietly forget it (#9). The host
   editor shows the saved login as well.
-* An unattended session that ended kept its "is connected" banner, in DeskVNC
-  and in DeskVNC Support, because the end of the session was never reported.
-  A second unattended helper in DeskVNC also ended the first.
+* An unattended session that ended kept its "is connected" banner, in OraxDesk
+  and in OraxDesk Support, because the end of the session was never reported.
+  A second unattended helper in OraxDesk also ended the first.
 * A helper paired from the ask dialog did not show in Paired helpers until the
   window was reopened.
 * The Windows apps start on a Windows that has no Visual C++ redistributable.
-* DeskVNC Support opens on a Windows where OpenGL is only 1.1, such as a
+* OraxDesk Support opens on a Windows where OpenGL is only 1.1, such as a
   virtual machine or a remote session, by using Direct3D or Vulkan instead.
 * An agent's limb whose relay had stopped now reattaches, instead of every
   action settling as link lost.
@@ -98,7 +98,7 @@ to stored data and to the IPC contract between the Rust core and the frontend.
 * A VNC host shows a User name field when it needs one: Apple Screen Sharing,
   the VeNCrypt types that take one, and Auto against a Mac. The name is saved
   with the host and used at connect without a prompt (#9).
-* On macOS, DeskVNC Support notices when it runs from Downloads as a
+* On macOS, OraxDesk Support notices when it runs from Downloads as a
   translocated copy and moves itself to Applications with one click.
 
 ### Fixed
@@ -129,7 +129,7 @@ to stored data and to the IPC contract between the Rust core and the frontend.
   switch, not one saved earlier under Apple auth.
 * `dvv_run` returns the command's output and exit status; it reported only that
   the command was delivered.
-* DeskVNC Support for Intel Macs, built with a newer Xcode, failed to launch
+* OraxDesk Support for Intel Macs, built with a newer Xcode, failed to launch
   for want of a Swift runtime path.
 
 ### Security
@@ -146,10 +146,10 @@ to stored data and to the IPC contract between the Rust core and the frontend.
 ### Added
 
 * `dvv_run` and `dvv_files` work over a Boundary support session, with no SSH
-  on the far side. DeskVNC Support runs the command itself and answers with the
+  on the far side. OraxDesk Support runs the command itself and answers with the
   process's own exit status and output, and file operations travel over the
   session.
-* DeskVNC Support asks the person being helped, separately from viewing and
+* OraxDesk Support asks the person being helped, separately from viewing and
   control, whether the helper's tools may run commands and copy files. It is
   off until they tick it, they can turn it off at any time, and each command
   and file operation is listed on their screen as it runs. For unattended
@@ -163,14 +163,14 @@ to stored data and to the IPC contract between the Rust core and the frontend.
 * A command that passes its timeout on a Boundary computer ends with everything
   it started, not just its shell.
 * Both ends of a Boundary session need 0.28.0 for commands and files. An older
-  DeskVNC Support still works for viewing and control, and an agent is told to
+  OraxDesk Support still works for viewing and control, and an agent is told to
   update it rather than left waiting.
 
 ## [0.27.11] (2026-10-08)
 
 ### Added
 
-* A Linux build of DeskVNC Support is attached to the release, as an x86_64
+* A Linux build of OraxDesk Support is attached to the release, as an x86_64
   binary in a tarball.
 
 ### Changed
@@ -184,35 +184,35 @@ to stored data and to the IPC contract between the Rust core and the frontend.
 
 * The Windows downloads are now code signed by Open Source Developer Godwin
   Josh, through Certum. That covers the setup exe, the MSI, the app inside them,
-  dvv and DeskVNC Support. SmartScreen may still ask once while the new
+  dvv and OraxDesk Support. SmartScreen may still ask once while the new
   certificate builds a reputation.
 
 ## [0.27.9] (2026-10-05)
 
 ### Added
 
-* Unattended access in DeskVNC Support. During a session the person being
+* Unattended access in OraxDesk Support. During a session the person being
   helped can let that helper connect any time, and the helper's computer is
   told this computer's ID to save. An Unattended access section turns it on or
   off, shows the ID, lists paired helpers and whether each may control, sets or
   removes an unattended password, and starts the app at sign in. While a helper
   is in with nobody's approval, a red banner says who, and one button ends it.
-* DeskVNC opens paired and unattended Boundary computers from the Library like
+* OraxDesk opens paired and unattended Boundary computers from the Library like
   any other machine, with one lasting helper identity so a computer that paired
   it recognises it next time. The Boundary dialog adds a computer by its ID,
   with an optional password kept in the keychain.
-* A Windows build of DeskVNC Support is attached to the release alongside the
+* A Windows build of OraxDesk Support is attached to the release alongside the
   macOS one.
 
 ### Changed
 
-* DeskVNC Support opens on the screen people know from other remote support
+* OraxDesk Support opens on the screen people know from other remote support
   tools: Allow remote control on the left with one button and a large code or
   invitation to copy, Control remote computer on the right with a partner code
   field and a Connect button, a status bar at the bottom, and everything else
-  behind Settings. It uses DeskVNC's colours and the system font, in light or
+  behind Settings. It uses OraxDesk's colours and the system font, in light or
   dark with the operating system.
-* The partner field in DeskVNC Support also takes a computer's ID for
+* The partner field in OraxDesk Support also takes a computer's ID for
   unattended access, and the app keeps a lasting helper identity so pairing
   works from it too.
 * With a code service configured, the short code appears on its own as soon as
@@ -249,12 +249,12 @@ to stored data and to the IPC contract between the Rust core and the frontend.
 
 * AI agents work with nothing to set up. The agent plane is on unless you
   switch it off in the AI Agents panel, and off is remembered.
-* Each time DeskVNCViewer starts it connects the agents installed on the
+* Each time OraxDesk starts it connects the agents installed on the
   computer: OpenCode, Pi, Claude Code and Codex. An agent installed later is
   picked up on the next launch, or at once with Connect now in the panel.
 * After an update, every agent is pointed at the new `dvv` on the next launch.
   Before, an agent kept calling the `dvv` of the version it was set up with.
-* An agent can be used with DeskVNCViewer closed. `dvv` starts it when it is
+* An agent can be used with OraxDesk closed. `dvv` starts it when it is
   needed.
 * Pi finds `dvv` without any change to PATH: it is placed beside the `pi`
   command.
@@ -265,13 +265,13 @@ to stored data and to the IPC contract between the Rust core and the frontend.
 
 * AI agents can drive machines on Windows. The agent plane had no Windows
   transport, so the app would not start it and `dvv` refused every call. Both
-  now use a named pipe that only the user who started DeskVNCViewer can open.
+  now use a named pipe that only the user who started OraxDesk can open.
 * The Windows and Linux installers include `dvv`. Before this release only the
   macOS bundle carried it.
 * Pi and other shell driven agents work on Windows. `dvv open` no longer hangs
   when its output is read, and a machine stays held between commands, including
   one first picked up from `dvv limbs`.
-* An agent started before DeskVNCViewer, or before a machine was saved, can
+* An agent started before OraxDesk, or before a machine was saved, can
   open that machine. It used to be refused for the whole session.
 * Typing no longer drops characters or Shift on a Windows desktop. Text goes at
   250 characters a second unless the agent asks for a speed.
@@ -310,7 +310,7 @@ to stored data and to the IPC contract between the Rust core and the frontend.
   shortcuts now reach the remote computer when "Pass system shortcuts to
   remote" is on. Before, the switch showed Captured but Windows kept the
   shortcuts. The keyboard hook was installed inside the application, where
-  Windows does not call it while a DeskVNC window is in front, and it was also
+  Windows does not call it while a OraxDesk window is in front, and it was also
   removed on every window activation because WebView2 takes the keyboard focus
   from the window that owns it. The grab now runs in a small helper process
   started from the same executable. It only takes keys while the session
@@ -342,7 +342,7 @@ to stored data and to the IPC contract between the Rust core and the frontend.
 
 ### Added
 
-- DeskVNC now includes the Boundary support transport and the macOS DeskVNC
+- OraxDesk now includes the Boundary support transport and the macOS OraxDesk
   Support recipient app in the same source checkout and release workflow.
 - Attended support can use a temporary numeric code when a shared or private
   Boundary code service is configured.
@@ -1054,7 +1054,7 @@ is what makes this a minor rather than a patch.
   surface is a command line: `dvv limbs`, `dvv click`, `dvv type`,
   `dvv screen`, `dvv watch`, all with `--json` for a script.
 
-  It attaches to the sessions DeskVNCViewer already has, rather than
+  It attaches to the sessions OraxDesk already has, rather than
   dialling out on its own. That is deliberate. The credential stays in the
   keychain, an agent cannot read one and cannot ask for one, and the
   machine an agent is driving is a machine you opened and can see.
@@ -1785,7 +1785,7 @@ arguments.
 
 ### Added
 
-- **DeskVNCViewer speaks RDP.** Add a host, choose Windows Remote Desktop, and
+- **OraxDesk speaks RDP.** Add a host, choose Windows Remote Desktop, and
   the port and the fields change to suit it. Quick connect takes `rdp://host`.
   Saved hosts connect, ask about the certificate the first time, ask for a
   password if none is saved, and show a desktop you can type into and click on.
@@ -2106,7 +2106,7 @@ RDP is new in this release and these are the edges of it.
   typing. Edge scrolling covers what it was meant for, and Alt+middle-drag
   still pans deliberately.
 
-[#1]: https://github.com/psmux/DeskVNC/issues/1
+[#1]: https://github.com/Mohammedorax/OraxDesk/issues/1
 
 
 ## [0.8.1] - 2026-08-07
@@ -2131,7 +2131,7 @@ RDP is new in this release and these are the edges of it.
   work with the menu gone; Escape is deliberately left alone, since it has to
   reach the remote desktop.
 
-[#1]: https://github.com/psmux/DeskVNC/issues/1
+[#1]: https://github.com/Mohammedorax/OraxDesk/issues/1
 
 
 ## [0.8.0] - 2026-08-07
@@ -2177,7 +2177,7 @@ RDP is new in this release and these are the edges of it.
   status shows "-" until a measurement actually exists rather than claiming
   an instant connection.
 
-[#1]: https://github.com/psmux/DeskVNC/issues/1
+[#1]: https://github.com/Mohammedorax/OraxDesk/issues/1
 
 
 ## [0.7.0] - 2026-08-06
@@ -2232,7 +2232,7 @@ helper switched the insecure opt-in **on**, so the test that connects to a
 "None"-only server proved nothing about the path a real session takes. It now
 runs on the shipping defaults, which is what turned this red.
 
-[#1]: https://github.com/psmux/DeskVNC/issues/1
+[#1]: https://github.com/Mohammedorax/OraxDesk/issues/1
 
 ## [0.6.1] - 2026-08-05
 
@@ -2779,22 +2779,22 @@ Core capability at this point:
 - Adaptive quality presets, remote desktop resize, and automatic reconnect with
   backoff and jitter.
 
-[Unreleased]: https://github.com/psmux/DeskVNC/compare/v0.27.8...HEAD
-[0.27.8]: https://github.com/psmux/DeskVNC/compare/v0.27.7...v0.27.8
-[0.27.7]: https://github.com/psmux/DeskVNC/compare/v0.27.6...v0.27.7
-[0.27.6]: https://github.com/psmux/DeskVNC/compare/v0.27.5...v0.27.6
-[0.27.5]: https://github.com/psmux/DeskVNC/compare/v0.27.4...v0.27.5
-[0.27.4]: https://github.com/psmux/DeskVNC/compare/v0.27.3...v0.27.4
-[0.14.0]: https://github.com/psmux/DeskVNC/compare/v0.13.4...v0.14.0
-[0.13.4]: https://github.com/psmux/DeskVNC/compare/v0.13.3...v0.13.4
-[0.13.3]: https://github.com/psmux/DeskVNC/compare/v0.13.2...v0.13.3
-[0.13.2]: https://github.com/psmux/DeskVNC/compare/v0.13.1...v0.13.2
-[0.13.1]: https://github.com/psmux/DeskVNC/compare/v0.13.0...v0.13.1
-[0.13.0]: https://github.com/psmux/DeskVNC/compare/v0.12.0...v0.13.0
-[0.12.0]: https://github.com/psmux/DeskVNC/compare/v0.11.0...v0.12.0
-[0.11.0]: https://github.com/psmux/DeskVNC/compare/v0.10.0...v0.11.0
-[0.10.0]: https://github.com/psmux/DeskVNC/compare/v0.9.1...v0.10.0
-[0.9.1]: https://github.com/psmux/DeskVNC/compare/v0.9.0...v0.9.1
-[0.9.0]: https://github.com/psmux/DeskVNC/compare/v0.8.2...v0.9.0
-[0.2.0]: https://github.com/psmux/DeskVNC/compare/v0.1.2...v0.2.0
-[0.1.0]: https://github.com/psmux/DeskVNC/releases/tag/v0.1.0
+[Unreleased]: https://github.com/Mohammedorax/OraxDesk/compare/v0.27.8...HEAD
+[0.27.8]: https://github.com/Mohammedorax/OraxDesk/compare/v0.27.7...v0.27.8
+[0.27.7]: https://github.com/Mohammedorax/OraxDesk/compare/v0.27.6...v0.27.7
+[0.27.6]: https://github.com/Mohammedorax/OraxDesk/compare/v0.27.5...v0.27.6
+[0.27.5]: https://github.com/Mohammedorax/OraxDesk/compare/v0.27.4...v0.27.5
+[0.27.4]: https://github.com/Mohammedorax/OraxDesk/compare/v0.27.3...v0.27.4
+[0.14.0]: https://github.com/Mohammedorax/OraxDesk/compare/v0.13.4...v0.14.0
+[0.13.4]: https://github.com/Mohammedorax/OraxDesk/compare/v0.13.3...v0.13.4
+[0.13.3]: https://github.com/Mohammedorax/OraxDesk/compare/v0.13.2...v0.13.3
+[0.13.2]: https://github.com/Mohammedorax/OraxDesk/compare/v0.13.1...v0.13.2
+[0.13.1]: https://github.com/Mohammedorax/OraxDesk/compare/v0.13.0...v0.13.1
+[0.13.0]: https://github.com/Mohammedorax/OraxDesk/compare/v0.12.0...v0.13.0
+[0.12.0]: https://github.com/Mohammedorax/OraxDesk/compare/v0.11.0...v0.12.0
+[0.11.0]: https://github.com/Mohammedorax/OraxDesk/compare/v0.10.0...v0.11.0
+[0.10.0]: https://github.com/Mohammedorax/OraxDesk/compare/v0.9.1...v0.10.0
+[0.9.1]: https://github.com/Mohammedorax/OraxDesk/compare/v0.9.0...v0.9.1
+[0.9.0]: https://github.com/Mohammedorax/OraxDesk/compare/v0.8.2...v0.9.0
+[0.2.0]: https://github.com/Mohammedorax/OraxDesk/compare/v0.1.2...v0.2.0
+[0.1.0]: https://github.com/Mohammedorax/OraxDesk/releases/tag/v0.1.0

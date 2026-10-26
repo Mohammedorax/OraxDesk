@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "DeskVNCViewer",
+  "productName": "OraxDesk",
   "version": "0.30.0",
   "identifier": "com.deskvncviewer.desktop",
   "build": {
@@ -14,7 +14,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "DeskVNCViewer",
+        "title": "OraxDesk",
         "width": 1200,
         "height": 800,
         "minWidth": 900,

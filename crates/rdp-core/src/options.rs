@@ -212,7 +212,7 @@ impl ResolvedOptions {
             // which `RdpOptions::client_name`'s doc comment promises. We have
             // no dependency that reads a hostname, so the honest fallback is
             // a fixed name rather than a guess (see the report's gap list).
-            client_name = "DeskVNCViewer".to_owned();
+            client_name = "OraxDesk".to_owned();
         }
 
         let domain = rdp

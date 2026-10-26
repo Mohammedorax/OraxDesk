@@ -302,7 +302,7 @@ pub fn viewer_as(
     viewer_inner(ticket, name, options, key, false)
 }
 /// [`viewer_as`] for a helper whose tools send commands and file requests,
-/// such as DeskVNC's agent plane. The person is asked about those
+/// such as OraxDesk's agent plane. The person is asked about those
 /// separately, and [`Session::tools`] is how they are sent once allowed.
 pub fn viewer_with_tools(
     ticket: String,

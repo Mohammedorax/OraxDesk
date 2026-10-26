@@ -264,6 +264,7 @@ function SessionView({
   onState,
   onAppHotkey,
 }: SessionProps): ReactNode {
+  const t = useT();
   const params = useMemo(() => paramsProp ?? readSessionParams(), [paramsProp]);
   /**
    * Two questions that used to be one, and are not the same once a tab can be
@@ -1140,7 +1141,7 @@ function SessionView({
       // fade the scrim out over 150ms, then a brief confirmation toast
       setScrimFading(true);
       window.setTimeout(() => setScrimFading(false), 180);
-      push("success", "Reconnected");
+      push("success", t("session.reconnected"));
       session.refreshScreen();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1232,7 +1233,7 @@ function SessionView({
 
   // Bell: brief visual pulse via toast
   useEffect(() => {
-    if (session.bellTick > 0) push("info", "Bell");
+    if (session.bellTick > 0) push("info", t("session.bell"));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session.bellTick]);
 
@@ -1511,7 +1512,7 @@ function SessionView({
               if (paths.length === 0) return;
               const target = dropDir();
               void filesRef.current.upload(paths, target).then(() => {
-                push("info", `Sending ${paths.length} file${paths.length === 1 ? "" : "s"} to ${target}`);
+                push("info", t("session.sendingFiles", { count: paths.length, target }));
               });
               break;
             }
@@ -1657,7 +1658,7 @@ function SessionView({
     a.download = `${session.desktopName.replace(/[^\w.-]+/g, "_")}-${Date.now()}.png`;
     a.click();
     URL.revokeObjectURL(url);
-    push("success", "Screenshot saved");
+    push("success", t("session.screenshotSaved"));
   }, [session.desktopName, push]);
   sendComboRef.current = sendCombo;
 
@@ -1703,10 +1704,10 @@ function SessionView({
   const clipboardSend = useCallback(async (): Promise<void> => {
     const outcome = await pushClipboard(true);
     if (outcome === "unreadable") {
-      push("warning", "Could not read the local clipboard");
+      push("warning", t("session.clipboardUnreadable"));
       return;
     }
-    if (outcome === "sent") push("success", "Clipboard sent to remote");
+    if (outcome === "sent") push("success", t("session.clipboardSent"));
   }, [pushClipboard, push]);
 
   const changeQuality = useCallback((q: QualityPreset): void => {
@@ -2050,7 +2051,7 @@ function SessionView({
           live, and it is the first thing anyone asks for when a session feels
           slow. */}
       {connectionInfoOpen ? (
-        <Dialog title="Connection info" onClose={() => setConnectionInfoOpen(false)} width={360}>
+        <Dialog title={t("session.connectionInfo")} onClose={() => setConnectionInfoOpen(false)} width={360}>
           <div className="p-4">
             <SessionStatusDetails stats={session.stats} desktopName={session.desktopName} />
             <div className="mt-4 flex justify-end">
@@ -2316,6 +2317,57 @@ function CapturePermissionDialog({
  * that into a readable panel with a working dismiss, the failure is still a
  * bug, but it stops being a trap.
  */
+function SessionErrorView({
+  error,
+  embedded,
+  onClose,
+  onRetry,
+}: {
+  error: Error;
+  embedded?: boolean;
+  onClose?: () => void;
+  onRetry: () => void;
+}): ReactNode {
+  const t = useT();
+  const sessionId = new URLSearchParams(window.location.search).get("sessionId");
+  return (
+    <div className="flex h-full w-full items-center justify-center bg-canvas p-6">
+      <div
+        role="alertdialog"
+        aria-modal="true"
+        aria-label={t("session.problemTitle")}
+        className="w-[28rem] max-w-full rounded-lg border border-danger bg-raised p-5 shadow-(--shadow-pop)"
+      >
+        <p className="text-base font-semibold text-primary">{t("session.problemTitle")}</p>
+        <p className="mt-2 text-sm text-secondary">{t("session.problemBody")}</p>
+        <p className="mono mt-3 max-h-24 overflow-auto rounded-md bg-inset p-2.5 text-xs text-tertiary">
+          {error.message || String(error)}
+        </p>
+        <div className="mt-4 flex justify-end gap-2.5">
+          <button
+            type="button"
+            className="btn-secondary"
+            onClick={onRetry}
+          >
+            {t("common.tryAgain")}
+          </button>
+          <button
+            type="button"
+            data-autofocus
+            className="btn-primary"
+            onClick={() => {
+              if (embedded) onClose?.();
+              else void closeSessionWindow(sessionId);
+            }}
+          >
+            {embedded ? t("session.closeTab") : t("session.closeWindow")}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 class SessionErrorBoundary extends Component<
   { children: ReactNode; embedded?: boolean; onClose?: () => void },
   { error: Error | null }
@@ -2333,47 +2385,13 @@ class SessionErrorBoundary extends Component<
   render(): ReactNode {
     const { error } = this.state;
     if (!error) return this.props.children;
-    const { embedded, onClose } = this.props;
-    const sessionId = new URLSearchParams(window.location.search).get("sessionId");
     return (
-      <div className="flex h-full w-full items-center justify-center bg-canvas p-6">
-        <div
-          role="alertdialog"
-          aria-modal="true"
-          aria-label="This session ran into a problem"
-          className="w-[28rem] max-w-full rounded-lg border border-danger bg-raised p-5 shadow-(--shadow-pop)"
-        >
-          <p className="text-base font-semibold text-primary">
-            This session ran into a problem
-          </p>
-          <p className="mt-2 text-sm text-secondary">
-            The connection has been closed. Nothing was saved from this session.
-          </p>
-          <p className="mono mt-3 max-h-24 overflow-auto rounded-md bg-inset p-2.5 text-xs text-tertiary">
-            {error.message || String(error)}
-          </p>
-          <div className="mt-4 flex justify-end gap-2.5">
-            <button
-              type="button"
-              className="btn-secondary"
-              onClick={() => this.setState({ error: null })}
-            >
-              Try again
-            </button>
-            <button
-              type="button"
-              data-autofocus
-              className="btn-primary"
-              onClick={() => {
-                if (embedded) onClose?.();
-                else void closeSessionWindow(sessionId);
-              }}
-            >
-              {embedded ? "Close tab" : "Close window"}
-            </button>
-          </div>
-        </div>
-      </div>
+      <SessionErrorView
+        error={error}
+        embedded={this.props.embedded}
+        onClose={this.props.onClose}
+        onRetry={() => this.setState({ error: null })}
+      />
     );
   }
 }

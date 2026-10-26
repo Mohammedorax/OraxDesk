@@ -1,5 +1,6 @@
 /** Cmd/Ctrl+K command palette: fuzzy-matches hosts AND actions (PRD/03 §2.3). */
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useT } from "../lib/i18n";
 import { fuzzyMatch } from "../lib/util";
 import type { HostProfile } from "../lib/types";
 import { IconMonitor, IconZap } from "./icons";
@@ -31,6 +32,7 @@ export function CommandPalette({
   onConnect: (host: HostProfile) => void;
   onClose: () => void;
 }): ReactNode {
+  const t = useT();
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -110,11 +112,11 @@ export function CommandPalette({
         <input
           ref={inputRef}
           className="w-full border-b border-subtle bg-transparent px-4 py-3.5 text-base text-primary outline-none placeholder:text-tertiary"
-          placeholder="Connect to a host or run a command…"
+          placeholder={t("common.commandPalettePlaceholder")}
           role="combobox"
           aria-expanded="true"
           aria-controls="palette-list"
-          aria-label="Command palette"
+          aria-label={t("common.commandPalette")}
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           onKeyDown={onKeyDown}

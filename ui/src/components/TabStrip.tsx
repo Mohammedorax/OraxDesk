@@ -6,6 +6,7 @@
  * own name, and a close button. Middle-click closes, matching the same habit.
  */
 import { useEffect, useRef, type ReactNode, type Ref } from "react";
+import { useT } from "../lib/i18n";
 import { classNames } from "../lib/util";
 import type { SessionState } from "../lib/types";
 import type { TabSummary } from "../state/TabsContext";
@@ -26,16 +27,16 @@ export function tabPanelId(id: string | null): string {
 }
 
 /** Colour of a tab's status dot, and what a screen reader hears for it. */
-function statusOf(state: SessionState): { className: string; label: string } {
+function statusOf(state: SessionState, t: ReturnType<typeof useT>): { className: string; label: string } {
   switch (state.state) {
     case "connected":
-      return { className: "bg-success", label: "Connected" };
+      return { className: "bg-success", label: t("ssh.connected") };
     case "disconnected":
-      return { className: "bg-danger", label: "Disconnected" };
+      return { className: "bg-danger", label: t("ssh.disconnected") };
     case "reconnecting":
-      return { className: "bg-warning animate-pulse", label: "Reconnecting" };
+      return { className: "bg-warning animate-pulse", label: t("common.reconnecting") };
     default:
-      return { className: "bg-accent animate-pulse", label: "Connecting" };
+      return { className: "bg-accent animate-pulse", label: t("common.connecting") };
   }
 }
 
@@ -63,6 +64,7 @@ export function TabStrip({
    */
   drivenTabIds?: ReadonlySet<string>;
 }): ReactNode {
+  const t = useT();
   const activeRef = useRef<HTMLDivElement>(null);
 
   // Keep the selected tab in view when it was chosen with the keyboard, or
@@ -84,7 +86,7 @@ export function TabStrip({
   return (
     <div
       role="tablist"
-      aria-label="Open sessions"
+      aria-label={t("common.openSessions")}
       className="flex shrink-0 items-stretch gap-1 overflow-x-auto border-b border-subtle bg-inset/50 px-2 pt-1.5"
       onKeyDown={onKeyDown}
     >
@@ -94,11 +96,11 @@ export function TabStrip({
         onSelect={() => onSelect(null)}
         panelId={tabPanelId(null)}
         icon={<IconGrid size={13} />}
-        label="Library"
+        label={t("common.library")}
       />
       {tabs.map((tab) => {
         const selected = tab.id === activeId;
-        const status = statusOf(tab.state);
+        const status = statusOf(tab.state, t);
         const driven = drivenTabIds.has(tab.id);
         return (
           <Tab

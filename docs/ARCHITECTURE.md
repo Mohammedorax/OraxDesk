@@ -1,6 +1,6 @@
-# DeskVNC architecture and protocol reference
+# OraxDesk architecture and protocol reference
 
-This document is the detailed technical reference for DeskVNC: the full protocol
+This document is the detailed technical reference for OraxDesk: the full protocol
 feature list, the security model, the crate layout, and the build and packaging
 notes. It was the project README through v0.22.0 and is preserved here because
 the detail is valuable to contributors and to anyone evaluating the client's
@@ -9,7 +9,7 @@ where the engineering detail lives.
 
 ---
 
-# DeskVNCViewer
+# OraxDesk
 
 A fast, native VNC viewer for Windows, macOS, and Linux, built with Rust and
 Tauri 2.
@@ -29,7 +29,7 @@ never crosses the IPC boundary.
 ## Installing
 
 Prebuilt binaries for macOS, Windows and Linux are on the
-[latest release](https://github.com/psmux/DeskVNC/releases/latest).
+[latest release](https://github.com/Mohammedorax/OraxDesk/releases/latest).
 
 The **macOS** build is signed and notarized, so it opens normally. The
 **Windows** installer is unsigned, so SmartScreen shows "Windows protected your

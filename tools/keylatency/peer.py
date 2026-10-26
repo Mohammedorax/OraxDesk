@@ -1,5 +1,5 @@
 import json, subprocess, sys, time, base64, re, threading, queue
-DVV="/Applications/DeskVNCViewer.app/Contents/MacOS/dvv"
+DVV="/Applications/OraxDesk.app/Contents/MacOS/dvv"
 class Peer:
     def __init__(self):
         self.p=subprocess.Popen([DVV,"mcp","--stdio"],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,text=True,bufsize=1)

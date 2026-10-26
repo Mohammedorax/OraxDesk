@@ -1,4 +1,4 @@
-# نموذج الأمان — سجل Orax Remote
+# نموذج الأمان — سجل OraxDesk
 
 يعرّف هذا المستند الحدود الأمنية للخدمة السحابية في `cloudflare/`، وما تحميه وما لا تحميه،
 بما يتوافق مع [الخطة](CLOUDFLARE_IMPLEMENTATION_PLAN.md) و[التدقيق](CLOUDFLARE_ARCHITECTURE_AUDIT.md).

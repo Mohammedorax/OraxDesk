@@ -1,7 +1,7 @@
 # تدقيق البنية السحابية — الجهاز، الهوية، التنسيق، والنقل
 
 > **المرحلة الأولى فقط.** هذا التقرير لا يعدّل أي شيفرة، ولا ينشئ أي مورد Cloudflare، ولا ينشر شيئًا.
-> كل ما فيه مبني على قراءة المستودع الفعلية في `D:\DeskVNC-main` بتاريخ 2026-10-17، وعلى وثائق
+> كل ما فيه مبني على قراءة المستودع الفعلية في `D:\OraxDesk-main` بتاريخ 2026-10-17، وعلى وثائق
 > Cloudflare وiroh الرسمية المنشورة في التاريخ نفسه. ما لم يُقرأ يُذكر صريحًا في القسم الأخير.
 
 ---
@@ -19,7 +19,7 @@
 | شبكة الخصوصية | **Cloudflare Zero Trust (WARP/MASQUE)** أو **Tailscale**، تُنصّب وتهيّأ عبر `warp-cli`/`tailscale` من التطبيق | `crates/boundary-provision/src/lib.rs:216-276`، `src/cloudflare.rs:160-285` |
 | نقل الجلسة | QUIC: إطارات الشاشة على uni-streams، والتحكم على bi-stream، **لا يمرّ أي شيء عبر HTTP أو قاعدة بيانات** | `session.rs:505-732` |
 
-بالتالي فإن «Cloudflare Workers + D1» في خطة «Orax Remote» **مكوّن جديد مضاف**، وليس إعادة كتابة لنظام
+بالتالي فإن «Cloudflare Workers + D1» في خطة «OraxDesk» **مكوّن جديد مضاف**، وليس إعادة كتابة لنظام
 الاتصال. وهذا يقع تمامًا داخل قيد الخطة الأساسي: لا تُعِد كتابة الاتصال، ولا تكسر البروتوكول.
 
 **الاستنتاجات الستة الحاسمة:**
@@ -66,10 +66,10 @@ React ذات الصلة، `README.md`, `docs/`, `SECURITY.md`, وملفات CI.
 ### 2.1 خريطة الطبقات الأربع كما هي في الكود
 
 ```
-المستخدم (شخص يحتاج مساعدة)                       المساعد (فني / عميل DeskVNC)
+المستخدم (شخص يحتاج مساعدة)                       المساعد (فني / عميل OraxDesk)
 ┌──────────────────────────────┐                 ┌──────────────────────────────┐
-│ DeskVNC Support (boundary-app)│                 │ DeskVNCViewer + BoundaryDriver│
-│ أو لوحة Get help داخل DeskVNC │                 │ (src-tauri/commands/support)  │
+│ OraxDesk Support (boundary-app)│                 │ OraxDesk + BoundaryDriver│
+│ أو لوحة Get help داخل OraxDesk │                 │ (src-tauri/commands/support)  │
 └──────────────┬───────────────┘                 └──────────────┬───────────────┘
                │                                               │
         ┌──────┴──────────┐   (3) signaling                    │
@@ -198,7 +198,7 @@ expires = now + 600s
 | `boundary-codes::Client` (`lib.rs:64-183`) | عقد HTTP جاهز + تحقق HTTPS + حدود حجم + رفض الاستجابة الكبيرة؛ يمكن توجيهه إلى Worker دون تغيير شكله |
 | نموذج `Access` / `Helper` / `access.json` (`unattended.rs:69-180`) | سياسة من يُقبل غير المراقَب؛ تبقى على الجهاز (المصدر الموثوق للسياسة) |
 | رمز الإلغاء (revoke token) | يعطي ملكية قابلة للإثبات بلا حساب مستخدم |
-| `boundary-driver` (`kind = ProtocolKind::Boundary`) | يجعل جلسة الدعم نوع جلسة كامل في واجهة DeskVNC بلا أي تغيير في الواجهة |
+| `boundary-driver` (`kind = ProtocolKind::Boundary`) | يجعل جلسة الدعم نوع جلسة كامل في واجهة OraxDesk بلا أي تغيير في الواجهة |
 | اختبارات التكامل القائمة | `crates/boundary-session/tests/unattended.rs` (4 سيناريوهات على اتصالات مشفّرة حقيقية)، `crates/boundary-driver/tests/{session,tools}.rs` |
 | `vnc-store` (SQLite + keychain) | مكان جاهز لحفظ «أجهزة مقترنة» أو نسخة احتياطية للهوية، مع بديل تشفير ملفات مُختبَر |
 
@@ -491,7 +491,7 @@ expires = now + 600s
 | الهوية والوصول غير المراقَب | `crates/boundary-session/src/unattended.rs` |
 | خدمة الأرقام (عميل) | `crates/boundary-codes/src/lib.rs` |
 | خدمة الأرقام (خادم) | `crates/boundary-codes/src/server.rs` |
-| جسر الجلسة إلى واجهة DeskVNC | `crates/boundary-driver/src/lib.rs` |
+| جسر الجلسة إلى واجهة OraxDesk | `crates/boundary-driver/src/lib.rs` |
 | تجهيز Zero Trust / Tailscale | `crates/boundary-provision/src/{lib,cloudflare,network,platform}.rs` |
 | جهاز سطح المكتب | `crates/boundary-platform/src/{lib,system}.rs` |
 | تطبيق الدعم المستقل | `crates/boundary-app/src/{main,unattended,login,codes}.rs` |

@@ -1,4 +1,4 @@
-//! The look of the support app, taken from DeskVNC's design tokens
+//! The look of the support app, taken from OraxDesk's design tokens
 //! (`ui/src/styles/index.css`): the same canvas, surface and inset colours,
 //! the same accent, the same 6 px controls and 14 px cards, the system font,
 //! and light or dark following the operating system. The layout is the one
@@ -120,13 +120,13 @@ fn visuals(p: &Palette, mut visuals: egui::Visuals) -> egui::Visuals {
         &mut visuals.widgets.active,
         &mut visuals.widgets.open,
     ] {
-        // 4 rather than DeskVNC's 6: egui draws checkboxes with the same
+        // 4 rather than OraxDesk's 6: egui draws checkboxes with the same
         // radius as buttons, and 6 on a 14 px box reads as a circle.
         widget.corner_radius = CornerRadius::same(4);
         widget.fg_stroke.color = p.text;
     }
     visuals.widgets.noninteractive.bg_stroke = Stroke::new(1.0, p.border);
-    // Secondary buttons: inset background with a subtle border, as in DeskVNC.
+    // Secondary buttons: inset background with a subtle border, as in OraxDesk.
     visuals.widgets.inactive.weak_bg_fill = p.inset;
     visuals.widgets.inactive.bg_fill = p.inset;
     visuals.widgets.inactive.bg_stroke = Stroke::new(1.0, p.border);
@@ -142,7 +142,7 @@ fn visuals(p: &Palette, mut visuals: egui::Visuals) -> egui::Visuals {
     visuals
 }
 
-/// The fonts DeskVNC's stylesheet asks for, from the operating system:
+/// The fonts OraxDesk's stylesheet asks for, from the operating system:
 /// Segoe UI on Windows, San Francisco on macOS, Ubuntu or DejaVu on Linux,
 /// and a matching monospace. egui's own fonts stay behind them for any glyph
 /// they lack, and are what is used when none is found.
@@ -214,7 +214,7 @@ fn bold(size: f32) -> FontId {
     FontId::new(size, FontFamily::Name(BOLD.into()))
 }
 
-/// A card: DeskVNC's surface colour, subtle border, 14 px corners.
+/// A card: OraxDesk's surface colour, subtle border, 14 px corners.
 pub fn card<R>(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
     let p = pal(ui.ctx());
     egui::Frame::new()
@@ -231,7 +231,7 @@ pub fn card<R>(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
         .inner
 }
 
-/// The one accent button on a card, DeskVNC's primary button made taller.
+/// The one accent button on a card, OraxDesk's primary button made taller.
 pub fn primary(ui: &egui::Ui, text: &str) -> egui::Button<'static> {
     let p = pal(ui.ctx());
     egui::Button::new(RichText::new(text).font(bold(14.0)).color(p.accent_fg))

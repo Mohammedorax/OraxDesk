@@ -1,4 +1,4 @@
-//! Starting DeskVNCViewer when an agent needs it and it is not running.
+//! Starting OraxDesk when an agent needs it and it is not running.
 //!
 //! The application holds the sessions and the passwords, so an agent can do
 //! nothing without it. Asking the person to open it first was one more step
@@ -30,7 +30,7 @@ const APP_FILE: &str = if cfg!(windows) {
     "deskvncviewer"
 };
 
-/// Start DeskVNCViewer. `true` when something was started; whether its plane
+/// Start OraxDesk. `true` when something was started; whether its plane
 /// comes up is the caller's to wait for.
 pub fn start_app() -> bool {
     #[cfg(target_os = "macos")]
@@ -102,7 +102,7 @@ fn candidates() -> Vec<PathBuf> {
     #[cfg(windows)]
     for var in ["LOCALAPPDATA", "ProgramFiles", "ProgramW6432"] {
         if let Some(base) = std::env::var_os(var) {
-            out.push(PathBuf::from(base).join("DeskVNCViewer").join(APP_FILE));
+            out.push(PathBuf::from(base).join("OraxDesk").join(APP_FILE));
         }
     }
     #[cfg(not(windows))]

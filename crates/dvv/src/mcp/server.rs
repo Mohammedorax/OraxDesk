@@ -202,7 +202,7 @@ impl Server {
         self.plane.as_ref().ok_or_else(|| {
             ToolError::new(
                 codes::POLICY_DENIED,
-                "DeskVNCViewer is asking the user to approve this attachment, and nothing works until they do. Tell the user to check the app. This is deliberately loud: an agent that silently does nothing for thirty seconds is worse than one that says why",
+                "OraxDesk is asking the user to approve this attachment, and nothing works until they do. Tell the user to check the app. This is deliberately loud: an agent that silently does nothing for thirty seconds is worse than one that says why",
             )
         })
     }
@@ -235,7 +235,7 @@ impl Server {
                         .map(|a| format!("{} ({})", a.limb_id, a.host))
                         .collect();
                     text.push_str(&format!(
-                        " Open in DeskVNCViewer and not attached here: {}. Pass one of those limbIds to any tool and it is attached for you; no dvv_open needed.",
+                        " Open in OraxDesk and not attached here: {}. Pass one of those limbIds to any tool and it is attached for you; no dvv_open needed.",
                         named.join(", ")
                     ));
                 }
@@ -649,7 +649,7 @@ impl Server {
                 // "delivered" without saying that would read as an empty
                 // clipboard rather than as a missing path.
                 Err(ToolError::not_implemented(format!(
-                    "the clipboard request reached {}, and the machine's answer comes back on the session event stream, which this build is not subscribed to. There is no clipboard text to return and an empty string would read as an empty clipboard. Ask the user to read it in DeskVNCViewer",
+                    "the clipboard request reached {}, and the machine's answer comes back on the session event stream, which this build is not subscribed to. There is no clipboard text to return and an empty string would read as an empty clipboard. Ask the user to read it in OraxDesk",
                     limb.id()
                 )))
             }
@@ -663,7 +663,7 @@ impl Server {
     ///
     /// ## Why a transfer finishes inside this call
     ///
-    /// The queue in DeskVNCViewer's Files panel exists because a PERSON drags
+    /// The queue in OraxDesk's Files panel exists because a PERSON drags
     /// a folder in and then wants to keep working while it moves. An agent has
     /// no such need: it is blocked on the tool result either way, and a
     /// transfer id it would have to poll is one more round trip and one more
@@ -1118,7 +1118,7 @@ const INSTRUCTIONS: &str = "You drive real machines through these tools. Four ru
 fn server_info() -> Value {
     json!({
         "name": "deskvnc",
-        "title": "DeskVNCViewer agent plane",
+        "title": "OraxDesk agent plane",
         "version": crate::DVV_VERSION,
     })
 }

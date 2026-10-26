@@ -1041,6 +1041,38 @@ pub(crate) fn resolve_protocol(
     }
 }
 
+fn device_number_candidate(address: &str, protocol: Option<&str>) -> Option<String> {
+    let compact: String = address
+        .chars()
+        .filter(|c| !c.is_ascii_whitespace())
+        .collect();
+    if compact.len() != 9 || !compact.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    if protocol
+        .is_some_and(|p| !p.eq_ignore_ascii_case("vnc") && !p.eq_ignore_ascii_case("boundary"))
+    {
+        return None;
+    }
+    Some(compact)
+}
+
+async fn registry_device_id(
+    state: &AppState,
+    address: &str,
+    protocol: Option<&str>,
+) -> Result<Option<(String, String)>, String> {
+    let Some(number) = device_number_candidate(address, protocol) else {
+        return Ok(None);
+    };
+    let record = super::registry::lookup_device_number(state, &number)
+        .await
+        .map_err(|error| {
+            format!("The registry does not have a computer numbered {number}: {error}")
+        })?;
+    Ok(Some((record.id, number)))
+}
+
 /// The viewport in physical pixels: what the webview measured, or the window.
 ///
 /// Zero in either axis means nothing useful was measured, which is what a
@@ -1190,6 +1222,14 @@ pub async fn connect_session(
         }
         None => None,
     };
+    let hinted = protocol
+        .clone()
+        .or_else(|| profile.as_ref().map(|p| p.protocol.clone()));
+    let (address, port, protocol) =
+        match registry_device_id(&state, &address, hinted.as_deref()).await? {
+            Some((id, _)) => (id, 0, Some("boundary".to_string())),
+            None => (address, port, protocol),
+        };
     let kind = resolve_protocol(protocol.as_deref(), profile.as_ref())?;
     let driver = state
         .protocols
@@ -2494,9 +2534,15 @@ pub async fn open_session_window(
         name.get_or_insert(profile.friendly_name);
         resolved_protocol.get_or_insert(profile.protocol);
     }
+    let address = resolved_address.ok_or("open_session_window needs a profileId or an address")?;
+    let hinted = resolved_protocol.clone();
+    let (address, resolved_port, resolved_protocol, number) =
+        match registry_device_id(&state, &address, hinted.as_deref()).await? {
+            Some((id, number)) => (id, Some(0), Some("boundary".to_string()), Some(number)),
+            None => (address, resolved_port, resolved_protocol, None),
+        };
     let kind = resolve_protocol(resolved_protocol.as_deref(), None)?;
 
-    let address = resolved_address.ok_or("open_session_window needs a profileId or an address")?;
     // The registry answers "what port does this protocol default to", so 5900
     // and 3389 live on the protocol rather than as literals here.
     let port = resolved_port.unwrap_or_else(|| {
@@ -2508,6 +2554,7 @@ pub async fn open_session_window(
     });
     let name = name
         .filter(|n| !n.is_empty())
+        .or(number)
         .unwrap_or_else(|| address.clone());
 
     let key = MachineKey::new(kind, profile_id.as_deref(), &address, port);
@@ -2753,6 +2800,35 @@ mod input_order_tests {
             // An error return would drop the guard here.
         }
         assert!(order.admit(2, Duration::from_millis(40)).await);
+    }
+}
+
+#[cfg(test)]
+mod device_number_tests {
+    use super::*;
+
+    #[test]
+    fn a_grouped_number_is_a_device_number() {
+        assert_eq!(
+            device_number_candidate("910 002 600", None),
+            Some("910002600".into())
+        );
+        assert_eq!(
+            device_number_candidate("910002600", Some("vnc")),
+            Some("910002600".into())
+        );
+        assert_eq!(
+            device_number_candidate("910 002 600", Some("boundary")),
+            Some("910002600".into())
+        );
+    }
+
+    #[test]
+    fn an_explicit_other_protocol_keeps_the_address_as_typed() {
+        assert_eq!(device_number_candidate("910002600", Some("rdp")), None);
+        assert_eq!(device_number_candidate("910002600", Some("ssh")), None);
+        assert_eq!(device_number_candidate("office", None), None);
+        assert_eq!(device_number_candidate("91000260", None), None);
     }
 }
 

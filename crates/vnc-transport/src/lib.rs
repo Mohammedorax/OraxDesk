@@ -1,6 +1,6 @@
 //! # vnc-transport
 //!
-//! Byte-stream transports for DeskVNCViewer: plain TCP, and TLS (for VeNCrypt
+//! Byte-stream transports for OraxDesk: plain TCP, and TLS (for VeNCrypt
 //! X509 subtypes) with trust-on-first-use certificate pinning.
 //!
 //! SSH tunnelling for the RFB connection does not live here either, it would

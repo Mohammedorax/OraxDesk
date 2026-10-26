@@ -1,7 +1,7 @@
 //! Starting an app in the background when the person signs in, so unattended
 //! access is ready without anyone opening it.
 //!
-//! Each app names its own entry, so DeskVNC and DeskVNC Support are set
+//! Each app names its own entry, so OraxDesk and OraxDesk Support are set
 //! independently. The entry starts the app with [`BACKGROUND`].
 
 use anyhow::{Context, Result};

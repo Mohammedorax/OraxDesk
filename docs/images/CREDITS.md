@@ -1,6 +1,6 @@
 # Where the screenshots came from
 
-The screenshots in the README are of a real DeskVNC build, connected over real
+The screenshots in the README are of a real OraxDesk build, connected over real
 VNC to demo servers running on `127.0.0.1`. They are there to show the client,
 so treat everything inside a remote desktop in them as illustration rather than
 as a claim about any particular machine. No real host, address, credential or

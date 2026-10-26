@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-description = "DeskVNCViewer, a premium cross-platform VNC client"
+description = "OraxDesk, a premium cross-platform VNC client"
 default-run = "deskvncviewer"
 
 [lib]

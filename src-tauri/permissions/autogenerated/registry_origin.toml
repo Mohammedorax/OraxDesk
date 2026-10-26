@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-registry-origin"
+description = "Enables the registry_origin command without any pre-configured scope."
+commands.allow = ["registry_origin"]
+
+[[permission]]
+identifier = "deny-registry-origin"
+description = "Denies the registry_origin command without any pre-configured scope."
+commands.deny = ["registry_origin"]

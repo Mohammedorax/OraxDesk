@@ -18,6 +18,7 @@ import { AgentWall } from "./components/AgentWall";
 import { SupportOverlay } from "./components/SupportOverlay";
 import { ToastShelf } from "./components/primitives";
 import { panes } from "./lib/layout";
+import { useT } from "./lib/i18n";
 import { inTauri, safeListen } from "./lib/tauri";
 import { syncSessionMenu } from "./lib/menuSync";
 import { PREF_HIDE_TOOLBAR, readBoolPref, writeBoolPref } from "./lib/prefs";
@@ -112,6 +113,7 @@ export default function App(): ReactNode {
 }
 
 function MainShell(): ReactNode {
+  const t = useT();
   const { settings } = useSettings();
   const [prefsOpen, setPrefsOpen] = useState(false);
   const [aboutOpen, setAboutOpen] = useState(false);
@@ -377,7 +379,7 @@ function MainShell(): ReactNode {
   // machine, which is what the strip is labelled with too.
   useEffect(() => {
     const summary = summaries.find((t) => t.id === activeId);
-    document.title = summary ? summary.title : "DeskVNCViewer";
+    document.title = summary ? summary.title : "OraxDesk";
   }, [summaries, activeId]);
 
   const showOnboarding = !settings.onboarded && !skippedOnboarding;
@@ -427,7 +429,7 @@ function MainShell(): ReactNode {
         another, without its connection noticing. See that file's header.
       */}
       <div className="relative min-h-0 flex-1">
-        <Pane visible={libraryInFront} id={tabPanelId(null)} label="Library">
+        <Pane visible={libraryInFront} id={tabPanelId(null)} label={t("common.library")}>
           <Library
             onOpenPreferences={() => setPrefsOpen(true)}
             onOpenAbout={() => setAboutOpen(true)}

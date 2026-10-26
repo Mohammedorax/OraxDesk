@@ -172,7 +172,7 @@ pub fn decode_command(value: &Value) -> Result<ClientCommand, String> {
         // surface will never carry that command" are different claims and an
         // agent should stop asking for the second.
         "provide-credentials" | "trust-certificate" | "cancel-credentials" => Err(format!(
-            "{kind} is not carried on dvvp.v1 and never will be: answering a credential or a certificate prompt is a PERSON's act, in DeskVNCViewer, and the way to keep a secret away from an agent is not having the message"
+            "{kind} is not carried on dvvp.v1 and never will be: answering a credential or a certificate prompt is a PERSON's act, in OraxDesk, and the way to keep a secret away from an agent is not having the message"
         )),
         other => Err(format!(
             "this build does not know the command `{other}`; it is refused rather than ignored, because a command that ends silently makes an agent wait instead of retrying"
@@ -223,7 +223,7 @@ pub fn refuse_credentials(params: &Value) -> Result<(), String> {
     for field in NEVER_FROM_AN_AGENT {
         if params.get(field).is_some() {
             return Err(format!(
-                "`{field}` is not carried on dvvp.v1 and never will be: an agent names a saved machine and DeskVNCViewer resolves the secret from the keychain, exactly as it does for a person clicking the machine in the library (00 R19, 09 §4). Nothing was opened and nothing was run"
+                "`{field}` is not carried on dvvp.v1 and never will be: an agent names a saved machine and OraxDesk resolves the secret from the keychain, exactly as it does for a person clicking the machine in the library (00 R19, 09 §4). Nothing was opened and nothing was run"
             ));
         }
     }

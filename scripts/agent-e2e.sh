@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# End to end: a person installs DeskVNCViewer, has OpenCode and Pi installed
+# End to end: a person installs OraxDesk, has OpenCode and Pi installed
 # through nvm, opens the app once, and then asks an agent to drive a machine
 # with the app closed. Nothing in between is configured by hand.
 #
@@ -15,7 +15,7 @@ step() { printf '\n== %s\n' "$*"; }
 fail() {
   printf 'FAIL: %s\n' "$*"
   printf '\n-- what was running\n'; ps aux | grep -i -e deskvnc -e 'dvv ' | grep -v grep || true
-  printf '\n-- the socket\n'; ls -la "${XDG_RUNTIME_DIR:-/nonexistent}/deskvncviewer" "$HOME/.local/share/DeskVNCViewer" "$HOME/Library/Application Support/DeskVNCViewer" 2>&1 || true
+  printf '\n-- the socket\n'; ls -la "${XDG_RUNTIME_DIR:-/nonexistent}/deskvncviewer" "$HOME/.local/share/OraxDesk" "$HOME/Library/Application Support/OraxDesk" 2>&1 || true
   printf '\n-- recorded app path\n'; cat "$DATA/app-path" 2>&1 || true
   printf '\n-- output of the app dvv started\n'; cat "${TMPDIR:-/tmp}/deskvncviewer-started-by-dvv.log" 2>&1 || true
   printf '\n-- first app log\n'; tail -40 "$OUT/app.log" 2>&1 || true
@@ -26,11 +26,11 @@ pass() { printf 'PASS: %s\n' "$*"; }
 
 case "$(uname -s)" in
   Darwin)
-    APP=/Applications/DeskVNCViewer.app
+    APP=/Applications/OraxDesk.app
     DVV="$APP/Contents/MacOS/dvv"
     DATA="$HOME/Library/Application Support/com.deskvncviewer.desktop"
     start_app() { open -a "$APP"; }
-    stop_app() { osascript -e 'quit app "DeskVNCViewer"' >/dev/null 2>&1 || true; pkill -x deskvncviewer || true; pkill -f "$APP/Contents/MacOS/" || true; }
+    stop_app() { osascript -e 'quit app "OraxDesk"' >/dev/null 2>&1 || true; pkill -x deskvncviewer || true; pkill -f "$APP/Contents/MacOS/" || true; }
     ;;
   Linux)
     DATA="${XDG_DATA_HOME:-$HOME/.local/share}/com.deskvncviewer.desktop"
@@ -38,7 +38,7 @@ case "$(uname -s)" in
       # The AppImage: its own dvv lives in a mount that goes when it quits,
       # so agents must be pointed at the copy setup makes outside it.
       APP_EXE="$APPIMAGE_FILE"
-      DVV="$HOME/.local/share/DeskVNCViewer/bin/dvv"
+      DVV="$HOME/.local/share/OraxDesk/bin/dvv"
     else
       APP_EXE=/usr/bin/deskvncviewer
       DVV=/usr/bin/dvv
@@ -75,7 +75,7 @@ step "nothing is configured before the app first runs"
 if [ -n "$(opencode_config)" ] && grep -q deskvnc "$(opencode_config)"; then fail "OpenCode was already wired before the app ran"; fi
 pass "a clean machine"
 
-step "open DeskVNCViewer once, the way a person does"
+step "open OraxDesk once, the way a person does"
 start_app
 wait_for 60 "the agent plane coming up on its own (it is on by default)" plane_up
 pass "plane is up with no setting touched"

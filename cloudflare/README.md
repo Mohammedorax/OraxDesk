@@ -1,6 +1,6 @@
-# Orax Remote — registry Worker (Cloudflare)
+# OraxDesk — registry Worker (Cloudflare)
 
-Device registry and signal-code service for Orax Remote. This directory is the
+Device registry and signal-code service for OraxDesk. This directory is the
 **Worker + D1** side of [the implementation plan](../docs/CLOUDFLARE_IMPLEMENTATION_PLAN.md).
 The remote-desktop transport stays where it is: `crates/boundary-session` over
 iroh/QUIC. Nothing here ever carries screen, input or clipboard data.

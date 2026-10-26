@@ -5,7 +5,7 @@
 # Not meant to be executed directly.
 
 # Common Name of the self-signed identity created by macos-codesign-setup.sh.
-LOCAL_CERT_CN="${LOCAL_CERT_CN:-DeskVNCViewer Local Dev}"
+LOCAL_CERT_CN="${LOCAL_CERT_CN:-OraxDesk Local Dev}"
 
 # The bundle identifier from tauri.conf.json. Signing a bare binary (dev
 # builds) must force this, otherwise the linker's content-hash identifier

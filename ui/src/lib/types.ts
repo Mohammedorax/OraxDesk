@@ -51,7 +51,7 @@ export function isProtocolKind(value: unknown): value is ProtocolKind {
  *
  * "Boundary" is the name of the protocol family inside this project, not a
  * word anyone outside it has any reason to know. What a person is connecting
- * to is a computer running DeskVNC Support, so that is what the badge says.
+ * to is a computer running OraxDesk Support, so that is what the badge says.
  */
 const PROTOCOL_LABELS: Record<string, string> = {
   vnc: "VNC",
@@ -76,7 +76,7 @@ export function protocolLabel(p: string): string {
  * happened to fall through to.
  */
 const PROTOCOL_NAMES: Record<ProtocolKind, string> = {
-  boundary: "DeskVNC Support (remote help)",
+  boundary: "OraxDesk Support (remote help)",
   rdp: "Remote Desktop (RDP)",
   ssh: "Terminal (SSH)",
   vnc: "Screen sharing (VNC)",

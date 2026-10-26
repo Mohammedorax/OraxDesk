@@ -8,12 +8,12 @@ the OS event to the painted pixel.
 Run the app with the trace on, to a file:
 
     RUST_LOG=info,deskvncviewer_lib=debug,vnc_core=debug DVV_TRACE_PROTOCOL=1 \
-      /Applications/DeskVNCViewer.app/Contents/MacOS/deskvncviewer > trace.log 2>&1 &
+      /Applications/OraxDesk.app/Contents/MacOS/deskvncviewer > trace.log 2>&1 &
 
 Open a saved host (ids from `dvv hosts --json`), give it a few seconds, then
 type into it and read the timeline:
 
-    /Applications/DeskVNCViewer.app/Contents/MacOS/dvv open <host_id>
+    /Applications/OraxDesk.app/Contents/MacOS/dvv open <host_id>
     python3 key.py a,bs,s,bs,d,bs 0.9 > posts.txt
     python3 timeline.py trace.log posts.txt
     python3 keystats.py <tag>        # expects trace_<tag>.log and posts_<tag>.txt

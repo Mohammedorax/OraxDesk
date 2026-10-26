@@ -40,13 +40,17 @@ const ar = {
   "device.number": "رقم هذا الجهاز — اقرأه لمن يساعدك",
   "device.copyNumber": "نسخ الرقم",
   "device.numberHint": "تسعة أرقام ثابتة لهذا الجهاز. اقرأها على الهاتف لمن يساعدك، أو انسخها.",
+  "device.registering": "جارٍ تسجيل رقم هذا الجهاز…",
+  "device.registered": "الرقم مسجل وجاهز للبحث.",
+  "device.registerFailed": "تعذّر تسجيل رقم هذا الجهاز: {reason}",
+  "device.registerRetry": "أعد المحاولة",
   "device.id": "معرّف هذا الجهاز، للوصول دون الحضور",
   "device.copyId": "نسخ المعرّف",
 
   // شاشة البدء
 
 
-  "onboarding.welcome": "مرحبًا بك في DeskVNCViewer",
+  "onboarding.welcome": "مرحبًا بك في OraxDesk",
   "onboarding.tagline":
     "شاهد أجهزتك الأخرى وتحكّم فيها: سريع، وآمن، وملكك وحدك. بلا حساب، أبدًا.",
   "onboarding.appearance": "المظهر",
@@ -102,6 +106,12 @@ const ar = {
   "quick.chipSavedTitle": "{name} محفوظ كـ {protocol}. يتصل هذا العنوان عبر ذلك المضيف.",
   "quick.chipTitle": "اتصل بـ {protocol}. انقر لاستخدام {next} بدلًا منها.",
   "quick.connectTo": "اتصل بـ {target}",
+  "quick.port": "المنفذ {port}",
+  "quick.suggestions": "اقتراحات الاتصال",
+  "quick.groupTyped": "هذا العنوان",
+  "quick.groupHosts": "أجهزتك",
+  "quick.groupNearby": "على هذه الشبكة",
+  "quick.groupRecent": "الأخيرة",
 
   // نوافذ الدعم عن بُعد
   "support.helpSomeone": "ساعد شخصًا",
@@ -135,9 +145,9 @@ const ar = {
   "support.defaultMachineName": "حاسوب Boundary",
   "support.helpSomeoneTitle": "اتصل بمن طلب منك المساعدة",
   "support.helpOverInternet": "ساعد شخصًا عبر الإنترنت، دون أن تُعدّ شيئًا في أي من الشبكتين.",
-  "support.stepInstallLead": "في DeskVNC يضغطون",
+  "support.stepInstallLead": "في OraxDesk يضغطون",
   "support.stepInstallTail":
-    ". ومن دون DeskVNC ينزّلون DeskVNC Support من صفحة إصدارات DeskVNC ويفتحونه. ولا يُثبَّت شيء.",
+    ". ومن دون OraxDesk ينزّلون OraxDesk Support من صفحة إصدارات OraxDesk ويفتحونه. ولا يُثبَّت شيء.",
   "support.stepCodeLead": "يضغطون",
   "support.stepCodeMid": "أو",
   "support.stepCodeTail": "ثم يرسلون لك ما يظهر.",
@@ -145,7 +155,7 @@ const ar = {
   "support.duringSession":
     "أثناء الجلسة يمكنهم أن يسمحوا لك بالاتصال في أي وقت. عندئذٍ يُحفظ الجهاز في مكتبتك ويفتح دون حضورك.",
   "support.machineIntro":
-    "لجهاز فُعّل فيه الوصول دون حضورك في DeskVNC أو DeskVNC Support. أما الجهاز الذي قبلّاك من قبل فهو في مكتبتك أصلًا. وإلا فيوافقك الشخص الموجود هناك على شاشته، ويمكنه أن يقبلك لتتصل في المرة القادمة دون سؤال.",
+    "لجهاز فُعّل فيه الوصول دون حضورك في OraxDesk أو OraxDesk Support. أما الجهاز الذي قبلّاك من قبل فهو في مكتبتك أصلًا. وإلا فيوافقك الشخص الموجود هناك على شاشته، ويمكنه أن يقبلك لتتصل في المرة القادمة دون سؤال.",
   "support.computerIdPlaceholder": "الرقم التسعيني، أو المعرّف المكوّن من 64 حرفًا",
   "support.registryNumberHint":
     "يُبحث عن الرقم التسعيني في هذا السجل أولًا، فالطرفين يحتاجان السجل نفسه. واتركه فارغًا لاستعمال المعرّف الكامل بدلًا منه.",
@@ -205,7 +215,7 @@ const ar = {
   "gethelp.copied": "تم النسخ",
   "gethelp.screenPermission": "يلزم إذن تسجيل الشاشة للمشاركة.",
   "gethelp.allowScreenRecording": "اسمح بتسجيل الشاشة",
-  "gethelp.screenPermissionHint": "بعد منح الإذن، أغلق DeskVNC وافتحه من جديد إن فشلت المشاركة.",
+  "gethelp.screenPermissionHint": "بعد منح الإذن، أغلق OraxDesk وافتحه من جديد إن فشلت المشاركة.",
   "gethelp.noDisplayToShare": "لم يُعثر على شاشة تُشارَك.",
   "gethelp.shareScreen": "الشاشة المشتركة",
   "gethelp.gettingCode": "جارٍ جلب رمزك…",
@@ -239,16 +249,16 @@ const ar = {
 
   // الوصول دون حضورك في «احصل على مساعدة»
   "gethelp.unattendedIntro":
-    "دع من تثق بهم يتصلون بهذا الجهاز حين لا يكون أحد هنا للموافقة. مُعطَّل حتى تفعّله. ويجب أن يكون DeskVNC يعمل ليعمل.",
+    "دع من تثق بهم يتصلون بهذا الجهاز حين لا يكون أحد هنا للموافقة. مُعطَّل حتى تفعّله. ويجب أن يكون OraxDesk يعمل ليعمل.",
   "gethelp.allowUnattended": "اسمح بالوصول دون حضورك إلى هذا الجهاز",
   "gethelp.idReachable": "معرّف هذا الجهاز، يمكن الوصول إليه الآن",
   "gethelp.helperEntersId":
     "يدخله المساعد معرّفًا للجهاز، مع كلمة المرور إن لم يكن مقبولًا هنا من قبل.",
-  "gethelp.autostart": "شغّل DeskVNC عند تسجيل دخولي، ليجهز فورًا",
+  "gethelp.autostart": "شغّل OraxDesk عند تسجيل دخولي، ليجهز فورًا",
   "gethelp.noPairedYet": "لا أحد بعد. أثناء جلسة دعم، اختر «دعه يتصل في أي وقت» لقبول المساعد.",
   "gethelp.mayControl": "يستطيع التحكم",
   "gethelp.toolsNote":
-    "لمساعد تعمل أدواته، مثل وكلاء DeskVNC، على هذا الجهاز أثناء غيابك. والأوامر تعمل باسمك.",
+    "لمساعد تعمل أدواته، مثل وكلاء OraxDesk، على هذا الجهاز أثناء غيابك. والأوامر تعمل باسمك.",
   "gethelp.mayRunTools": "يستطيع تشغيل الأوامر ونسخ الملفات",
   "gethelp.remove": "إزالة",
   "gethelp.unattendedPassword": "كلمة المرور للوصول دون حضورك",
@@ -290,7 +300,7 @@ const ar = {
     "اتركه فارغًا لاستخدام خدمة Boundary المشتركة. أما البنية التحتية الخاصة فتحتاج خدمتها هنا.",
 
   // شاشة «عن»
-  "about.title": "عن DeskVNCViewer",
+  "about.title": "عن OraxDesk",
   "about.sectionsLabel": "أقسام «عن»",
   "about.tabAbout": "عن",
   "about.tabHelp": "مساعدة",
@@ -563,7 +573,7 @@ const ar = {
   "agent.connect": "اربط",
   "agent.setupTitle": "OpenCode وPi وClaude Code وCodex",
   "agent.setupNote":
-    "يتصل تلقائيًا في كل مرة يبدأ فيها DeskVNC. هل ثبّتت وكيلًا جديدًا الآن؟ اربطه من غير إعادة تشغيل.",
+    "يتصل تلقائيًا في كل مرة يبدأ فيها OraxDesk. هل ثبّتت وكيلًا جديدًا الآن؟ اربطه من غير إعادة تشغيل.",
   "agent.connectNow": "اربط الآن",
   "agent.setupFailed": "لا تستطيع هذه النسخة تشغيل الإعداد. شغّل dvv setup في طرفية بدلًا من ذلك.",
   "agent.canDo": "ما يستطيع الوكيل أن يفعله",
@@ -656,7 +666,7 @@ const ar = {
   "address.ipv6": "اكتب عنوان IPv6 هكذا: [::1] أو [::1]:5901",
   "address.ipv6Invalid": "{address} ليس عنوان IPv6 صالحًا",
   "address.needComputerId":
-    "اكتب المعرّف المكوّن من 64 حرفًا الموجود تحت «الوصول دون حضورك» في DeskVNC Support",
+    "اكتب المعرّف المكوّن من 64 حرفًا الموجود تحت «الوصول دون حضورك» في OraxDesk Support",
 
   // المكتبة
   "library.wakeNeedsMac": "لا يوجد عنوان MAC محفوظ لهذا الجهاز، فلا يمكن إيقاظه.",
@@ -685,7 +695,7 @@ const ar = {
   // المكتبة: الحالة الفارغة وما حولها
   "library.emptyTitle": "لنجد أجهزتك",
   "library.emptyBody":
-    "يستطيع DeskVNCViewer أن يكتشف الأجهزة على شبكتك المحلية تلقائيًا، أو يمكنك إضافة جهاز بعنوانه.",
+    "يستطيع OraxDesk أن يكتشف الأجهزة على شبكتك المحلية تلقائيًا، أو يمكنك إضافة جهاز بعنوانه.",
   "library.findOnNetwork": "ابحث عن الأجهزة على شبكتي",
   "library.addComputerManually": "أضف جهازًا يدويًا",
   "library.noMatch": "لا يوجد جهاز يطابق «{search}»",
@@ -759,6 +769,9 @@ const ar = {
   "library.alreadyOpen": "{name} مفتوح أصلًا، وأُحضر إلى الأمام",
   "library.connectingTo": "جارٍ الاتصال بـ {address}",
   "library.connectingToPort": "جارٍ الاتصال بـ {address} على المنفذ {port}",
+  "library.numberNeedsRegistry": "الرقم التسعيني يحتاج عنوان سجل. اضبطه من نافذة الدعم عن بُعد أولًا.",
+  "library.numberLookupFailed": "تعذّر البحث عن الرقم {number}: {reason}",
+  "library.numberNotRegistered": "لا يوجد جهاز مسجل بالرقم {number}. شغّل النسخة الجديدة على ذلك الجهاز حتى يسجل نفسه، ثم أعد المحاولة.",
   "library.groupEmpty": "لا يوجد في «{group}» أي مضيف بعد",
   "library.groupLayoutChanged":
     "تغيّرت «{group}» منذ حفظ ترتيبها؛ فُتح ما لا يزال مطابقًا",
@@ -863,7 +876,7 @@ const ar = {
   "host.addressHint":
     "192.168.1.42، أو اسم مثل office. والرقم بعد النقطتين إن كان أقل من 100 هو رقم شاشة، فـ :1 هي الشاشة 1 على المنفذ 5901؛ أما 100 فما فوقه فهو منفذ.",
   "host.computerIdHint":
-    "يظهر تحت «الوصول دون حضورك» في DeskVNC Support على ذلك الجهاز. وإن لم تكن مقترنًا، يوافقك الشخص هناك، أو تستخدم كلمة المرور أدناه.",
+    "يظهر تحت «الوصول دون حضورك» في OraxDesk Support على ذلك الجهاز. وإن لم تكن مقترنًا، يوافقك الشخص هناك، أو تستخدم كلمة المرور أدناه.",
   "host.computerIdPlaceholder": "معرّف جهاز من 64 حرفًا",
   "host.addressPlaceholder": "192.168.1.42 أو اسم المضيف",
   "host.port": "المنفذ",
@@ -1062,7 +1075,7 @@ const ar = {
   "host.protocolRdp": "سطح المكتب البعيد",
   "host.protocolSsh": "الطرفية",
   "host.protocolVnc": "مشاركة الشاشة",
-  "host.protocolNameBoundary": "DeskVNC Support (مساعدة عن بُعد)",
+  "host.protocolNameBoundary": "OraxDesk Support (مساعدة عن بُعد)",
   "host.protocolNameRdp": "سطح المكتب البعيد (RDP)",
   "host.protocolNameSsh": "الطرفية (SSH)",
   "host.protocolNameVnc": "مشاركة الشاشة (VNC)",
@@ -1243,6 +1256,79 @@ const ar = {
     "تعذّرت قراءة حالة الإعداد. أعد فتح هذه النافذة للاتصال من جديد.",
   "provider.verifyNote":
     "يتبع فحص اتصال محلي جلسة Boundary فعلية للتحقق من المسار كاملًا. والدعوات الخاصة تعطّل الترحيل العام.",
+  "common.done": "تم",
+  "common.close": "إغلاق",
+  "common.tryAgain": "أعد المحاولة",
+  "common.dismiss": "إغلاق الإشعار",
+  "common.closeDialog": "إغلاق النافذة",
+  "common.closeTerminal": "إغلاق الطرفية",
+  "common.closePane": "إغلاق هذا الجزء",
+  "common.resizePanes": "تغيير حجم الأجزاء",
+  "common.restorePane": "استعادة الجزء: {title}",
+  "common.maximisePane": "تكبير الجزء: {title}",
+  "common.connecting": "جارٍ الاتصال",
+  "common.reconnecting": "جارٍ إعادة الاتصال",
+  "common.openSessions": "الجلسات المفتوحة",
+  "common.passwordSaved": "كلمة المرور محفوظة",
+  "common.moveSessionHere": "نقل جلسة متصلة إلى هنا",
+  "common.choosePane": "اختر ما يُعرض في هذا الجزء",
+  "common.searchHosts": "ابحث عن مضيف، أو اكتب عنوانًا",
+  "common.commandPalette": "لوحة الأوامر",
+  "common.commandPalettePlaceholder": "اتصل بمضيف أو نفّذ أمرًا…",
+  "common.noPaletteMatch": "لا نتائج لـ «{query}»",
+  "common.librarySections": "أقسام المكتبة",
+  "common.nearby": "بالقرب",
+  "common.allHosts": "كل المضيفين",
+  "common.favorites": "المفضلة",
+  "common.recents": "الأخيرة",
+  "common.groups": "المجموعات",
+  "common.tags": "الوسوم",
+  "common.newGroup": "مجموعة جديدة",
+  "common.newTag": "وسم جديد",
+  "common.noGroups": "لا مجموعات بعد",
+  "common.noTags": "لا وسوم بعد",
+  "common.makeGroupFirst": "أنشئ مجموعة أولًا، ثم أفلت المضيفات عليها",
+  "common.makeTagFirst": "أنشئ وسمًا أولًا، ثم أفلت المضيفات عليه",
+  "common.dropToUngroup": "أفلت هنا لإزالة هؤلاء المضيفين من مجموعتهم",
+  "common.dropToTag": "أفلت هنا لوسمها بـ {tag}",
+  "common.tagFilterMode": "وضع تصفية الوسوم: {mode}. انقر للتبديل.",
+  "common.tagFilterTitle": "بدّل ما إذا كان يجب أن تطابق المضيفات كل الوسوم (AND) أو أيًّا منها (OR)",
+  "common.aiAgents": "وكلاء الذكاء الاصطناعي",
+  "common.preferences": "التفضيلات",
+  "common.library": "المكتبة",
+  "common.nothingMatches": "لا شيء يطابق. اضغط Enter للاتصال به كعنوان.",
+  "common.noSavedHosts": "لا مضيفين محفوظين بعد.",
+  "common.closePaneTitle": "إغلاق هذا الجزء",
+  "common.closePaneAria": "إغلاق الجزء: {title}",
+  "onboarding.saveLabel": "حفظ…",
+  "onboarding.noDiscovered": "لا أجهزة مكتشفة للتعبئة. استخدم «+ مضيف جديد» في المكتبة بدلًا من ذلك.",
+  "session.reconnected": "أُعيد الاتصال",
+  "session.screenshotSaved": "حُفظت لقطة الشاشة",
+  "session.clipboardUnreadable": "تعذّرت قراءة الحافظة المحلية",
+  "session.clipboardSent": "أُرسلت الحافظة إلى الطرف البعيد",
+  "session.connectionInfo": "معلومات الاتصال",
+  "session.bell": "جرس",
+  "session.sendingFiles": "إرسال {count} ملف إلى {target}",
+  "pane.connectFailed": "تعذّر الاتصال بـ {label}: {reason}",
+  "pane.connectFailedGeneric": "تعذّر الاتصال: {reason}",
+  "ssh.reattached": "أُعيد الربط بجلسة {multiplexer}",
+  "sshHostKey.previouslyTrusted": "موثوق سابقًا",
+  "sshHostKey.presentedNow": "المعروض الآن",
+  "sshHostKey.changedTitleGateway": "تغيّرت هوية بوابة SSH",
+  "sshHostKey.changedTitle": "تغيّرت هوية هذا الجهاز",
+  "sshHostKey.changedBody": "يقدّم خادم SSH عند {endpoint} مفتاحًا مختلفًا عن الذي وثقت به سابقًا. قد يعني ذلك إعادة تثبيت الجهاز، أو أن أحدًا يعترض اتصالك. رُفض الاتصال. إذا كنت تعرف أن المفتاح تغيّر بشكل مشروع، فأزل المفتاح المحفوظ لهذا الجهاز ثم اتصل مجددًا.",
+  "sshHostKey.verifyGatewayTitle": "تحقق من بوابة SSH {host}",
+  "sshHostKey.verifyTitle": "تحقق من {host}",
+  "sshHostKey.gatewayBody": "سيُمرَّر اتصالك عبر خادم SSH عند {endpoint}، وهذه أول مرة يعرّف نفسه.",
+  "sshHostKey.firstBody": "هذه أول مرة يعرّف فيها {endpoint} نفسه، لذا لا يوجد شيء محفوظ للمقارنة بعد.",
+  "sshHostKey.verifyHint": "تحقق من أن البصمة أدناه تطابق بصمة الخادم ({command}) قبل الوثوق بها.",
+  "sshHostKey.hostKey": "مفتاح المضيف",
+  "sshHostKey.trust": "ثِق واتصل",
+  "session.problemTitle": "واجهت هذه الجلسة مشكلة",
+  "session.problemBody": "أُغلق الاتصال. لم يُحفظ شيء من هذه الجلسة.",
+  "session.closeTab": "إغلاق التبويب",
+  "session.closeWindow": "إغلاق النافذة",
+  "ssh.authenticating": "جارٍ المصادقة ({method})",
 
   // الأوقات
   "util.never": "أبدًا",
@@ -1270,11 +1356,15 @@ const en: Record<keyof typeof ar, string> = {
   "device.copyNumber": "Copy number",
   "device.numberHint":
     "Nine digits that never change for this computer. Read them down the phone to whoever is helping you, or copy them.",
+  "device.registering": "Registering this computer's number…",
+  "device.registered": "The number is registered and ready to look up.",
+  "device.registerFailed": "Could not register this computer's number: {reason}",
+  "device.registerRetry": "Try again",
   "device.id": "This computer's ID, for reaching it unattended",
   "device.copyId": "Copy ID",
 
   // The onboarding screen
-  "onboarding.welcome": "Welcome to DeskVNCViewer",
+  "onboarding.welcome": "Welcome to OraxDesk",
   "onboarding.tagline":
     "See and control your other computers, fast, secure, and entirely yours. No account, ever.",
   "onboarding.appearance": "Appearance",
@@ -1330,6 +1420,12 @@ const en: Record<keyof typeof ar, string> = {
   "quick.chipSavedTitle": "{name} is saved as {protocol}. This address connects through that profile.",
   "quick.chipTitle": "Connect with {protocol}. Click to use {next} instead.",
   "quick.connectTo": "Connect to {target}",
+  "quick.port": "port {port}",
+  "quick.suggestions": "Connection suggestions",
+  "quick.groupTyped": "This address",
+  "quick.groupHosts": "Your computers",
+  "quick.groupNearby": "On this network",
+  "quick.groupRecent": "Recent",
 
   // The remote support dialogs
   "support.helpSomeone": "Help someone",
@@ -1364,9 +1460,9 @@ const en: Record<keyof typeof ar, string> = {
   "support.helpSomeoneTitle": "Connect to someone who asked you for help",
   "support.helpOverInternet":
     "Help someone over the internet, with nothing to set up on either network.",
-  "support.stepInstallLead": "In DeskVNC they press",
+  "support.stepInstallLead": "In OraxDesk they press",
   "support.stepInstallTail":
-    ". Without DeskVNC, they download DeskVNC Support from the DeskVNC releases page and open it. Nothing is installed.",
+    ". Without OraxDesk, they download OraxDesk Support from the OraxDesk releases page and open it. Nothing is installed.",
   "support.stepCodeLead": "They press",
   "support.stepCodeMid": "or",
   "support.stepCodeTail": "and send you what it shows.",
@@ -1375,7 +1471,7 @@ const en: Record<keyof typeof ar, string> = {
   "support.duringSession":
     "During the session they can choose to let you connect any time. The computer is then saved to your Library and opens unattended.",
   "support.machineIntro":
-    "For a computer with unattended access switched on in DeskVNC or DeskVNC Support. A computer that paired you is already in your Library. Otherwise the person there approves you on their screen, and can pair you so you connect without asking next time.",
+    "For a computer with unattended access switched on in OraxDesk or OraxDesk Support. A computer that paired you is already in your Library. Otherwise the person there approves you on their screen, and can pair you so you connect without asking next time.",
   "support.computerIdPlaceholder": "Their nine-digit number, or the 64-character ID",
   "support.registryNumberHint":
     "A nine-digit number is looked up through this registry, so both of you need the same one. Leave it empty to use a full ID instead.",
@@ -1439,7 +1535,7 @@ const en: Record<keyof typeof ar, string> = {
   "gethelp.screenPermission": "Screen Recording permission is needed to share.",
   "gethelp.allowScreenRecording": "Allow screen recording",
   "gethelp.screenPermissionHint":
-    "After granting it, quit and reopen DeskVNC if sharing still fails.",
+    "After granting it, quit and reopen OraxDesk if sharing still fails.",
   "gethelp.noDisplayToShare": "No display found to share.",
   "gethelp.shareScreen": "Shared screen",
   "gethelp.gettingCode": "Getting your code…",
@@ -1478,17 +1574,17 @@ const en: Record<keyof typeof ar, string> = {
 
   // Unattended access in "Get help"
   "gethelp.unattendedIntro":
-    "Let people you trust connect to this computer when nobody is here to approve. Off unless you switch it on. DeskVNC must be running for it to work.",
+    "Let people you trust connect to this computer when nobody is here to approve. Off unless you switch it on. OraxDesk must be running for it to work.",
   "gethelp.allowUnattended": "Allow unattended access to this computer",
   "gethelp.idReachable": "This computer's ID, reachable now",
   "gethelp.helperEntersId":
     "A helper enters it as the computer ID, with the unattended password unless they were paired here.",
-  "gethelp.autostart": "Start DeskVNC when I sign in, so it is ready",
+  "gethelp.autostart": "Start OraxDesk when I sign in, so it is ready",
   "gethelp.noPairedYet":
     "None yet. During a support session, choose Let them connect any time to pair the helper.",
   "gethelp.mayControl": "may control",
   "gethelp.toolsNote":
-    "For a helper whose tools, such as DeskVNC's agents, work on this computer while you are away. Commands run as you.",
+    "For a helper whose tools, such as OraxDesk's agents, work on this computer while you are away. Commands run as you.",
   "gethelp.mayRunTools": "may run commands and copy files",
   "gethelp.remove": "Remove",
   "gethelp.unattendedPassword": "Unattended password",
@@ -1530,7 +1626,7 @@ const en: Record<keyof typeof ar, string> = {
     "Leave empty for the shared Boundary service. Private infrastructure needs its own service here.",
 
   // The About screen
-  "about.title": "About DeskVNCViewer",
+  "about.title": "About OraxDesk",
   "about.sectionsLabel": "About sections",
   "about.tabAbout": "About",
   "about.tabHelp": "Help",
@@ -1810,7 +1906,7 @@ const en: Record<keyof typeof ar, string> = {
   "agent.connect": "Connect",
   "agent.setupTitle": "OpenCode, Pi, Claude Code and Codex",
   "agent.setupNote":
-    "Connected automatically each time DeskVNC starts. Installed a new agent just now? Connect it without restarting.",
+    "Connected automatically each time OraxDesk starts. Installed a new agent just now? Connect it without restarting.",
   "agent.connectNow": "Connect now",
   "agent.setupFailed":
     "This build cannot run setup. Run dvv setup in a terminal instead.",
@@ -1906,7 +2002,7 @@ const en: Record<keyof typeof ar, string> = {
   "address.ipv6": "Write an IPv6 address as [::1] or [::1]:5901",
   "address.ipv6Invalid": "{address} is not a valid IPv6 address",
   "address.needComputerId":
-    "Enter the 64 character ID shown under Unattended access in DeskVNC Support",
+    "Enter the 64 character ID shown under Unattended access in OraxDesk Support",
 
   // The library
   "library.wakeNeedsMac": "This computer has no MAC address saved, so it cannot be woken.",
@@ -1935,7 +2031,7 @@ const en: Record<keyof typeof ar, string> = {
   // The library: the empty states
   "library.emptyTitle": "Let's find your computers",
   "library.emptyBody":
-    "DeskVNCViewer can discover computers on your local network automatically, or you can add one by address.",
+    "OraxDesk can discover computers on your local network automatically, or you can add one by address.",
   "library.findOnNetwork": "Find computers on my network",
   "library.addComputerManually": "Add a computer manually",
   "library.noMatch": "No computers match “{search}”",
@@ -2009,6 +2105,10 @@ const en: Record<keyof typeof ar, string> = {
   "library.alreadyOpen": "{name} is already open, brought it to the front",
   "library.connectingTo": "Connecting to {address}",
   "library.connectingToPort": "Connecting to {address} on port {port}",
+  "library.numberNeedsRegistry":
+    "A nine-digit number needs a registry URL. Set it under remote support first.",
+  "library.numberLookupFailed": "Could not look up {number}: {reason}",
+  "library.numberNotRegistered": "No device is registered with the number {number}. Run the new build on that computer so it registers itself, then try again.",
   "library.groupEmpty": "{group} has no hosts in it yet",
   "library.groupLayoutChanged":
     "{group} has changed since its layout was saved; opened what still matches",
@@ -2116,7 +2216,7 @@ const en: Record<keyof typeof ar, string> = {
   "host.addressHint":
     "192.168.1.42, or a name like office. A number after the colon under 100 is a screen number, so :1 is screen 1 on port 5901; 100 and above is a port.",
   "host.computerIdHint":
-    "Shown under Unattended access in DeskVNC Support on that computer. If you are not paired, the person there approves you, or you use the password below.",
+    "Shown under Unattended access in OraxDesk Support on that computer. If you are not paired, the person there approves you, or you use the password below.",
   "host.computerIdPlaceholder": "64 character computer ID",
   "host.addressPlaceholder": "192.168.1.42 or hostname",
   "host.port": "Port",
@@ -2315,7 +2415,7 @@ const en: Record<keyof typeof ar, string> = {
   "host.protocolRdp": "Remote Desktop",
   "host.protocolSsh": "Terminal",
   "host.protocolVnc": "Screen sharing",
-  "host.protocolNameBoundary": "DeskVNC Support (remote help)",
+  "host.protocolNameBoundary": "OraxDesk Support (remote help)",
   "host.protocolNameRdp": "Remote Desktop (RDP)",
   "host.protocolNameSsh": "Terminal (SSH)",
   "host.protocolNameVnc": "Screen sharing (VNC)",
@@ -2498,6 +2598,80 @@ const en: Record<keyof typeof ar, string> = {
     "Could not read setup status. Reopen this dialog to reconnect.",
   "provider.verifyNote":
     "A local connection check is followed by an actual Boundary session to verify the complete route. Private invitations disable public relay fallback.",
+  "common.done": "Done",
+  "common.close": "Close",
+  "common.tryAgain": "Try again",
+  "common.dismiss": "Dismiss notification",
+  "common.closeDialog": "Close dialog",
+  "common.closeTerminal": "Close terminal",
+  "common.closePane": "Close this pane",
+  "common.resizePanes": "Resize panes",
+  "common.restorePane": "Restore pane: {title}",
+  "common.maximisePane": "Maximise pane: {title}",
+  "common.connecting": "Connecting",
+  "common.reconnecting": "Reconnecting",
+  "common.openSessions": "Open sessions",
+  "common.passwordSaved": "Password saved",
+  "common.moveSessionHere": "Move a connected session here",
+  "common.choosePane": "Choose what to show in this pane",
+  "common.searchHosts": "Search hosts, or type an address",
+  "common.commandPalette": "Command palette",
+  "common.commandPalettePlaceholder": "Connect to a host or run a command…",
+  "common.noPaletteMatch": "No matches for “{query}”",
+  "common.librarySections": "Library sections",
+  "common.nearby": "Nearby",
+  "common.allHosts": "All Hosts",
+  "common.favorites": "Favorites",
+  "common.recents": "Recents",
+  "common.groups": "Groups",
+  "common.tags": "Tags",
+  "common.newGroup": "New group",
+  "common.newTag": "New tag",
+  "common.noGroups": "No groups yet",
+  "common.noTags": "No tags yet",
+  "common.makeGroupFirst": "Make a group first, then drop hosts on it",
+  "common.makeTagFirst": "Make a tag first, then drop hosts on it",
+  "common.dropToUngroup": "Drop here to remove these hosts from their group",
+  "common.dropToTag": "Drop here to tag with {tag}",
+  "common.tagFilterMode": "Tag filter mode: {mode}. Click to toggle.",
+  "common.tagFilterTitle": "Toggle whether hosts must match ALL selected tags (AND) or ANY (OR)",
+  "common.aiAgents": "AI Agents",
+  "common.preferences": "Preferences",
+  "common.library": "Library",
+  "common.nothingMatches": "Nothing matches. Press Enter to connect to it as an address.",
+  "common.noSavedHosts": "No saved hosts yet.",
+  "common.closePaneTitle": "Close this pane",
+  "common.closePaneAria": "Close pane: {title}",
+  "onboarding.saveLabel": "Save…",
+  "onboarding.noDiscovered":
+    "No discovered computers to pre-fill, use \"+ New Host\" in the library instead.",
+  "session.reconnected": "Reconnected",
+  "session.screenshotSaved": "Screenshot saved",
+  "session.clipboardUnreadable": "Could not read the local clipboard",
+  "session.clipboardSent": "Clipboard sent to remote",
+  "session.connectionInfo": "Connection info",
+  "session.bell": "Bell",
+  "session.sendingFiles": "Sending {count} file(s) to {target}",
+  "pane.connectFailed": "Could not connect to {label}: {reason}",
+  "pane.connectFailedGeneric": "Could not connect: {reason}",
+  "ssh.reattached": "Reattached to your {multiplexer} session",
+  "sshHostKey.previouslyTrusted": "Previously trusted",
+  "sshHostKey.presentedNow": "Presented now",
+  "sshHostKey.changedTitleGateway": "SSH gateway identity has CHANGED",
+  "sshHostKey.changedTitle": "This machine's identity has CHANGED",
+  "sshHostKey.changedBody": "The SSH server at {endpoint} is presenting a different host key than the one you trusted before. This can mean the machine was reinstalled, or that someone is intercepting your connection. The connection was refused. If you know the key legitimately changed, remove the saved key for this machine and connect again.",
+  "sshHostKey.verifyGatewayTitle": "Verify SSH gateway {host}",
+  "sshHostKey.verifyTitle": "Verify {host}",
+  "sshHostKey.gatewayBody": "Your connection will be tunnelled through the SSH server at {endpoint}, and this is the first time it has identified itself.",
+  "sshHostKey.firstBody": "This is the first time {endpoint} has identified itself, so there is nothing saved to compare it against yet.",
+  "sshHostKey.verifyHint": "Verify the fingerprint below matches the server's ({command}) before trusting it.",
+  "sshHostKey.hostKey": "host key",
+  "sshHostKey.trust": "Trust and connect",
+  "session.problemTitle": "This session ran into a problem",
+  "session.problemBody": "The connection has been closed. Nothing was saved from this session.",
+  "session.closeTab": "Close tab",
+  "session.closeWindow": "Close window",
+  "ssh.authenticating": "Authenticating ({method})",
 
   // Times
   "util.never": "never",

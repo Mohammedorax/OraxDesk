@@ -15,7 +15,7 @@
 //! back, because OpenCode's is JSONC and a round trip through a JSON parser
 //! would delete every comment in it. The original is kept beside it. A file
 //! that already names deskvnc has its command pointed at this `dvv` if it
-//! names another one, and is otherwise left alone, so DeskVNCViewer runs this
+//! names another one, and is otherwise left alone, so OraxDesk runs this
 //! at every launch: nothing changes on a launch with nothing to do, and after
 //! an update every agent follows the new `dvv` without anyone touching it.
 
@@ -91,7 +91,7 @@ pub fn run(target: Option<&str>) -> i32 {
         }
     }
     println!();
-    println!("Restart an agent that was already open so it picks this up. dvv starts DeskVNCViewer itself when an agent needs it.");
+    println!("Restart an agent that was already open so it picks this up. dvv starts OraxDesk itself when an agent needs it.");
     i32::from(failed)
 }
 
@@ -99,7 +99,7 @@ pub fn run(target: Option<&str>) -> i32 {
 ///
 /// An app opened from the Dock, Finder or a Linux desktop menu gets a bare
 /// PATH, `/usr/bin:/bin:/usr/sbin:/sbin`, because shell profiles never ran.
-/// DeskVNCViewer runs this at launch with exactly that PATH, so an agent
+/// OraxDesk runs this at launch with exactly that PATH, so an agent
 /// installed through Homebrew, nvm, fnm, Volta or npm was not found, and a
 /// `claude` that is a Node script could not find `node` when it was. The
 /// login shell's PATH is what the person's own terminal has, so it is asked
@@ -194,7 +194,7 @@ fn account_shell() -> Option<String> {
 /// The Linux AppImage runs from a mount that disappears when the app quits,
 /// so an agent pointed at the `dvv` inside it would find nothing next time.
 /// Run from an AppImage (the runtime sets `APPIMAGE`), this `dvv` is copied
-/// to `~/.local/share/DeskVNCViewer/bin` and that copy is what every agent is
+/// to `~/.local/share/OraxDesk/bin` and that copy is what every agent is
 /// pointed at. Anywhere else the path is already stable and comes back as is.
 fn stable(exe: PathBuf) -> PathBuf {
     if std::env::var_os("APPIMAGE").is_none() {
@@ -203,7 +203,7 @@ fn stable(exe: PathBuf) -> PathBuf {
     let Some(home) = home() else {
         return exe;
     };
-    let dir = home.join(".local/share/DeskVNCViewer/bin");
+    let dir = home.join(".local/share/OraxDesk/bin");
     let copy = dir.join("dvv");
     let current = std::fs::read(&copy).ok() == std::fs::read(&exe).ok();
     if !current {
@@ -279,7 +279,7 @@ fn on_path(name: &str) -> Option<PathBuf> {
 ///
 /// An app opened from the Dock gets a bare PATH, so the places these agents'
 /// own installers use are checked too. Without that, the button in
-/// DeskVNCViewer would report no agent on a machine that has three.
+/// OraxDesk would report no agent on a machine that has three.
 fn find_agent(name: &str) -> Option<PathBuf> {
     if let Some(found) = on_path(name) {
         return Some(found);
@@ -818,7 +818,7 @@ mod tests {
 
     #[test]
     fn a_windows_path_is_compared_in_its_json_form() {
-        let path = serde_json::to_string(r"C:\Program Files\DeskVNCViewer\dvv.exe").unwrap();
+        let path = serde_json::to_string(r"C:\Program Files\OraxDesk\dvv.exe").unwrap();
         let text =
             format!("{{ \"mcp\": {{ \"deskvnc\": {{ \"command\": [{path}, \"mcp\"] }} }} }}");
         assert_eq!(repoint_json_command(&text, &path), None);

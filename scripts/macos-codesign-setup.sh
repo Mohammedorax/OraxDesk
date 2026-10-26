@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# One-time setup: give DeskVNCViewer a stable code identity on THIS Mac.
+# One-time setup: give OraxDesk a stable code identity on THIS Mac.
 #
 # Creates a self-signed code-signing certificate in the login keychain and
 # points cargo at a linker wrapper that signs every dev build with it. After
@@ -48,7 +48,7 @@ if EXISTING=$(resolve_signing_identity); then
     write_cargo_config
     echo
     echo "Nothing else to do. Sign an existing build with:"
-    echo "    scripts/sign-macos.sh target/release/bundle/macos/DeskVNCViewer.app"
+    echo "    scripts/sign-macos.sh target/release/bundle/macos/OraxDesk.app"
     exit 0
 fi
 

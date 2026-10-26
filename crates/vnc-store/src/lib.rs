@@ -1,4 +1,4 @@
-//! Persistence layer for DeskVNCViewer.
+//! Persistence layer for OraxDesk.
 //!
 //! - [`Store`]: SQLite-backed host profiles, groups, tags, history, settings,
 //!   TOFU certificate pins, and a file-based thumbnail cache.

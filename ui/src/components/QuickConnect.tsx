@@ -16,9 +16,16 @@ import { GetHelp } from "./GetHelp";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { DiscoveredHost, HostProfile, ProtocolKind } from "../lib/types";
 import { DEFAULT_PORT, PROTOCOLS, hostProtocol, protocolLabel, protocolName } from "../lib/types";
-import { formatTarget, isDisplayNumber, parseConnectTarget, presetProtocol } from "../lib/address";
+import {
+  addressErrorText,
+  compactDeviceNumber,
+  formatTarget,
+  isDisplayNumber,
+  parseConnectTarget,
+  presetProtocol,
+} from "../lib/address";
 import { classNames, fuzzyMatch, modKeyLabel } from "../lib/util";
-import { useI18n } from "../lib/i18n";
+import { useI18n, type MessageKey } from "../lib/i18n";
 import { IconArrowRight, IconClock, IconMonitor, IconZap } from "./icons";
 
 /** Matches the Rust side's `normalize_address`, so both agree on "same machine". */
@@ -71,6 +78,13 @@ const MAX_HOST_SUGGESTIONS = 4;
 const MAX_NEARBY_SUGGESTIONS = 3;
 const MAX_RECENT_SUGGESTIONS = 5;
 
+const GROUP_HEADINGS: Record<Suggestion["group"], MessageKey> = {
+  typed: "quick.groupTyped",
+  hosts: "quick.groupHosts",
+  nearby: "quick.groupNearby",
+  recent: "quick.groupRecent",
+};
+
 export function QuickConnect({
   hosts,
   discovered,
@@ -99,7 +113,8 @@ export function QuickConnect({
   const listRef = useRef<HTMLDivElement>(null);
 
   const trimmed = value.trim();
-  const parsed = useMemo(() => parseConnectTarget(value), [value]);
+  const target = useMemo(() => compactDeviceNumber(value), [value]);
+  const parsed = useMemo(() => parseConnectTarget(target), [target]);
   /**
    * The user has overridden the chip for what is currently typed. Cleared on
    * every keystroke, so it applies to one address rather than becoming a
@@ -164,9 +179,9 @@ export function QuickConnect({
   const resolvedPort: number = useMemo(() => {
     if (!parsed.ok) return DEFAULT_PORT[resolved];
     if (resolved === "vnc") return parsed.target.port;
-    const reread = parseConnectTarget(value, resolved);
+    const reread = parseConnectTarget(target, resolved);
     return reread.ok ? reread.target.port : parsed.target.port;
-  }, [parsed, resolved, value]);
+  }, [parsed, resolved, target]);
 
   /**
    * Was the number a DISPLAY number rather than a port?
@@ -177,8 +192,8 @@ export function QuickConnect({
    * the wrong port.
    */
   const displayNumber: boolean = useMemo(
-    () => parsed.ok && resolved === "vnc" && isDisplayNumber(value, parsed.target.port),
-    [parsed, resolved, value],
+    () => parsed.ok && resolved === "vnc" && isDisplayNumber(target, parsed.target.port),
+    [parsed, resolved, target],
   );
 
   const connectTyped = (): void => {
@@ -233,7 +248,7 @@ export function QuickConnect({
               // worth reading there. `resolved === "rdp" ? "" : port === 5900`
               // used to special-case VNC's default by number, which read an
               // SSH target on its own default port 22 as "an odd port".
-              sub: port === DEFAULT_PORT[resolved] ? "" : `port ${port}`,
+              sub: port === DEFAULT_PORT[resolved] ? "" : t("quick.port", { port }),
               protocol: resolved,
               run: () => {
                 onConnectAddress(resolved, address, port);
@@ -326,7 +341,7 @@ export function QuickConnect({
     }
 
     return out;
-  }, [trimmed, parsed, resolved, savedMatch, hosts, discovered, recents, onConnectHost, onConnectAddress, onRemember]);
+  }, [trimmed, parsed, resolved, resolvedPort, savedMatch, hosts, discovered, recents, onConnectHost, onConnectAddress, onRemember, t]);
 
   useEffect(() => {
     setSelected(-1);
@@ -428,7 +443,7 @@ export function QuickConnect({
             ref={listRef}
             id="quick-connect-list"
             role="listbox"
-            aria-label="Connection suggestions"
+            aria-label={t("quick.suggestions")}
             className="fade-in absolute start-0 end-0 top-full z-30 mt-1 max-h-80 overflow-y-auto rounded-md border border-subtle bg-raised p-1.5 shadow-(--shadow-pop)"
           >
             {suggestions.map((s, i) => (
@@ -441,7 +456,7 @@ export function QuickConnect({
                 */}
                 {i === 0 || suggestions[i - 1].group !== s.group ? (
                   <p className="px-3 pb-1 pt-2 text-2xs font-semibold uppercase tracking-wide text-tertiary">
-                    {groupHeading(s.group)}
+                    {t(GROUP_HEADINGS[s.group])}
                   </p>
                 ) : null}
                 <button
@@ -574,7 +589,7 @@ export function QuickConnect({
           className={classNames("truncate text-xs", attempted ? "text-danger" : "text-tertiary")}
           role={attempted ? "alert" : undefined}
         >
-          {parsed.error}
+          {parsed.ok ? null : addressErrorText(parsed, t)}
         </span>
       ) : (
         <span className="truncate text-xs text-tertiary">
@@ -597,19 +612,5 @@ function SuggestionIcon({ kind }: { kind: Suggestion["kind"] }): ReactNode {
       return <IconClock size={16} />;
     default:
       return <IconMonitor size={16} />;
-  }
-}
-
-/** The heading above each group of suggestions. */
-function groupHeading(group: Suggestion["group"]): string {
-  switch (group) {
-    case "typed":
-      return "This address";
-    case "hosts":
-      return "Your computers";
-    case "nearby":
-      return "On this network";
-    default:
-      return "Recent";
   }
 }

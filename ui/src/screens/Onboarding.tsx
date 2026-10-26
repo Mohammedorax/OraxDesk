@@ -106,7 +106,7 @@ export function Onboarding({
             </div>
             <h1 className="text-center text-xl font-semibold text-primary">{t("onboarding.findComputers")}</h1>
             <p className="text-center text-sm text-secondary">
-              DeskVNCViewer listens for computers advertising screen sharing on your local network.
+              OraxDesk listens for computers advertising screen sharing on your local network.
               Your OS may ask permission to access the local network, that's this feature.
             </p>
             {!ranDiscovery ? (
@@ -187,7 +187,7 @@ export function Onboarding({
                       <IconMonitor size={16} className="text-tertiary" />
                       <span className="flex-1 truncate">{d.name}</span>
                       <span className="mono text-xs text-tertiary">{d.address}</span>
-                      <span className="text-xs font-medium text-accent">Save…</span>
+                      <span className="text-xs font-medium text-accent">{t("onboarding.saveLabel")}</span>
                     </button>
                   </li>
                 ))}

@@ -540,7 +540,7 @@ export function mockAgentsEnabled(): boolean {
 export function mockPlaneStatus(): Record<string, unknown> {
   return {
     enabled: true,
-    socket: "/Users/you/Library/Application Support/DeskVNCViewer/agent.sock",
+    socket: "/Users/you/Library/Application Support/OraxDesk/agent.sock",
     agents: 2,
     driving: 4,
     sessions: 11,

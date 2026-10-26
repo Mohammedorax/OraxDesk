@@ -107,7 +107,7 @@ fn serve(listener: UnixListener, heard: Arc<std::sync::Mutex<Heard>>) {
             let result = match method.as_str() {
                 "hello" => json!({
                     "protocol": "dvvp.v1",
-                    "server": { "name": "DeskVNCViewer", "version": "test" },
+                    "server": { "name": "OraxDesk", "version": "test" },
                     "attachmentId": "att_1",
                     "capabilities": [
                         "view", "control", "open", "close", "hosts.read",
@@ -231,7 +231,7 @@ async fn an_exec_crosses_the_socket_and_the_answer_comes_back() {
     // `/tmp` rather than `std::env::temp_dir()`, and that is not laziness: a
     // unix socket path is capped at `SUN_LEN`, 104 bytes, and macOS answers
     // `/var/folders/…/T/` for the temporary directory, which leaves nothing for
-    // the "Library/Application Support/DeskVNCViewer/agent.sock" the real path
+    // the "Library/Application Support/OraxDesk/agent.sock" the real path
     // appends. The bind fails with `path must be shorter than SUN_LEN`.
     let home = std::path::PathBuf::from(format!("/tmp/dvv-exec-{}", std::process::id()));
     std::env::set_var("HOME", &home);

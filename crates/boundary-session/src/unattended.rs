@@ -654,7 +654,7 @@ pub fn connect(
     open(machine_addr(&machine), name, password, key, options, false)
 }
 /// [`connect`] for a helper whose tools send commands and file requests,
-/// such as DeskVNC's agent plane. They run only if the computer allows them
+/// such as OraxDesk's agent plane. They run only if the computer allows them
 /// for this helper.
 pub fn connect_with_tools(
     machine: String,

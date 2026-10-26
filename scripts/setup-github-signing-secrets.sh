@@ -19,7 +19,7 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-REPO="${REPO:-psmux/DeskVNC}"
+REPO="${REPO:-Mohammedorax/OraxDesk}"
 # Supply the certificate identity and team ID from your Apple developer account.
 : "${IDENTITY:?Set IDENTITY to your Developer ID Application certificate name}"
 : "${TEAM_ID:?Set TEAM_ID to your Apple developer team ID}"

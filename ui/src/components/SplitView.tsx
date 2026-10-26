@@ -26,6 +26,7 @@ import { Session } from "../screens/Session";
 import { PaneVisible } from "./Pane";
 import { PaneHeader, PANE_HEADER_PX } from "./PaneHeader";
 import { PanePicker } from "./PanePicker";
+import { useT } from "../lib/i18n";
 import { useTabs } from "../state/TabsContext";
 import { useAgentActivity } from "../state/AgentActivityContext";
 import { drivenByAgent } from "../lib/agentActivity";
@@ -152,6 +153,7 @@ export function SplitView({
   /** First refusal on a keystroke, handed down to every mounted viewer. */
   onAppHotkey: (e: KeyboardEvent) => boolean;
 }): ReactNode {
+  const t = useT();
   const {
     tabs, sessions, activeId, close, closePane, focusPane, setTitle, setState, resize,
     reportArea, split: splitPane, adopt, toggleZoom,
@@ -499,7 +501,7 @@ export function SplitView({
             key={`${tab.id}:${divider.id}`}
             role="separator"
             aria-orientation={divider.dir === "row" ? "vertical" : "horizontal"}
-            aria-label="Resize panes"
+            aria-label={t("common.resizePanes")}
             className="absolute z-10 bg-transparent transition-colors hover:bg-accent/40"
             style={{
               left: divider.rect.x,

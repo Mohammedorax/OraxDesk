@@ -39,7 +39,7 @@ members = [
     # The named pipe both listeners use on Windows, with its owner only ACL.
     "crates/local-pipe",
     "crates/dvv",
-    # Orax Remote registry client (Cloudflare Worker + D1 API), no Tauri dependency.
+    # OraxDesk registry client (Cloudflare Worker + D1 API), no Tauri dependency.
     "crates/orax-registry",
     "src-tauri",
 ]
@@ -58,7 +58,7 @@ edition = "2021"
 rust-version = "1.95"
 license = "MIT OR Apache-2.0"
 authors = ["Godwin Sam Josh"]
-repository = "https://github.com/psmux/DeskVNC"
+repository = "https://github.com/Mohammedorax/OraxDesk"
 
 [workspace.dependencies]
 # async runtime

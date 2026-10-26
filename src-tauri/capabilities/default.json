@@ -155,6 +155,7 @@
     "allow-agent-setup-agents",
 
     "allow-registry-health",
+    "allow-registry-origin",
     "allow-registry-set-origin",
     "allow-registry-register-device",
     "allow-registry-register-helper",

@@ -455,7 +455,7 @@ export function SshTerminal({
     if (phase.state.state === "connected" && phase.state.resumed) {
       if (!resumeToasted.current) {
         resumeToasted.current = true;
-        push("success", "Reattached to your tmux session");
+        push("success", t("ssh.reattached", { multiplexer: "tmux" }));
       }
     } else {
       resumeToasted.current = false;
@@ -510,7 +510,7 @@ export function SshTerminal({
             </span>
             <button
               type="button"
-              aria-label="Close terminal"
+              aria-label={t("common.closeTerminal")}
               className="rounded-sm p-1 text-tertiary hover:text-primary"
               onClick={onClose}
             >

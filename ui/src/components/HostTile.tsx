@@ -10,6 +10,7 @@ import {
   protocolLabel,
   resolvedOsHint,
 } from "../lib/types";
+import { useT } from "../lib/i18n";
 import { classNames, colorFromId, formatBps } from "../lib/util";
 import { useHosts } from "../state/HostsContext";
 import { useSessions, type TileActivity } from "../state/SessionsContext";
@@ -239,6 +240,7 @@ export function HostTile({
    *  {@link ProtocolBadge} for why it is all-or-nothing. */
   showProtocol?: boolean;
 }): ReactNode {
+  const t = useT();
   const { thumbnailUrl, requestThumbnail } = useHosts();
   const { forKey, livePreviews } = useSessions();
   const [hover, setHover] = useState(false);
@@ -339,7 +341,7 @@ export function HostTile({
             {host.friendlyName}
           </span>
           {host.hasPassword ? (
-            <span className="shrink-0 text-tertiary" role="img" aria-label="Password saved">
+            <span className="shrink-0 text-tertiary" role="img" aria-label={t("common.passwordSaved")}>
               <IconKey size={14} />
             </span>
           ) : null}

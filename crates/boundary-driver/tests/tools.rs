@@ -1,4 +1,4 @@
-//! Commands and files from DeskVNC to a Boundary host, over a real
+//! Commands and files from OraxDesk to a Boundary host, over a real
 //! connection on this machine, and only while the person there allows them.
 
 use boundary_driver::BoundaryDriver;
@@ -76,16 +76,16 @@ async fn an_agent_runs_commands_and_moves_files_only_while_the_person_allows_it(
             }
         };
         let driver = BoundaryDriver::default();
-        let id = driver.prepare(ticket, "DeskVNC helper".into()).unwrap();
+        let id = driver.prepare(ticket, "OraxDesk helper".into()).unwrap();
         let (tx, mut rx) = mpsc::channel(64);
         let handle = driver
             .spawn("tools".into(), ConnectOptions::boundary(id), tx)
             .unwrap();
 
-        // DeskVNC said it can send commands, so the person is asked, and says yes.
+        // OraxDesk said it can send commands, so the person is asked, and says yes.
         loop {
             if let Some(Event::Approval { tools, answer, .. }) = host.events.recv().await {
-                assert!(tools, "DeskVNC must declare tools so the person is asked");
+                assert!(tools, "OraxDesk must declare tools so the person is asked");
                 host.set_tools(true);
                 answer.send(Approval::View).ok().unwrap();
                 break;
@@ -234,7 +234,7 @@ async fn nothing_runs_when_the_person_only_allowed_viewing() {
             }
         };
         let driver = BoundaryDriver::default();
-        let id = driver.prepare(ticket, "DeskVNC helper".into()).unwrap();
+        let id = driver.prepare(ticket, "OraxDesk helper".into()).unwrap();
         let (tx, mut rx) = mpsc::channel(64);
         let handle = driver
             .spawn("view-only".into(), ConnectOptions::boundary(id), tx)

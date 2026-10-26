@@ -31,15 +31,15 @@ mod imp {
         /// `None` when the system would not take an icon; the window is then
         /// the only way in, as it was before there was a tray.
         pub fn new() -> Option<Self> {
-            let status = MenuItem::new("DeskVNC Support", false, None);
-            let show = MenuItem::new("Show DeskVNC Support", true, None);
-            let quit = MenuItem::new("Quit DeskVNC Support", true, None);
+            let status = MenuItem::new("OraxDesk Support", false, None);
+            let show = MenuItem::new("Show OraxDesk Support", true, None);
+            let quit = MenuItem::new("Quit OraxDesk Support", true, None);
             let menu = Menu::new();
             menu.append_items(&[&status, &PredefinedMenuItem::separator(), &show, &quit])
                 .ok()?;
             let icon = TrayIconBuilder::new()
                 .with_menu(Box::new(menu))
-                .with_tooltip("DeskVNC Support")
+                .with_tooltip("OraxDesk Support")
                 .with_icon(picture()?)
                 // macOS draws a template icon in the menu bar's own colour.
                 .with_icon_as_template(cfg!(target_os = "macos"))
@@ -63,7 +63,7 @@ mod imp {
             self.status.set_text(text);
             let _ = self
                 .icon
-                .set_tooltip(Some(format!("DeskVNC Support: {text}")));
+                .set_tooltip(Some(format!("OraxDesk Support: {text}")));
         }
 
         pub fn poll(&self) -> Option<Action> {

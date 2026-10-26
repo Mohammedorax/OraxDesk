@@ -1,6 +1,8 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { useI18n } from "../lib/i18n";
-import { mustInvoke, writeClipboard } from "../lib/tauri";
+import { registry } from "../lib/support";
+import { inTauri, mustInvoke, writeClipboard } from "../lib/tauri";
+import { describeError } from "../lib/util";
 
 /**
  * A short, stable number for this computer, shown to the person asking for help
@@ -36,6 +38,26 @@ export function groupDigits(value: string): string {
 export function DeviceNumber({ machineId }: { machineId: string }): ReactNode {
   const { t } = useI18n();
   const [number, setNumber] = useState("");
+  const [registration, setRegistration] = useState<
+    "idle" | "working" | "ok" | { error: string }
+  >("idle");
+
+  const register = useCallback(async (): Promise<void> => {
+    if (!inTauri()) return;
+    setRegistration("working");
+    try {
+      const origin = await registry.origin();
+      if (origin === "") throw new Error("no registry origin");
+      await registry.registerDevice(origin);
+      setRegistration("ok");
+    } catch (err) {
+      setRegistration({ error: describeError(err) });
+    }
+  }, []);
+
+  useEffect(() => {
+    void register();
+  }, [register]);
 
   useEffect(() => {
     let alive = true;
@@ -93,6 +115,26 @@ export function DeviceNumber({ machineId }: { machineId: string }): ReactNode {
         </div>
       </div>
       <p className="mt-1 text-xs text-secondary">{t("device.numberHint")}</p>
+      {registration === "working" ? (
+        <p className="mt-1 text-xs text-secondary">{t("device.registering")}</p>
+      ) : null}
+      {registration === "ok" ? (
+        <p className="mt-1 text-xs text-secondary">{t("device.registered")}</p>
+      ) : null}
+      {typeof registration === "object" ? (
+        <div className="mt-1 flex flex-wrap items-center gap-2">
+          <p role="alert" className="text-xs text-danger">
+            {t("device.registerFailed", { reason: registration.error })}
+          </p>
+          <button
+            type="button"
+            className="btn-secondary px-2 py-0.5 text-xs"
+            onClick={() => void register()}
+          >
+            {t("device.registerRetry")}
+          </button>
+        </div>
+      ) : null}
     </div>
   );
 }

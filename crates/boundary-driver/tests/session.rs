@@ -35,7 +35,7 @@ async fn deskvnc_driver_receives_boundary_frames_and_obeys_host_consent() {
         let mut host = boundary_session::host(HostOptions { relay: false, ..Default::default() }, move || Ok(Box::new(Fake(count))));
         let ticket = loop { if let Some(Event::Invitation(ticket)) = host.events.recv().await { break ticket; } };
         let driver = BoundaryDriver::default();
-        let id = driver.prepare(ticket, "DeskVNC helper".into()).unwrap();
+        let id = driver.prepare(ticket, "OraxDesk helper".into()).unwrap();
         let (tx, mut rx) = mpsc::channel(32);
         let handle = driver.spawn("test-session".into(), ConnectOptions::boundary(id.clone()), tx).unwrap();
         loop { if let Some(Event::Approval { answer, .. }) = host.events.recv().await { answer.send(Approval::View).ok().unwrap(); break; } }
@@ -45,7 +45,7 @@ async fn deskvnc_driver_receives_boundary_frames_and_obeys_host_consent() {
                 SessionEvent::Protocol(ProtocolEvent::Boundary { control, tools }) => { assert!(!control && !tools); permission = true; }
                 SessionEvent::FramebufferUpdate { rects, .. } => {
                     assert!(permission);
-                    // JPEG, which DeskVNC takes, is lossy, so the grey comes back near 128.
+                    // JPEG, which OraxDesk takes, is lossy, so the grey comes back near 128.
                     assert!(matches!(&rects[0].payload, RectPayload::Rgba(pixels) if pixels.len() == 16 && pixels.iter().all(|p| p.abs_diff(128) <= 4 || *p == 255)));
                     break;
                 }
@@ -72,8 +72,8 @@ async fn deskvnc_driver_receives_boundary_frames_and_obeys_host_consent() {
     }).await.expect("support driver test timed out");
 }
 
-/// A pairing offered during an attended session reaches the callback DeskVNC
-/// uses to save the computer, and the host saw DeskVNC's lasting identity.
+/// A pairing offered during an attended session reaches the callback OraxDesk
+/// uses to save the computer, and the host saw OraxDesk's lasting identity.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_pairing_reaches_deskvnc_with_the_machine_id_and_its_lasting_identity() {
     timeout(Duration::from_secs(20), async {
@@ -97,7 +97,7 @@ async fn a_pairing_reaches_deskvnc_with_the_machine_id_and_its_lasting_identity(
         driver.on_paired(Arc::new(move |machine, name| {
             let _ = paired_tx.try_send((machine, name));
         }));
-        let id = driver.prepare(ticket, "DeskVNC helper".into()).unwrap();
+        let id = driver.prepare(ticket, "OraxDesk helper".into()).unwrap();
         let (tx, mut rx) = mpsc::channel(32);
         let handle = driver
             .spawn("pairing".into(), ConnectOptions::boundary(id), tx)
@@ -113,7 +113,7 @@ async fn a_pairing_reaches_deskvnc_with_the_machine_id_and_its_lasting_identity(
         };
         assert_eq!(
             peer, expected_peer,
-            "the host must see DeskVNC's lasting key, or pairing could never match it again"
+            "the host must see OraxDesk's lasting key, or pairing could never match it again"
         );
         loop {
             if let Some(SessionEvent::StateChanged(SessionState::Connected)) = rx.recv().await {

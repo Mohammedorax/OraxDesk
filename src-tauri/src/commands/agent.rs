@@ -530,7 +530,7 @@ mod tests {
         let status = serde_json::to_value(AgentStatus {
             enabled: true,
             socket: Some("/tmp/agent.sock".into()),
-            binary: Some("/Applications/DeskVNCViewer.app/Contents/MacOS/dvv".into()),
+            binary: Some("/Applications/OraxDesk.app/Contents/MacOS/dvv".into()),
             attachments: Vec::new(),
             counts,
         })
@@ -545,7 +545,7 @@ mod tests {
         assert_eq!(status["enabled"], true, "the old fields are still there");
         assert_eq!(status["socket"], "/tmp/agent.sock");
         assert_eq!(
-            status["binary"], "/Applications/DeskVNCViewer.app/Contents/MacOS/dvv",
+            status["binary"], "/Applications/OraxDesk.app/Contents/MacOS/dvv",
             "the modal pastes this path, so it has to be on the status"
         );
         assert!(status["attachments"].is_array());

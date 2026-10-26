@@ -61,7 +61,7 @@ pub fn computer_name() -> String {
 }
 /// Claim this computer's unattended listener for this process.
 ///
-/// DeskVNC and DeskVNC Support share one identity, so only one of them may
+/// OraxDesk and OraxDesk Support share one identity, so only one of them may
 /// listen as it. `Ok(None)` means another app on this computer is listening
 /// now. The claim lasts as long as the returned file is held, and ends with
 /// the process however it ends.

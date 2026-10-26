@@ -16,6 +16,7 @@ export function RegistryCodePanel({ invitation }: { invitation: string }): React
   const [url, setUrl] = useState(rememberedRegistryUrl());
   const [code, setCode] = useState<string | null>(null);
   const [revokeToken, setRevokeToken] = useState<string | null>(null);
+  const [codeOrigin, setCodeOrigin] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
@@ -23,6 +24,19 @@ export function RegistryCodePanel({ invitation }: { invitation: string }): React
   const [health, setHealth] = useState<{ status: string; db: string; invitation_key: string } | null>(
     null,
   );
+
+  useEffect(() => {
+    let alive = true;
+    void registry
+      .origin()
+      .then((value) => {
+        if (alive && value !== "") setUrl(value);
+      })
+      .catch(() => undefined);
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   // The registry's own answer about itself, so a person is told "its database
   // is unreachable" rather than "the code could not be created".
@@ -38,10 +52,10 @@ export function RegistryCodePanel({ invitation }: { invitation: string }): React
     }
     let alive = true;
     const timer = window.setTimeout(() => {
-      void registry
-        .health(target)
+      void rememberRegistryUrl(target)
+        .then(() => (alive ? registry.health(target) : null))
         .then((value) => {
-          if (alive) setHealth(value);
+          if (alive && value) setHealth(value);
         })
         .catch(() => {
           if (alive) setHealth(null);
@@ -58,8 +72,8 @@ export function RegistryCodePanel({ invitation }: { invitation: string }): React
     setError("");
     setMessage("");
     const target = url.trim();
-    rememberRegistryUrl(target);
     try {
+      await rememberRegistryUrl(target);
       // Registering first is what puts this computer's number in the
       // registry. Without it, the number this person is about to read out
       // cannot be looked up by whoever is helping them, and the lookup
@@ -68,6 +82,7 @@ export function RegistryCodePanel({ invitation }: { invitation: string }): React
       const result = await registry.createCode(target, invitation);
       setCode(result.code);
       setRevokeToken(result.revoke_token);
+      setCodeOrigin(target);
       // The app's language, not the browser's. The panel is read out to the
       // person being helped, and a time written in the browser's locale on
       // a machine whose system is in another language is a time nobody can
@@ -86,9 +101,10 @@ export function RegistryCodePanel({ invitation }: { invitation: string }): React
     setBusy(true);
     setError("");
     try {
-      await registry.revokeCode(url.trim(), revokeToken);
+      await registry.revokeCode(codeOrigin ?? url.trim(), revokeToken);
       setCode(null);
       setRevokeToken(null);
+      setCodeOrigin(null);
       setMessage(t("registry.withdrawn"));
     } catch (err) {
       setError(t("registry.withdrawFailed", { reason: String(err) }));
@@ -113,7 +129,6 @@ export function RegistryCodePanel({ invitation }: { invitation: string }): React
           value={url}
           onChange={(event) => {
             setUrl(event.target.value);
-            rememberRegistryUrl(event.target.value);
           }}
           placeholder="https://orax-registry.example.workers.dev"
           className="mt-1 w-full rounded border border-subtle bg-inset p-2"

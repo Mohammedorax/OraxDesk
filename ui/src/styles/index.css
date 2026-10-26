@@ -1,7 +1,7 @@
 @import "tailwindcss";
 
 /* ---------------------------------------------------------------------------
-   DeskVNCViewer design tokens, PRD/11 §2.
+   OraxDesk design tokens, PRD/11 §2.
    Light theme is the :root base; dark applies via prefers-color-scheme and can
    be forced either way with [data-theme="light" | "dark"] on <html>
    ("Follow System" simply removes the attribute).

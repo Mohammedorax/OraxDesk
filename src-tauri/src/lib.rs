@@ -1,4 +1,4 @@
-//! DeskVNCViewer Tauri shell.
+//! OraxDesk Tauri shell.
 //!
 //! Thin adapter over the UI-agnostic crates (PRD/01 §1): `vnc-core` does the
 //! protocol work, `vnc-store` persistence/keychain, `vnc-discovery` LAN
@@ -104,6 +104,24 @@ pub fn run() {
             let files_state = commands::files::FilesState::new(data_dir);
             let host_keys = files_state.host_key_verifier();
             app.manage(AppState::new(store, credentials, host_keys));
+            let registry_app = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                let mut delay = 3u64;
+                loop {
+                    tokio::time::sleep(std::time::Duration::from_secs(delay)).await;
+                    let state = registry_app.state::<AppState>();
+                    match commands::registry::register_this_device(&state).await {
+                        Ok(record) => {
+                            tracing::info!(number = ?record.number, "registered this computer with the registry");
+                            break;
+                        }
+                        Err(error) => {
+                            tracing::warn!(%error, "the registry did not register this computer; retrying");
+                            delay = (delay * 2).min(300);
+                        }
+                    }
+                }
+            });
             // Boundary's lasting helper identity, and saving computers that
             // pair this helper, so they appear in the Library to reopen.
             commands::boundary::install(app.handle(), &boundary_dir);
@@ -275,6 +293,7 @@ pub fn run() {
             commands::boundary::boundary_provider_cancel,
             // device registry (optional; the app works without it)
             commands::registry::registry_health,
+            commands::registry::registry_origin,
             commands::registry::registry_register_device,
             commands::registry::registry_register_helper,
             commands::registry::registry_create_code,

@@ -3,7 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "Orax Remote device registry and signal code API (Cloudflare Worker + D1).",
+  "description": "OraxDesk device registry and signal code API (Cloudflare Worker + D1).",
   "scripts": {
     "test": "npm run test:schema && npm run lint:openapi && npm run test:worker",
     "test:schema": "node --test test/schema.test.mjs",

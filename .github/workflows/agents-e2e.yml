@@ -100,16 +100,16 @@ jobs:
           if [ "${{ matrix.bundle }}" = "appimage" ]; then
             # Where a person keeps a downloaded AppImage.
             mkdir -p "$HOME/Applications"
-            cp target/debug/bundle/appimage/*.AppImage "$HOME/Applications/DeskVNCViewer.AppImage"
-            chmod +x "$HOME/Applications/DeskVNCViewer.AppImage"
-            echo "APPIMAGE_FILE=$HOME/Applications/DeskVNCViewer.AppImage" >> "$GITHUB_ENV"
+            cp target/debug/bundle/appimage/*.AppImage "$HOME/Applications/OraxDesk.AppImage"
+            chmod +x "$HOME/Applications/OraxDesk.AppImage"
+            echo "APPIMAGE_FILE=$HOME/Applications/OraxDesk.AppImage" >> "$GITHUB_ENV"
             echo "CHECK_DVV=$PWD/target/debug/dvv" >> "$GITHUB_ENV"
           elif [ "$RUNNER_OS" = "Linux" ]; then
             sudo apt-get install -y ./target/debug/bundle/deb/*.deb
             ls -l /usr/bin/dvv /usr/bin/deskvncviewer
           else
-            cp -R target/debug/bundle/macos/DeskVNCViewer.app /Applications/
-            ls -l /Applications/DeskVNCViewer.app/Contents/MacOS/
+            cp -R target/debug/bundle/macos/OraxDesk.app /Applications/
+            ls -l /Applications/OraxDesk.app/Contents/MacOS/
           fi
 
       - name: Install Node, OpenCode and Pi through nvm, as many people have them
@@ -149,7 +149,7 @@ jobs:
       # A real model, not a script, driving the machine through OpenCode with
       # the app closed. OpenCode's free models need no account. Kept apart
       # and allowed to fail, because a free model being busy or renamed says
-      # nothing about DeskVNC; the answer is checked for the four colours the
+      # nothing about OraxDesk; the answer is checked for the four colours the
       # mock machine shows when it does run.
       - name: A free model drives it through OpenCode
         continue-on-error: true

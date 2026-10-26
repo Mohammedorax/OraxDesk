@@ -10,7 +10,7 @@
 //! [`SessionSource`], with two implementations today:
 //!
 //! * [`ShellSource`], which speaks `dvvp.v1` over the unix socket. It attaches
-//!   to sessions DeskVNCViewer already has, and where there is none it ASKS the
+//!   to sessions OraxDesk already has, and where there is none it ASKS the
 //!   application to open the machine, which is the same path a person's click
 //!   takes. **The credential never crosses this process** (`00 R19`, `09 §4`):
 //!   an agent names a saved machine, and the shell resolves the secret from the
@@ -523,7 +523,7 @@ fn link() -> &'static Mutex<Option<Link>> {
 /// running" and "the plane is switched off" need different fixes.
 fn no_socket() -> ToolError {
     ToolError::not_implemented(format!(
-        "there is no agent plane socket at {}, and starting DeskVNCViewer did not bring one up. Either DeskVNCViewer is not installed where dvv looked, or a person switched its agent plane off in the AI Agents panel, and only they can switch it back on. Nothing is saved and nothing is lost by this call failing. Tell the user which of the two it is; run `dvv doctor` for the path this build expects",
+        "there is no agent plane socket at {}, and starting OraxDesk did not bring one up. Either OraxDesk is not installed where dvv looked, or a person switched its agent plane off in the AI Agents panel, and only they can switch it back on. Nothing is saved and nothing is lost by this call failing. Tell the user which of the two it is; run `dvv doctor` for the path this build expects",
         crate::cli::socket_path()
     ))
 }
@@ -567,7 +567,7 @@ pub fn alive() -> bool {
     }
 }
 
-/// Is the plane there, starting DeskVNCViewer first when it is not running?
+/// Is the plane there, starting OraxDesk first when it is not running?
 ///
 /// An agent should not need the person to open the app before asking for a
 /// machine, and a person should not need to know the app has to be open. So
@@ -742,7 +742,7 @@ fn transport(error: std::io::Error) -> ToolError {
     ToolError::new(
         codes::LIMB_GONE,
         format!(
-            "the connection to DeskVNCViewer's agent plane failed: {error}. The next call reconnects; if it keeps failing the application has gone away or its plane was switched off"
+            "the connection to OraxDesk's agent plane failed: {error}. The next call reconnects; if it keeps failing the application has gone away or its plane was switched off"
         ),
     )
 }
@@ -1065,7 +1065,9 @@ impl SessionSource for ShellSource {
             .ok_or_else(|| {
                 ToolError::new(
                     codes::LIMB_GONE,
-                    format!("{limb} has no session in DeskVNCViewer to repaint or reconnect; call dvv_limbs"),
+                    format!(
+                        "{limb} has no session in OraxDesk to repaint or reconnect; call dvv_limbs"
+                    ),
                 )
             })?;
         let kind = match nudge {
@@ -1081,9 +1083,9 @@ impl SessionSource for ShellSource {
 
     fn describe(&self) -> &'static str {
         if socket_present() {
-            "the shell, over the dvvp.v1 local socket, driving the sessions DeskVNCViewer already has open"
+            "the shell, over the dvvp.v1 local socket, driving the sessions OraxDesk already has open"
         } else {
-            "the shell, over the dvvp.v1 local socket (no socket at that path yet: DeskVNCViewer is started on the first call that needs it)"
+            "the shell, over the dvvp.v1 local socket (no socket at that path yet: OraxDesk is started on the first call that needs it)"
         }
     }
 }
@@ -1135,7 +1137,7 @@ fn await_session(
     Err(ToolError::new(
         codes::LIMB_GONE,
         format!(
-            "DeskVNCViewer opened {session_id} and it had not registered a live session after {} seconds. It may be waiting for the PERSON to answer a credential or a host key prompt, which is the one thing an agent cannot answer (D7). The window is open: ask the user to look at it, then call dvv_limbs rather than opening the machine again. The last refusal was: {}",
+            "OraxDesk opened {session_id} and it had not registered a live session after {} seconds. It may be waiting for the PERSON to answer a credential or a host key prompt, which is the one thing an agent cannot answer (D7). The window is open: ask the user to look at it, then call dvv_limbs rather than opening the machine again. The last refusal was: {}",
             ATTACH_AFTER_OPEN.as_secs(),
             last.map(|e| e.message).unwrap_or_default(),
         ),
@@ -1989,7 +1991,7 @@ fn serve_intent(session_id: &str, intent: &limb_core::intent::AgentIntent) {
             // whatever it did say still reaches the agent.
             Err(why) => {
                 limb.note_refused(intent.refuse(format!(
-                    "DeskVNCViewer answered that command in a shape this build of dvv cannot read, so nothing is reported rather than a guessed exit status (05 §3): {why}"
+                    "OraxDesk answered that command in a shape this build of dvv cannot read, so nothing is reported rather than a guessed exit status (05 §3): {why}"
                 )));
             }
         },
@@ -2314,7 +2316,7 @@ impl limb_core::limb::Limb for RemoteLimb {
         use limb_core::limb::{LimbDescription, Preference};
         match self.grounding {
             Grounding::Cells => LimbDescription {
-                what: "A login shell on a PTY, on a machine DeskVNCViewer has open.",
+                what: "A login shell on a PTY, on a machine OraxDesk has open.",
                 coordinates: "Character cells, columns and rows.",
                 settling: "Settled means no output for the quiet window, which is exact about the wire and silent about whether the far side is thinking.",
                 preference: Preference::Preferred,
@@ -2322,7 +2324,7 @@ impl limb_core::limb::Limb for RemoteLimb {
                 steer_away: None,
             },
             _ if self.has_mirror => LimbDescription {
-                what: "A remote desktop, on a machine DeskVNCViewer has open.",
+                what: "A remote desktop, on a machine OraxDesk has open.",
                 coordinates: "Framebuffer pixels, one space for the whole desktop, origin top left.",
                 settling: "Settled means the server has reported no damage for the quiet window, which is exact about what the server said and silent about whether the far side is still working.",
                 preference: Preference::Fallback,
@@ -2332,7 +2334,7 @@ impl limb_core::limb::Limb for RemoteLimb {
                 ),
             },
             _ => LimbDescription {
-                what: "A remote desktop, on a machine DeskVNCViewer has open.",
+                what: "A remote desktop, on a machine OraxDesk has open.",
                 coordinates: "Framebuffer pixels, one space for the whole desktop, origin top left.",
                 settling: "Settled cannot be answered on this limb: it was opened without a framebuffer mirror, so there is no damage here to wait on.",
                 preference: Preference::Fallback,
@@ -2726,14 +2728,14 @@ impl Plane {
     ///
     /// **This is not the grant `04 §5` specifies and it does not pretend to
     /// be.** That one is minted by a person clicking Approve in
-    /// DeskVNCViewer, written to a file at mode 0600, and referenced by path so
+    /// OraxDesk, written to a file at mode 0600, and referenced by path so
     /// the secret never crosses argv or the environment. None of that exists
     /// until the shell wiring lands, and a build that invented a token would be
     /// building the one thing `04 §5.2` is careful to say a client must not:
     /// authority nobody approved.
     ///
     /// So the scope here is the hosts the SOURCE already publishes and nothing
-    /// else: the saved library plus whatever DeskVNCViewer already has open.
+    /// else: the saved library plus whatever OraxDesk already has open.
     /// With no plane running that list is empty, a placeholder that matches no
     /// real machine takes its place, and every call fails at the host check
     /// naming the host, which is the correct failure.
@@ -2763,7 +2765,7 @@ impl Plane {
     /// Re-issue a local grant that does not yet name `host`.
     ///
     /// A local grant is "every machine the application has saved", read once
-    /// when this process starts. An agent started before DeskVNCViewer, which
+    /// when this process starts. An agent started before OraxDesk, which
     /// is how an MCP client usually starts, read an empty list and could open
     /// nothing for the rest of its life, and the same was true of any machine
     /// saved after the agent started. So an open that names a host the grant
@@ -2983,7 +2985,7 @@ impl Plane {
             return self.adopt(&limb_id).ok_or_else(|| {
                 ToolError::new(
                     codes::LIMB_GONE,
-                    format!("{id} is not open in DeskVNCViewer. Call dvv_limbs for what is open, or dvv_open with a hostId from dvv_hosts to open it again"),
+                    format!("{id} is not open in OraxDesk. Call dvv_limbs for what is open, or dvv_open with a hostId from dvv_hosts to open it again"),
                 )
             });
         }
@@ -3000,7 +3002,7 @@ impl Plane {
             1 => Ok(limbs.remove(0)),
             0 => Err(ToolError::new(
                 codes::LIMB_GONE,
-                "no limb is attached, so there is nothing to act on. Open one with dvv_open, or ask the user to open a machine in DeskVNCViewer",
+                "no limb is attached, so there is nothing to act on. Open one with dvv_open, or ask the user to open a machine in OraxDesk",
             )),
             n => Err(ToolError::bad_request(format!(
                 "limbId is required: {n} limbs are attached and defaulting would act on the wrong machine. Call dvv_limbs and name one"

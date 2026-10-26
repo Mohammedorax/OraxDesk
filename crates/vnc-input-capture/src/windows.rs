@@ -14,7 +14,7 @@
 //! - a low-level hook is only serviced while its owning thread pumps messages,
 //!   and Tauri's main-thread loop is not a plain `GetMessage` loop;
 //!
-//! Inside the application this is still not enough: while a DeskVNC window is
+//! Inside the application this is still not enough: while a OraxDesk window is
 //! in front the hook is not called at all. The application therefore runs this
 //! backend in a helper process, see `windows_helper`.
 //! - PRD/06 §3 records the known Tauri issue where an in-process hook installed
@@ -190,7 +190,7 @@ fn handle_key(message: u32, info: &KBDLLHOOKSTRUCT) -> bool {
     // as held (Windows' Win key must be judged with meta already set).
     //
     // A modifier only counts if it went down while the target window was in
-    // front. Alt held in another application and still held when DeskVNC is
+    // front. Alt held in another application and still held when OraxDesk is
     // clicked never reached the remote through the webview, so treating the
     // Tab that follows as Alt+Tab would send the remote a bare Tab.
     //

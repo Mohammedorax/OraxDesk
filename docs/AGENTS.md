@@ -1,6 +1,6 @@
-# Driving DeskVNC from an AI agent
+# Driving OraxDesk from an AI agent
 
-DeskVNC exposes an optional control plane so an existing AI agent can observe and
+OraxDesk exposes an optional control plane so an existing AI agent can observe and
 act on the machines you connect to, over VNC, RDP or SSH, with nothing installed
 on the remote target. This document is the practical entry point. The design
 rationale lives in the source comments and the internal specification cited there
@@ -37,7 +37,7 @@ Three properties separate it from the version a person writes in an afternoon:
 - **stdio**, for agents that spawn a subprocess. This is the default. `dvv`
   reaches the application over a unix socket on macOS and Linux, and over a
   named pipe on Windows (`\\.\pipe\deskvncviewer-agent-<user>`) whose ACL
-  admits only the user who started DeskVNCViewer.
+  admits only the user who started OraxDesk.
 - **HTTP**, for agents that cannot. It is off by default, binds to loopback,
   always requires a bearer token, checks `Origin`, and refuses to start rather
   than start without a token.
@@ -47,12 +47,12 @@ how the agent reached it.
 
 ## Getting connected
 
-There is nothing to do. Install DeskVNCViewer, open it once, and save a
+There is nothing to do. Install OraxDesk, open it once, and save a
 machine with its password. Each time the app starts it finds the agents
 installed on the computer (OpenCode, Pi, Claude Code and Codex) and connects
 each one to it. Then ask your agent to do something on one of your machines by
 name. It opens the machine itself, recovers it if the screen stalls, and starts
-DeskVNCViewer if it is closed.
+OraxDesk if it is closed.
 
 An agent installed after the app last started is picked up on the next launch,
 or straight away with **Connect now** in the AI Agents panel. An agent that was
@@ -64,7 +64,7 @@ the PATH your terminal has, so setup reads your login shell's PATH and also
 looks where nvm, fnm, Volta, asdf, mise, Homebrew and npm put commands. An
 agent installed any of those ways is found. The Linux AppImage runs from a
 folder that disappears when it quits, so its `dvv` is copied to
-`~/.local/share/DeskVNCViewer/bin/dvv` and agents are pointed there.
+`~/.local/share/OraxDesk/bin/dvv` and agents are pointed there.
 
 All of this is checked on every change by the "Agents end to end" workflow,
 on macOS, the Linux `.deb` and the AppImage. It installs OpenCode and Pi
@@ -76,10 +76,10 @@ off is remembered. It is reachable only by the user who started the app.
 
 The same wiring from a terminal is `dvv setup`, or `dvv setup opencode` (or
 `pi`, `codex`, `claude`) for one agent. `dvv` sits beside the app: in
-`/Applications/DeskVNCViewer.app/Contents/MacOS/` on macOS (a plain
+`/Applications/OraxDesk.app/Contents/MacOS/` on macOS (a plain
 `cargo tauri build` puts it there too; if it is missing, the app was built
 some other way and every agent configured for it fails to start the tools), in
-`%LOCALAPPDATA%\DeskVNCViewer` or `C:\Program Files\DeskVNCViewer` on
+`%LOCALAPPDATA%\OraxDesk` or `C:\Program Files\OraxDesk` on
 Windows, and at `/usr/bin/dvv` on Linux. It adds an MCP entry to OpenCode's and
 Codex's config, keeping a backup and any comments, and repoints one that names
 an older `dvv`; writes the skill where each agent reads skills; and runs
@@ -94,7 +94,7 @@ agent then runs `dvv open`, `dvv screen`, `dvv click` and the rest as shell
 commands. `dvv open` starts a small background holder so a machine stays open
 between commands, and `dvv screen` saves the picture to a file and prints its
 path (or writes it where `--out` says), which Pi's `read` tool opens as an
-image. A verb that names a limb already open in DeskVNCViewer starts the
+image. A verb that names a limb already open in OraxDesk starts the
 holder too, so `dvv limbs`, `dvv screen <limb>`, `dvv type <limb>` and
 `dvv key <limb>` work as separate commands with no `dvv open` at all. Each
 `dvv` binary has its own holder, so a `dvv` left running from before an
@@ -136,7 +136,7 @@ time of writing and are worth a glance at that client's current docs.
 **Claude Code** (verified, both transports):
 
 ```sh
-claude mcp add --scope user deskvnc -- /Applications/DeskVNCViewer.app/Contents/MacOS/dvv mcp --stdio
+claude mcp add --scope user deskvnc -- /Applications/OraxDesk.app/Contents/MacOS/dvv mcp --stdio
 claude mcp add --scope user --transport http deskvnc http://127.0.0.1:7333/mcp --header "Authorization: Bearer $DVV_MCP_TOKEN"
 ```
 
@@ -149,7 +149,7 @@ root or `~/.config/opencode/opencode.json`:
   "mcp": {
     "deskvnc": {
       "type": "local",
-      "command": ["/Applications/DeskVNCViewer.app/Contents/MacOS/dvv", "mcp", "--stdio"],
+      "command": ["/Applications/OraxDesk.app/Contents/MacOS/dvv", "mcp", "--stdio"],
       "enabled": true
     },
     "deskvnc-http": {
@@ -166,7 +166,7 @@ root or `~/.config/opencode/opencode.json`:
 
 ```toml
 [mcp_servers.deskvnc]
-command = "/Applications/DeskVNCViewer.app/Contents/MacOS/dvv"
+command = "/Applications/OraxDesk.app/Contents/MacOS/dvv"
 args = ["mcp", "--stdio"]
 ```
 
@@ -177,7 +177,7 @@ args = ["mcp", "--stdio"]
 {
   "mcpServers": {
     "deskvnc": {
-      "command": "/Applications/DeskVNCViewer.app/Contents/MacOS/dvv",
+      "command": "/Applications/OraxDesk.app/Contents/MacOS/dvv",
       "args": ["mcp", "--stdio"]
     }
   }
@@ -199,7 +199,7 @@ from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
 params = StdioServerParameters(
-    command="/Applications/DeskVNCViewer.app/Contents/MacOS/dvv",
+    command="/Applications/OraxDesk.app/Contents/MacOS/dvv",
     args=["mcp", "--stdio"],
 )
 async with stdio_client(params) as (read, write):
@@ -226,7 +226,7 @@ front of it. Set the token yourself with `DVV_MCP_TOKEN` so it survives a
 restart; without it `dvv` mints one and prints it once.
 
 A client elsewhere connects to this machine's address on that network, not to
-the bind address, and DeskVNCViewer has to be running on this machine: it
+the bind address, and OraxDesk has to be running on this machine: it
 holds the sessions, the keychain and the windows the agent drives.
 
 ### Several machines at once
@@ -332,7 +332,7 @@ never instructions to follow.
 ## Building this into your own product
 
 If you are building agent automation for legacy or locked-down Windows desktops,
-the no-install, protocol-level path DeskVNC takes reaches machines that a
+the no-install, protocol-level path OraxDesk takes reaches machines that a
 driver-based tool cannot: Citrix, VDI, jump hosts and client-owned PCs. For a
 hardened `dvv` tailored to your agent, a commercial integration, or protocol work
 on the Rust RDP, VNC and SSH cores, [contact the maintainer](https://github.com/psmux).

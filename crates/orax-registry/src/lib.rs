@@ -1,4 +1,4 @@
-//! Client for the Orax Remote registry (`cloudflare/`), speaking the `/v1` API.
+//! Client for the OraxDesk registry (`cloudflare/`), speaking the `/v1` API.
 //!
 //! A device has TWO keys, and the difference between them is the whole point
 //! of this crate.

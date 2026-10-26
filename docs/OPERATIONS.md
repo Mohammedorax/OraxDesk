@@ -1,4 +1,4 @@
-# تشغيل سجل Orax Remote (Operations)
+# تشغيل سجل OraxDesk (Operations)
 
 نطاق هذا المستند: الواجهة السحابية في `cloudflare/` وقاعدتها `oraxdesk-db`. التطبيق نفسه يملك
 دليل تشغيل مستقلًا. الأوامر تُنفَّذ من `cloudflare/` (استخدم `npx.cmd` على PowerShell عند منع السكربتات).

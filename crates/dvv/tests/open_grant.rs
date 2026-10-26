@@ -5,7 +5,7 @@
 //! Opening a machine used to be free of consequence on this side: the source
 //! could only adopt a session somebody had already opened, so a grant check
 //! made on the way back cost nothing. It is not free any more. `limb.open`
-//! asks DeskVNCViewer to dial a machine, and a check made after the source has
+//! asks OraxDesk to dial a machine, and a check made after the source has
 //! been asked is a check made after the connection.
 //!
 //! So the claim under test is an ORDERING claim, not just a refusal: the host

@@ -3,7 +3,7 @@ name = "orax-registry"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Client for the Orax Remote device registry and signal code API"
+description = "Client for the OraxDesk device registry and signal code API"
 
 [dependencies]
 base64.workspace = true

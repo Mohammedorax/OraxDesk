@@ -11,7 +11,7 @@ def now(): return datetime.datetime.utcnow().strftime("%H:%M:%S.%f")[:-3]
 codes={"shift":56,"a":0,"s":1,"d":2,"f":3,"bs":51}
 seq=sys.argv[1].split(",") if len(sys.argv)>1 else ["shift"]*5
 gap=float(sys.argv[2]) if len(sys.argv)>2 else 0.25
-subprocess.run(["osascript","-e",'tell application "DeskVNCViewer" to activate'])
+subprocess.run(["osascript","-e",'tell application "OraxDesk" to activate'])
 time.sleep(0.6)
 fm=subprocess.run(["osascript","-e",'tell application "System Events" to get name of first application process whose frontmost is true'],capture_output=True,text=True).stdout.strip()
 print("frontmost",fm)

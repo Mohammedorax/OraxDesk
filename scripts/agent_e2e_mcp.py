@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """Drive a machine through dvv exactly the way OpenCode would.
 
-Reads OpenCode's own config, spawns the command DeskVNCViewer wrote into it,
+Reads OpenCode's own config, spawns the command OraxDesk wrote into it,
 and speaks MCP over stdio: initialize, list the saved machines, open one by
 its saved name, wait for it, take a screenshot, close it. Exits non zero with
 the reason on the first step that does not do what an agent needs.
 
-Run with DeskVNCViewer closed, which is the case it exists for: dvv has to
+Run with OraxDesk closed, which is the case it exists for: dvv has to
 start the app itself.
 
     python3 scripts/agent_e2e_mcp.py <machine name> <screenshot.png>

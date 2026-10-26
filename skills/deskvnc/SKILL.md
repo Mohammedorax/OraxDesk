@@ -1,11 +1,11 @@
 ---
 name: deskvnc
-description: Drive real Windows, Linux and macOS desktops through DeskVNC, either with the dvv_ MCP tools or with the dvv command in a shell. Use when asked to operate, inspect, test or automate a remote machine over VNC, RDP or SSH, or several at once.
+description: Drive real Windows, Linux and macOS desktops through OraxDesk, either with the dvv_ MCP tools or with the dvv command in a shell. Use when asked to operate, inspect, test or automate a remote machine over VNC, RDP or SSH, or several at once.
 ---
 
-# Driving machines through DeskVNC
+# Driving machines through OraxDesk
 
-DeskVNCViewer holds the sessions and the passwords. You drive them through
+OraxDesk holds the sessions and the passwords. You drive them through
 `dvv`. Nothing is installed on the remote machine.
 
 **If you have tools whose names start with `dvv_` (or `deskvnc_dvv_`), use
@@ -13,7 +13,7 @@ them and not the shell.** They hand you the screenshot directly. The `dvv`
 shell commands are for agents without those tools, such as Pi.
 
 You never need the user to open, reopen or reconnect a machine, or to open
-DeskVNCViewer: `dvv` starts it when it is closed. Do it yourself with the
+OraxDesk: `dvv` starts it when it is closed. Do it yourself with the
 steps below.
 
 ## With the dvv_ tools (OpenCode, Claude Code, Codex and other MCP clients)
@@ -27,8 +27,8 @@ from the screen you read into a click.
 ## With the shell, only when you have no `dvv_` tools (Pi)
 
 `dvv` is on PATH after `dvv setup`. If it is not, it sits beside the app:
-`/Applications/DeskVNCViewer.app/Contents/MacOS/dvv` on macOS,
-`%LOCALAPPDATA%\DeskVNCViewer\dvv.exe` (or `C:\Program Files\DeskVNCViewer\dvv.exe`)
+`/Applications/OraxDesk.app/Contents/MacOS/dvv` on macOS,
+`%LOCALAPPDATA%\OraxDesk\dvv.exe` (or `C:\Program Files\OraxDesk\dvv.exe`)
 on Windows, and `/usr/bin/dvv` on Linux.
 
 ```sh

@@ -515,6 +515,7 @@ fn main() {
             // looking alive in the source. `src-tauri/tests/acl.rs` exists to
             // catch exactly that, but it is not in CI's test list.
             "registry_health",
+            "registry_origin",
             "registry_set_origin",
             "registry_register_device",
             "registry_register_helper",

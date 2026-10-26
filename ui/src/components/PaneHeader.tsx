@@ -213,7 +213,7 @@ export function PaneHeader({
         onPointerDown={(e) => e.stopPropagation()}
         onClick={onZoom}
         className="shrink-0 rounded-sm p-0.5 text-tertiary hover:bg-strong/25 hover:text-primary"
-        aria-label={zoomed ? `Restore pane: ${title}` : `Maximise pane: ${title}`}
+        aria-label={zoomed ? t("common.restorePane", { title }) : t("common.maximisePane", { title })}
         title={zoomed ? "Restore this pane" : "Maximise this pane"}
       >
         {zoomed ? <IconMinimize size={11} /> : <IconMaximize size={11} />}
@@ -225,8 +225,8 @@ export function PaneHeader({
         onPointerDown={(e) => e.stopPropagation()}
         onClick={onClose}
         className="shrink-0 rounded-sm p-0.5 text-tertiary hover:bg-strong/25 hover:text-primary"
-        aria-label={`Close pane: ${title}`}
-        title="Close this pane"
+        aria-label={t("common.closePaneAria", { title })}
+        title={t("common.closePaneTitle")}
       >
         <IconX size={11} />
       </button>

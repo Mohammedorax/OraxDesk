@@ -7,7 +7,7 @@ import { classNames, fullscreenHint, modKeyLabel } from "../lib/util";
 
 export const AUTHOR_NAME = "psmux";
 export const CONTACT_URL = "https://github.com/psmux";
-export const PROJECT_URL = "https://github.com/psmux/DeskVNC";
+export const PROJECT_URL = "https://github.com/Mohammedorax/OraxDesk";
 
 type Tab = "About" | "Help";
 
@@ -63,7 +63,7 @@ export function buildReport(i: AboutInfo): string {
   const dirty = i.gitDirty === "dirty" ? ", locally modified (dirty)" : "";
   return [
     "```",
-    `DeskVNCViewer ${i.appVersion} (${i.gitDescribe})`,
+    `OraxDesk ${i.appVersion} (${i.gitDescribe})`,
     `Commit:  ${i.gitHash}`,
     `         branch ${i.gitBranch}, committed ${i.gitCommitDate}${dirty}`,
     `Build:   ${i.buildProfile} profile, tauri ${i.tauriVersion}, ${i.rustcVersion}`,
@@ -145,7 +145,7 @@ export function About({ onClose }: { onClose: () => void }): ReactNode {
       {tab === "About" ? (
         <div className="space-y-4">
           <div>
-            <h3 className="text-lg font-semibold text-primary">DeskVNCViewer</h3>
+            <h3 className="text-lg font-semibold text-primary">OraxDesk</h3>
             <p className="text-sm text-secondary">{t("about.tagline")}</p>
             <p className="mt-1 text-sm text-tertiary">
               {t("about.version", { version: info ? `${info.appVersion} (${info.gitDescribe})` : "-" })}

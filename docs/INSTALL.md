@@ -1,16 +1,16 @@
-# Installing DeskVNCViewer
+# Installing OraxDesk
 
 Download the file for your platform from the
-[latest release](https://github.com/psmux/DeskVNC/releases/latest).
+[latest release](https://github.com/Mohammedorax/OraxDesk/releases/latest).
 
 | Platform | File |
 |---|---|
-| macOS 12 or newer, Apple Silicon or Intel | `DeskVNCViewer_<version>_universal.dmg` |
-| Windows 10 or 11, x64 | `DeskVNCViewer_<version>_x64-setup.exe` |
-| Windows, for deployment tooling | `DeskVNCViewer_<version>_x64_en-US.msi` |
-| Debian, Ubuntu | `DeskVNCViewer_<version>_amd64.deb` |
-| Fedora, RHEL | `DeskVNCViewer-<version>-1.x86_64.rpm` |
-| Any x64 Linux | `DeskVNCViewer_<version>_amd64.AppImage` |
+| macOS 12 or newer, Apple Silicon or Intel | `OraxDesk_<version>_universal.dmg` |
+| Windows 10 or 11, x64 | `OraxDesk_<version>_x64-setup.exe` |
+| Windows, for deployment tooling | `OraxDesk_<version>_x64_en-US.msi` |
+| Debian, Ubuntu | `OraxDesk_<version>_amd64.deb` |
+| Fedora, RHEL | `OraxDesk-<version>-1.x86_64.rpm` |
+| Any x64 Linux | `OraxDesk_<version>_amd64.AppImage` |
 
 ## macOS
 
@@ -24,7 +24,7 @@ both Apple Silicon and Intel.
 Check it yourself if you want:
 
 ```sh
-spctl -a -vv -t exec /Applications/DeskVNCViewer.app
+spctl -a -vv -t exec /Applications/OraxDesk.app
 # source=Notarized Developer ID
 # origin=Developer ID Application: <certificate holder> (<team ID>)
 ```
@@ -62,7 +62,7 @@ Open Source Developer Godwin Josh. Click **More info**, then **Run anyway**.
 
 To check a download yourself, right click it, open **Properties**, then
 **Digital Signatures**, or compare the checksum published with the release:
-`certutil -hashfile DeskVNCViewer_<version>_x64-setup.exe SHA256`
+`certutil -hashfile OraxDesk_<version>_x64-setup.exe SHA256`
 
 The MSI is provided for Group Policy and other deployment tooling, and is
 signed the same way. Releases before 0.27.10 are unsigned.
@@ -70,11 +70,11 @@ signed the same way. Releases before 0.27.10 are unsigned.
 ## Linux
 
 ```sh
-sudo apt install ./DeskVNCViewer_<version>_amd64.deb      # Debian, Ubuntu
-sudo dnf install ./DeskVNCViewer-<version>-1.x86_64.rpm   # Fedora, RHEL
+sudo apt install ./OraxDesk_<version>_amd64.deb      # Debian, Ubuntu
+sudo dnf install ./OraxDesk-<version>-1.x86_64.rpm   # Fedora, RHEL
 
-chmod +x DeskVNCViewer_<version>_amd64.AppImage           # anywhere else
-./DeskVNCViewer_<version>_amd64.AppImage
+chmod +x OraxDesk_<version>_amd64.AppImage           # anywhere else
+./OraxDesk_<version>_amd64.AppImage
 ```
 
 Packages are unsigned and not in any repository, so your package manager may
@@ -83,7 +83,7 @@ warn about an untrusted origin.
 The AppImage needs FUSE. On a system without it, extract instead:
 
 ```sh
-./DeskVNCViewer_<version>_amd64.AppImage --appimage-extract
+./OraxDesk_<version>_amd64.AppImage --appimage-extract
 ./squashfs-root/AppRun
 ```
 

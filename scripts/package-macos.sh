@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build DeskVNCViewer.app and package it into a DMG.
+# Build OraxDesk.app and package it into a DMG.
 #
 # Tauri's built-in DMG bundler (create-dmg) drives Finder over AppleScript to
 # lay out the disk-image window. That fails with "AppleEvent timed out (-1712)"
@@ -12,11 +12,11 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 VERSION=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)
 ARCH=$(uname -m); [ "$ARCH" = "arm64" ] && ARCH=aarch64
-OUT="target/release/bundle/dmg/DeskVNCViewer_${VERSION}_${ARCH}.dmg"
+OUT="target/release/bundle/dmg/OraxDesk_${VERSION}_${ARCH}.dmg"
 STAGE=$(mktemp -d)
 trap 'rm -rf "$STAGE"' EXIT
 
-APP="target/release/bundle/macos/DeskVNCViewer.app"
+APP="target/release/bundle/macos/OraxDesk.app"
 
 echo "==> Building app bundle"
 # Tauri would ad-hoc sign the bundle; sign-macos.sh re-signs it below with a
@@ -84,19 +84,19 @@ echo "==> Staging"
 # cp -R carries the _CodeSignature directory across, so the DMG copy stays
 # signed; verify rather than assume.
 cp -R "$APP" "$STAGE/"
-codesign --verify --strict "$STAGE/DeskVNCViewer.app"
+codesign --verify --strict "$STAGE/OraxDesk.app"
 
 # The agent binary, asserted rather than hoped for. Every line the AI Agents
 # modal prints names this path, and `agent_status` reads it to fill them in, so
 # a DMG that shipped without it would hand people instructions pointing at a
 # program that is not there. Running it is the check: a file that exists but
 # will not execute fails the same way from a user's point of view.
-"$STAGE/DeskVNCViewer.app/Contents/MacOS/dvv" version >/dev/null
+"$STAGE/OraxDesk.app/Contents/MacOS/dvv" version >/dev/null
 ln -s /Applications "$STAGE/Applications"
 
 echo "==> Creating $OUT"
 mkdir -p "$(dirname "$OUT")"
-hdiutil create -volname DeskVNCViewer -srcfolder "$STAGE" -ov -format UDZO "$OUT"
+hdiutil create -volname OraxDesk -srcfolder "$STAGE" -ov -format UDZO "$OUT"
 
 echo "==> Signing DMG"
 scripts/sign-macos.sh "$OUT" >/dev/null

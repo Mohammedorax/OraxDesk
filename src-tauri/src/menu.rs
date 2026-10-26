@@ -26,7 +26,7 @@ use tauri::{AppHandle, Emitter, Manager, WebviewWindow, Wry};
 /// Kept in step with `ui/src/screens/About.tsx`, which shows the same details
 /// in the in-app dialog used on every platform.
 const CONTACT_URL: &str = "https://github.com/psmux";
-const PROJECT_URL: &str = "https://github.com/psmux/DeskVNC";
+const PROJECT_URL: &str = "https://github.com/Mohammedorax/OraxDesk";
 
 /// The one check item that means something with no session in front: it is a
 /// preference, not a property of a connection, and Preferences is reachable
@@ -197,8 +197,8 @@ pub fn install(app: &AppHandle) -> tauri::Result<()> {
         // showing the version three different ways), and only the in-app
         // dialog carries the build fingerprint and the copy-a-report button
         // that bug reports need.
-        let app_menu = SubmenuBuilder::new(app, "DeskVNCViewer")
-            .item(&MenuItemBuilder::with_id("menu:about", "About DeskVNCViewer").build(app)?)
+        let app_menu = SubmenuBuilder::new(app, "OraxDesk")
+            .item(&MenuItemBuilder::with_id("menu:about", "About OraxDesk").build(app)?)
             .separator()
             .item(
                 &MenuItemBuilder::with_id("menu:settings", "Settings…")
@@ -541,7 +541,7 @@ pub fn install(app: &AppHandle) -> tauri::Result<()> {
     // deliberately leaves the app.
     #[allow(unused_mut)] // only reassigned in the non-macOS branch below
     let mut help_builder = SubmenuBuilder::new(app, "Help")
-        .item(&MenuItemBuilder::with_id("menu:about", "DeskVNCViewer Help").build(app)?)
+        .item(&MenuItemBuilder::with_id("menu:about", "OraxDesk Help").build(app)?)
         .separator()
         .item(&MenuItemBuilder::with_id("menu:project", "Project Page").build(app)?)
         .item(&MenuItemBuilder::with_id("menu:contact", "Contact Developer…").build(app)?);
@@ -551,7 +551,7 @@ pub fn install(app: &AppHandle) -> tauri::Result<()> {
     {
         help_builder = help_builder
             .separator()
-            .item(&MenuItemBuilder::with_id("menu:about", "About DeskVNCViewer").build(app)?);
+            .item(&MenuItemBuilder::with_id("menu:about", "About OraxDesk").build(app)?);
     }
     let help = help_builder.build()?;
 

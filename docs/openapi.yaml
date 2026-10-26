@@ -1,9 +1,9 @@
 openapi: 3.1.0
 info:
-  title: Orax Remote Registry API
+  title: OraxDesk Registry API
   version: 1.0.0
   description: >-
-    Device registry and short-lived signal codes for Orax Remote. The API never
+    Device registry and short-lived signal codes for OraxDesk. The API never
     carries screen, input or clipboard data; the only session material it holds
     is an opaque `boundary1:` invitation, stored sealed with AES-256-GCM.
 servers:

@@ -1,5 +1,5 @@
 /**
- * Get help: this computer shared over Boundary, from inside DeskVNC.
+ * Get help: this computer shared over Boundary, from inside OraxDesk.
  *
  * Rust owns everything (`src-tauri/src/commands/support.rs`). It sends the
  * whole picture as one `SupportView` on `support://state` whenever anything
@@ -116,7 +116,7 @@ export async function setCodeService(url: string): Promise<void> {
   try {
     localStorage.setItem(CODE_SERVICE_KEY, url.trim());
   } catch {
-    // Blocked storage: the setting lasts until DeskVNC quits.
+    // Blocked storage: the setting lasts until OraxDesk quits.
   }
 }
 
@@ -182,7 +182,7 @@ export function rememberRegistryUrl(url: string): Promise<void> {
   try {
     localStorage.setItem(REGISTRY_URL_KEY, url.trim());
   } catch {
-    // Blocked storage: the setting lasts until DeskVNC quits.
+    // Blocked storage: the setting lasts until OraxDesk quits.
   }
   return setRegistryOrigin(url.trim())
     .then(() => undefined)
@@ -216,6 +216,7 @@ export interface RegistryDevice {
 
 export const registry = {
   health: (url: string) => mustInvoke<RegistryHealth>("registry_health", { url }),
+  origin: () => mustInvoke<string>("registry_origin"),
   /**
    * Register this computer under its machine key.
    *

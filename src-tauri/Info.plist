@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>DeskVNCViewer finds VNC servers on your local network so you can connect to them.</string>
+	<string>OraxDesk finds VNC servers on your local network so you can connect to them.</string>
 	<key>NSBonjourServices</key>
 	<array>
 		<string>_rfb._tcp</string>

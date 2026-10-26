@@ -421,7 +421,7 @@ fn hello(ctx: &Ctx, peer: &mut Peer, params: &Value) -> Result<Value, RpcError> 
     };
     Ok(json!({
         "protocol": PROTOCOL,
-        "server": { "name": "DeskVNCViewer", "version": env!("CARGO_PKG_VERSION") },
+        "server": { "name": "OraxDesk", "version": env!("CARGO_PKG_VERSION") },
         "attachmentId": attachment_id,
         // Exactly what this connection may do, deny by default, no hierarchy
         // and no wildcard (D4). `capture` is here because a mirror is attached
@@ -660,7 +660,7 @@ fn limb_attach(ctx: &Ctx, peer: &Peer, params: &Value) -> Result<Value, RpcError
             RpcError::tagged(
                 "LIMB_GONE",
                 format!(
-                    "{address} has {} live session(s) and slot {slot} is not one of them. limb.attach only attaches to sessions DeskVNCViewer already has open: call limb.open to ask the application to open this machine the way a person's click does, wait for limb.status to report it connected, then attach. A slot above 0 needs that many sessions against the machine already",
+                    "{address} has {} live session(s) and slot {slot} is not one of them. limb.attach only attaches to sessions OraxDesk already has open: call limb.open to ask the application to open this machine the way a person's click does, wait for limb.status to report it connected, then attach. A slot above 0 needs that many sessions against the machine already",
                     candidates.len()
                 ),
             )
@@ -690,7 +690,7 @@ fn limb_attach(ctx: &Ctx, peer: &Peer, params: &Value) -> Result<Value, RpcError
         if entry.handle.kind == remote_core::ProtocolKind::Boundary && !tools {
             return Err(RpcError::tagged(
                 "UNSUPPORTED",
-                "the person at that Boundary computer has not allowed the helper's tools, so no agent may attach. Ask them to tick Allow the helper's tools to run commands and copy files in DeskVNC Support, or, for an unattended computer, to allow it for this helper under Settings, Unattended access. Then call limb.attach again",
+                "the person at that Boundary computer has not allowed the helper's tools, so no agent may attach. Ask them to tick Allow the helper's tools to run commands and copy files in OraxDesk Support, or, for an unattended computer, to allow it for this helper under Settings, Unattended access. Then call limb.attach again",
             ));
         }
         let value = record(&session_id, entry, slot, Some(attachment_id.clone()));
@@ -1788,14 +1788,14 @@ async fn limb_open(ctx: &Ctx, peer: &Peer, params: &Value) -> Result<Value, RpcE
             "opened": false,
             "reused": true,
             "sessionId": session_id,
-            "why": "that machine is already open in DeskVNCViewer, so nothing was dialled and this is the session that was already there. Call limb.attach for it",
+            "why": "that machine is already open in OraxDesk, so nothing was dialled and this is the session that was already there. Call limb.attach for it",
         }));
     }
 
     let open = opener().lock().clone().ok_or_else(|| {
         RpcError::tagged(
             "NOT_IMPLEMENTED",
-            "this build's agent plane was started without an opener, so it can attach to sessions DeskVNCViewer already has and cannot ask it to start one. The application installs one by calling crate::agent::server::install_opener where it holds the AppHandle",
+            "this build's agent plane was started without an opener, so it can attach to sessions OraxDesk already has and cannot ask it to start one. The application installs one by calling crate::agent::server::install_opener where it holds the AppHandle",
         )
     })?;
 
@@ -1814,14 +1814,14 @@ async fn limb_open(ctx: &Ctx, peer: &Peer, params: &Value) -> Result<Value, RpcE
         Ok(Ok(Err(why))) => {
             return Err(RpcError::tagged(
                 "OPEN_FAILED",
-                format!("DeskVNCViewer could not open {address}: {why}"),
+                format!("OraxDesk could not open {address}: {why}"),
             ))
         }
         Ok(Err(_)) | Err(_) => {
             return Err(RpcError::tagged(
                 "OPEN_FAILED",
                 format!(
-                    "DeskVNCViewer was asked to open {address} and had not said whether it did after {} seconds. A window may still be opening: call limb.list rather than asking again, because asking again could open a second session",
+                    "OraxDesk was asked to open {address} and had not said whether it did after {} seconds. A window may still be opening: call limb.list rather than asking again, because asking again could open a second session",
                     SPAWN_WINDOW.as_secs()
                 ),
             ))
@@ -1926,7 +1926,7 @@ async fn permitted_endpoint(
     Err(RpcError::tagged(
         "NO_SUCH_MACHINE",
         format!(
-            "{address} is not a machine this DeskVNCViewer knows: it is not in the saved library and it is not open. An agent opens machines somebody already allowed it to touch and never an arbitrary address (00 R19). Nothing was dialled. Call hosts.list for the machines that are on offer, or ask the user to save this one"
+            "{address} is not a machine this OraxDesk knows: it is not in the saved library and it is not open. An agent opens machines somebody already allowed it to touch and never an arbitrary address (00 R19). Nothing was dialled. Call hosts.list for the machines that are on offer, or ask the user to save this one"
         ),
     ))
 }
@@ -2113,7 +2113,7 @@ async fn on_sidecar(
         // and saying so is better than waiting out the deadline for one.
         Ok(Err(_)) => Err(RpcError::tagged(
             "FILES_UNAVAILABLE",
-            format!("DeskVNCViewer stopped answering for {session_id} before this file operation finished. It may be shutting down. Nothing here invented an outcome for it: call files.list to see what actually happened on that machine"),
+            format!("OraxDesk stopped answering for {session_id} before this file operation finished. It may be shutting down. Nothing here invented an outcome for it: call files.list to see what actually happened on that machine"),
         )),
         Err(_) => Err(RpcError::tagged(
             "FILES_TIMEOUT",
@@ -2397,7 +2397,7 @@ fn unexpected(answer: &FileAnswer, method: &str) -> RpcError {
     };
     RpcError::new(
         -32603,
-        format!("{method} was answered with {got}, which is not the shape that verb produces. This is a bug in DeskVNCViewer and not in the call"),
+        format!("{method} was answered with {got}, which is not the shape that verb produces. This is a bug in OraxDesk and not in the call"),
     )
 }
 

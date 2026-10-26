@@ -1,4 +1,4 @@
-//! LAN discovery for DeskVNCViewer.
+//! LAN discovery for OraxDesk.
 //!
 //! Combines mDNS/DNS-SD browsing with a polite active subnet scan and RFB
 //! banner fingerprinting to surface every reachable VNC server, plus

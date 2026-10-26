@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build, sign, notarize and staple the DeskVNC Support recipient app.
+# Build, sign, notarize and staple the OraxDesk Support recipient app.
 #
 # This app is downloaded by the person receiving help, which means it always
 # arrives quarantined from a browser. A quarantined bundle that is only ad-hoc
@@ -31,7 +31,7 @@ esac
 
 require="${BOUNDARY_REQUIRE_SIGNING:-0}"
 version=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)
-bundle="dist/DeskVNC Support.app"
+bundle="dist/OraxDesk Support.app"
 
 fail_or_warn() {
     if [ "$require" = 1 ]; then
@@ -89,8 +89,8 @@ cat > "$bundle/Contents/Info.plist" <<PLIST
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
 <key>CFBundleIdentifier</key><string>com.psmux.deskvnc.support</string>
-<key>CFBundleName</key><string>DeskVNC Support</string>
-<key>CFBundleDisplayName</key><string>DeskVNC Support</string>
+<key>CFBundleName</key><string>OraxDesk Support</string>
+<key>CFBundleDisplayName</key><string>OraxDesk Support</string>
 <key>CFBundleExecutable</key><string>boundary</string>
 <key>CFBundlePackageType</key><string>APPL</string>
 <key>CFBundleShortVersionString</key><string>${version}</string>
@@ -98,8 +98,8 @@ cat > "$bundle/Contents/Info.plist" <<PLIST
 <key>LSMinimumSystemVersion</key><string>12.0</string>
 <key>NSHighResolutionCapable</key><true/>
 <key>NSLocalNetworkUsageDescription</key><string>Boundary connects to the person you invite for remote support.</string>
-<key>NSScreenCaptureUsageDescription</key><string>DeskVNC Support shares your screen after you approve a support session.</string>
-<key>NSAccessibilityUsageDescription</key><string>DeskVNC Support sends keyboard and mouse input only after you approve control.</string>
+<key>NSScreenCaptureUsageDescription</key><string>OraxDesk Support shares your screen after you approve a support session.</string>
+<key>NSAccessibilityUsageDescription</key><string>OraxDesk Support sends keyboard and mouse input only after you approve control.</string>
 </dict></plist>
 PLIST
 

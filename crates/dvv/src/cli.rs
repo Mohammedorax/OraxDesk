@@ -970,7 +970,7 @@ fn doctor(args: &Args) -> i32 {
             if reachable {
                 "present"
             } else {
-                "not present: DeskVNCViewer is not running (an agent call starts it), or a person switched the agent plane off in the AI Agents panel"
+                "not present: OraxDesk is not running (an agent call starts it), or a person switched the agent plane off in the AI Agents panel"
             }
         );
         println!(
@@ -1083,7 +1083,7 @@ pub fn socket_path() -> String {
     #[cfg(target_os = "macos")]
     {
         let home = std::env::var("HOME").unwrap_or_default();
-        format!("{home}/Library/Application Support/DeskVNCViewer/agent.sock")
+        format!("{home}/Library/Application Support/OraxDesk/agent.sock")
     }
     #[cfg(target_os = "linux")]
     {
@@ -1102,7 +1102,7 @@ pub fn socket_path() -> String {
             return format!("{runtime}/deskvncviewer/agent.sock");
         }
         let home = std::env::var("HOME").unwrap_or_default();
-        format!("{home}/.local/share/DeskVNCViewer/agent.sock")
+        format!("{home}/.local/share/OraxDesk/agent.sock")
     }
     #[cfg(target_os = "windows")]
     {
@@ -1171,7 +1171,7 @@ fn split_endpoint(target: &str) -> (String, Option<u16>) {
 }
 
 const USAGE: &str = "\
-dvv, the agent plane for DeskVNCViewer.
+dvv, the agent plane for OraxDesk.
 
   dvv mcp --stdio                  speak MCP on stdin and stdout
   dvv mcp --http [--port 7333] [--host 127.0.0.1] [--token T] [--allow-origin O]

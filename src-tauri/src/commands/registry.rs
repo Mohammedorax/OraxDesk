@@ -29,6 +29,10 @@ use crate::state::AppState;
 /// The setting the registry origin is stored under.
 const REGISTRY_ORIGIN_KEY: &str = "registry_origin";
 
+/// The registry this build talks to when the person has not chosen another
+/// one and the environment has not fixed one for the deployment.
+pub(crate) const DEFAULT_REGISTRY_URL: &str = "https://orax-registry.oraxhome.workers.dev";
+
 /// The setting the number the registry knows this computer by is stored under.
 const REGISTRY_NUMBER_KEY: &str = "registry_number";
 
@@ -169,14 +173,15 @@ async fn stored_origin(state: &AppState) -> Result<Option<String>, String> {
         return Ok(Some(url));
     }
     let store = state.store.clone();
-    super::blocking(move || store.get_setting(REGISTRY_ORIGIN_KEY))
+    let stored = super::blocking(move || store.get_setting(REGISTRY_ORIGIN_KEY))
         .await
         .map(|value| {
             value
                 .map(|v| v.trim().to_string())
                 .filter(|v| !v.is_empty())
         })
-        .map_err(|error| error.to_string())
+        .map_err(|error| error.to_string())?;
+    Ok(stored.or_else(|| Some(DEFAULT_REGISTRY_URL.to_string())))
 }
 
 /// The origin a command is allowed to use.
@@ -228,6 +233,64 @@ pub async fn resolve_code(url: &str, code: &str) -> Result<String, String> {
         .resolve_signal(code)
         .await
         .map_err(|error| error.to_string())
+}
+
+/// The origin the app will use, for the UI to show the effective value rather
+/// than an empty field when the default or the environment supplies it.
+#[tauri::command]
+pub async fn registry_origin(state: State<'_, AppState>) -> Result<String, String> {
+    Ok(stored_origin(&state).await?.unwrap_or_default())
+}
+
+/// Turn a nine-digit number into a device record through the configured
+/// registry. Used before any VNC dial so a number can never become a hostname.
+pub(crate) async fn lookup_device_number(
+    state: &AppState,
+    number: &str,
+) -> Result<orax_registry::DeviceRecord, String> {
+    let origin = stored_origin(state)
+        .await?
+        .ok_or_else(|| "no registry origin has been set".to_string())?;
+    client(&origin)?
+        .lookup_by_number(number)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+/// Register this computer under its machine key without a webview asking.
+/// Idempotent, so starting the app again only refreshes its metadata.
+pub(crate) async fn register_this_device(
+    state: &AppState,
+) -> Result<orax_registry::DeviceRecord, String> {
+    let origin = stored_origin(state)
+        .await?
+        .ok_or_else(|| "no registry origin has been set".to_string())?;
+    register_device_at(state, &origin).await
+}
+
+async fn register_device_at(
+    state: &AppState,
+    origin: &str,
+) -> Result<orax_registry::DeviceRecord, String> {
+    let keys = tokio::task::spawn_blocking(machine_keys)
+        .await
+        .map_err(|error| error.to_string())??;
+    let computer = boundary_provision::platform::computer_name();
+    let record = client(origin)?
+        .register(&keys, Some(computer.as_str()), env!("CARGO_PKG_VERSION"))
+        .await
+        .map_err(|error| error.to_string())?;
+    // The number the REGISTRY has is the number this computer is known by.
+    //
+    // The number is derived from the key, so two devices can derive the same
+    // one, and the registry takes the next free number when that happens.
+    // The local derivation is only the starting point, so a device whose
+    // number was taken must show the registry's, or the number a person
+    // reads out loud is one nobody can look up.
+    if let Some(number) = record.number.as_deref() {
+        remember_registry_number(state, number).await?;
+    }
+    Ok(record)
 }
 
 /// Whether the configured registry is up and has its sealing key, so the UI can
@@ -309,25 +372,7 @@ pub async fn registry_register_device(
     url: String,
 ) -> Result<orax_registry::DeviceRecord, String> {
     let origin = origin(&state, &url).await?;
-    let keys = tokio::task::spawn_blocking(machine_keys)
-        .await
-        .map_err(|error| error.to_string())??;
-    let computer = boundary_provision::platform::computer_name();
-    let record = client(&origin)?
-        .register(&keys, Some(computer.as_str()), env!("CARGO_PKG_VERSION"))
-        .await
-        .map_err(|error| error.to_string())?;
-    // The number the REGISTRY has is the number this computer is known by.
-    //
-    // The number is derived from the key, so two devices can derive the same
-    // one, and the registry takes the next free number when that happens.
-    // The local derivation is only the starting point, so a device whose
-    // number was taken must show the registry's, or the number a person
-    // reads out loud is one nobody can look up.
-    if let Some(number) = record.number.as_deref() {
-        remember_registry_number(&state, number).await?;
-    }
-    Ok(record)
+    register_device_at(&state, &origin).await
 }
 
 /// Remember the number the registry knows this computer by.

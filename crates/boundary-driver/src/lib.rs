@@ -39,7 +39,7 @@ pub struct BoundaryDriver {
 impl BoundaryDriver {
     /// How to send commands and file requests to the computer behind
     /// `session_id`, while that session lasts. `None` when there is no such
-    /// session, it has not connected yet, or the computer's DeskVNC Support
+    /// session, it has not connected yet, or the computer's OraxDesk Support
     /// is too old to serve them. Whether the person there allows them is
     /// [`Client::allowed`], and the computer checks again on every request.
     pub fn tools(&self, session_id: &str) -> Option<Client> {
@@ -135,7 +135,7 @@ impl ProtocolDriver for BoundaryDriver {
                         )
                     }
                     None if unattended => {
-                        let key = identity.ok_or_else(|| anyhow!("This copy of DeskVNC has no helper identity, so it cannot be recognised by a computer it was paired with"))?;
+                        let key = identity.ok_or_else(|| anyhow!("This copy of OraxDesk has no helper identity, so it cannot be recognised by a computer it was paired with"))?;
                         let name = options
                             .credentials
                             .username
@@ -213,9 +213,9 @@ async fn permission(events: &mpsc::Sender<SessionEvent>, allowed: bool, tools: b
     .await
 }
 /// Said when the person at the computer has not allowed commands and files.
-pub const NOT_ALLOWED: &str = "the person at that computer has not allowed commands and files for this session. Ask them to tick Allow the helper's tools to run commands and copy files in DeskVNC Support, or, for an unattended computer, to allow it for this helper under Settings, Unattended access. Nothing ran";
+pub const NOT_ALLOWED: &str = "the person at that computer has not allowed commands and files for this session. Ask them to tick Allow the helper's tools to run commands and copy files in OraxDesk Support, or, for an unattended computer, to allow it for this helper under Settings, Unattended access. Nothing ran";
 /// Said when the computer's support app predates commands and files.
-pub const TOO_OLD: &str = "that computer's DeskVNC Support is older than commands and files over Boundary, so it cannot run a command. Ask them to update it from the latest release. Nothing ran";
+pub const TOO_OLD: &str = "that computer's OraxDesk Support is older than commands and files over Boundary, so it cannot run a command. Ask them to update it from the latest release. Nothing ran";
 /// Where this session's tools client is published, and taken back from.
 struct Tools {
     registry: Registry,
@@ -342,7 +342,7 @@ fn helper_name() -> String {
         .or_else(|_| std::env::var("USER"))
         .ok()
         .filter(|n| !n.trim().is_empty() && n.len() <= 80)
-        .unwrap_or_else(|| "DeskVNC helper".into())
+        .unwrap_or_else(|| "OraxDesk helper".into())
 }
 async fn drive(
     session: &mut Session,

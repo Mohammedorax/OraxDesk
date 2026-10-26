@@ -12,7 +12,7 @@ on:
 env:
   CARGO_TERM_COLOR: always
   # Link the C runtime into every Windows exe. Without it the viewer, dvv
-  # and DeskVNC Support all stopped at start on a Windows that has no Visual
+  # and OraxDesk Support all stopped at start on a Windows that has no Visual
   # C++ redistributable, with "VCRUNTIME140.dll was not found". A fresh
   # Windows 10 has none. Only Windows targets read this.
   CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUSTFLAGS: -C target-feature=+crt-static
@@ -50,15 +50,15 @@ jobs:
           **Windows** is signed by Open Source Developer Godwin Josh (Certum). A new certificate may still get one SmartScreen prompt until it builds reputation: choose **More info** then **Run anyway**.
           **Linux** packages are unsigned.
 
-          **DeskVNC Support** is also attached, for macOS, Windows and Linux,
+          **OraxDesk Support** is also attached, for macOS, Windows and Linux,
           for people who need to receive help. Download it on the computer being
           supported, press Get a code, and share the code or invitation.
 
-          Full changes in [CHANGELOG.md](https://github.com/psmux/DeskVNC/blob/main/CHANGELOG.md).
+          Full changes in [CHANGELOG.md](https://github.com/Mohammedorax/OraxDesk/blob/main/CHANGELOG.md).
           NOTES
             sed -i 's/^          //' "$RUNNER_TEMP/notes.md"
             id=$(gh api -X POST "repos/$GITHUB_REPOSITORY/releases" \
-                   -f tag_name="$GITHUB_REF_NAME" -f name="DeskVNCViewer $GITHUB_REF_NAME" \
+                   -f tag_name="$GITHUB_REF_NAME" -f name="OraxDesk $GITHUB_REF_NAME" \
                    -F body=@"$RUNNER_TEMP/notes.md" -F draft=true -F prerelease=false --jq .id)
           fi
           echo "id=$id" >> "$GITHUB_OUTPUT"
@@ -239,7 +239,7 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $signArgs = @('sign', '/sha1', $env:CERTUM_THUMBPRINT, '/tr', 'http://time.certum.pl',
-                        '/td', 'SHA256', '/fd', 'SHA256', '/d', 'DeskVNCViewer')
+                        '/td', 'SHA256', '/fd', 'SHA256', '/d', 'OraxDesk')
           $conf = @{ bundle = @{ windows = @{ signCommand = @{ cmd = $env:SIGNTOOL; args = $signArgs + '%1' } } } }
           $path = Join-Path $env:RUNNER_TEMP 'windows-sign.conf.json'
           $conf | ConvertTo-Json -Depth 6 | Set-Content -Path $path -Encoding utf8
@@ -280,7 +280,7 @@ jobs:
           args: --target ${{ matrix.bundle-target }} --config src-tauri/tauri.release.conf.json ${{ env.WINDOWS_SIGN_CONFIG }} -- --locked
           releaseId: ${{ needs.draft.outputs.id }}
           tagName: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || '' }}
-          releaseName: DeskVNCViewer ${{ github.ref_name }}
+          releaseName: OraxDesk ${{ github.ref_name }}
           releaseBody: |
             Download the file for your platform below. Checksums and full
             install notes are in the sections that follow once this draft is
@@ -290,11 +290,11 @@ jobs:
             ${{ env.CERTUM_CONFIGURED == 'true' && '**Windows** is signed by Open Source Developer Godwin Josh (Certum). A new certificate may still get one SmartScreen prompt until it builds reputation: choose **More info** then **Run anyway**.' || '**Windows** is unsigned: SmartScreen will say "Windows protected your PC", and you continue with **More info** then **Run anyway**.' }}
             **Linux** packages are unsigned.
 
-            **DeskVNC Support** is also attached, for macOS, Windows and
+            **OraxDesk Support** is also attached, for macOS, Windows and
             Linux, for people who need to receive help. Download it on the computer being
             supported, press Get a code, and share the code or invitation.
 
-            Full changes in [CHANGELOG.md](https://github.com/psmux/DeskVNC/blob/main/CHANGELOG.md).
+            Full changes in [CHANGELOG.md](https://github.com/Mohammedorax/OraxDesk/blob/main/CHANGELOG.md).
           releaseDraft: true
           prerelease: false
 
@@ -339,7 +339,7 @@ jobs:
           security list-keychains -d user -s "$KEYCHAIN" "${KEYCHAINS[@]}"
           security find-identity -v -p codesigning "$KEYCHAIN"
 
-      - name: Build, sign and notarize the DeskVNC Support recipient app
+      - name: Build, sign and notarize the OraxDesk Support recipient app
         if: runner.os == 'macOS'
         shell: bash
         env:
@@ -352,7 +352,7 @@ jobs:
           BOUNDARY_REQUIRE_SIGNING: ${{ (startsWith(github.ref, 'refs/tags/') && secrets.APPLE_CERTIFICATE != '') && '1' || '0' }}
         run: scripts/build-boundary-macos.sh
 
-      - name: Package the DeskVNC Support recipient app
+      - name: Package the OraxDesk Support recipient app
         if: runner.os == 'macOS'
         shell: bash
         run: |
@@ -360,45 +360,45 @@ jobs:
           # Zipped after the script stapled the ticket, so the download carries
           # its own notarization rather than needing Apple on first launch.
           ditto -c -k --sequesterRsrc --keepParent \
-            "dist/DeskVNC Support.app" "DeskVNC-Support-macOS.zip"
-          shasum -a 256 "DeskVNC-Support-macOS.zip" | tee SHA256SUMS-DeskVNC-Support-macOS.txt
+            "dist/OraxDesk Support.app" "OraxDesk-Support-macOS.zip"
+          shasum -a 256 "OraxDesk-Support-macOS.zip" | tee SHA256SUMS-OraxDesk-Support-macOS.txt
           # "Collect installers" below checksums everything in dist/, and a
           # bundle directory sitting there makes shasum complain and skip it.
-          rm -rf "dist/DeskVNC Support.app"
+          rm -rf "dist/OraxDesk Support.app"
           if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
             gh release upload "${GITHUB_REF_NAME}" \
-              "DeskVNC-Support-macOS.zip" \
-              "SHA256SUMS-DeskVNC-Support-macOS.txt" --clobber
+              "OraxDesk-Support-macOS.zip" \
+              "SHA256SUMS-OraxDesk-Support-macOS.txt" --clobber
           fi
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Upload the DeskVNC Support recipient app artifact
+      - name: Upload the OraxDesk Support recipient app artifact
         if: runner.os == 'macOS'
         uses: actions/upload-artifact@v4
         with:
           name: deskvnc-support-macos
           path: |
-            DeskVNC-Support-macOS.zip
-            SHA256SUMS-DeskVNC-Support-macOS.txt
+            OraxDesk-Support-macOS.zip
+            SHA256SUMS-OraxDesk-Support-macOS.txt
 
       # The same app for Windows, signed with the viewer's certificate when
       # signing is configured. The zip carries the checksum beside it.
-      - name: Build the DeskVNC Support recipient app for Windows
+      - name: Build the OraxDesk Support recipient app for Windows
         if: runner.os == 'Windows'
         shell: bash
         run: cargo build --locked --release -p boundary --target x86_64-pc-windows-msvc
 
-      - name: Sign the DeskVNC Support recipient app for Windows
+      - name: Sign the OraxDesk Support recipient app for Windows
         if: runner.os == 'Windows' && steps.certum.outcome == 'success'
         shell: pwsh
         run: |
           & $env:SIGNTOOL sign /sha1 $env:CERTUM_THUMBPRINT /tr http://time.certum.pl `
-            /td SHA256 /fd SHA256 /d "DeskVNC Support" `
+            /td SHA256 /fd SHA256 /d "OraxDesk Support" `
             target/x86_64-pc-windows-msvc/release/boundary.exe
-          if ($LASTEXITCODE -ne 0) { throw "signtool could not sign DeskVNC Support" }
+          if ($LASTEXITCODE -ne 0) { throw "signtool could not sign OraxDesk Support" }
 
-      - name: Package the DeskVNC Support recipient app for Windows
+      - name: Package the OraxDesk Support recipient app for Windows
         if: runner.os == 'Windows'
         shell: bash
         env:
@@ -406,21 +406,21 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p support
-          cp target/x86_64-pc-windows-msvc/release/boundary.exe "support/DeskVNC Support.exe"
-          (cd support && 7z a -tzip ../DeskVNC-Support-Windows.zip "DeskVNC Support.exe")
-          sha256sum DeskVNC-Support-Windows.zip | tee SHA256SUMS-DeskVNC-Support-Windows.txt
+          cp target/x86_64-pc-windows-msvc/release/boundary.exe "support/OraxDesk Support.exe"
+          (cd support && 7z a -tzip ../OraxDesk-Support-Windows.zip "OraxDesk Support.exe")
+          sha256sum OraxDesk-Support-Windows.zip | tee SHA256SUMS-OraxDesk-Support-Windows.txt
           if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
-            gh release upload "${GITHUB_REF_NAME}" DeskVNC-Support-Windows.zip SHA256SUMS-DeskVNC-Support-Windows.txt --clobber
+            gh release upload "${GITHUB_REF_NAME}" OraxDesk-Support-Windows.zip SHA256SUMS-OraxDesk-Support-Windows.txt --clobber
           fi
 
-      - name: Upload the Windows DeskVNC Support artifact
+      - name: Upload the Windows OraxDesk Support artifact
         if: runner.os == 'Windows'
         uses: actions/upload-artifact@v4
         with:
           name: deskvnc-support-windows
           path: |
-            DeskVNC-Support-Windows.zip
-            SHA256SUMS-DeskVNC-Support-Windows.txt
+            OraxDesk-Support-Windows.zip
+            SHA256SUMS-OraxDesk-Support-Windows.txt
 
       # Fail loudly rather than shipping something users cannot open. The
       # bundler only warns when notarization credentials are missing, so
@@ -588,7 +588,7 @@ jobs:
   # on Ubuntu 24.04, because its Wayland screen capture binds PipeWire 1.0 and
   # the viewer stays on 22.04 for the older glibc its installers promise.
   support-linux:
-    name: Linux (DeskVNC Support)
+    name: Linux (OraxDesk Support)
     needs: draft
     runs-on: ubuntu-24.04
     permissions:
@@ -611,7 +611,7 @@ jobs:
         with:
           key: support-linux
 
-      - name: Build and package the DeskVNC Support recipient app
+      - name: Build and package the OraxDesk Support recipient app
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -620,18 +620,18 @@ jobs:
           cargo build --locked --release -p boundary
           mkdir -p support
           cp target/release/boundary support/deskvnc-support
-          tar -C support -czf DeskVNC-Support-Linux-x86_64.tar.gz deskvnc-support
-          sha256sum DeskVNC-Support-Linux-x86_64.tar.gz | tee SHA256SUMS-DeskVNC-Support-Linux.txt
+          tar -C support -czf OraxDesk-Support-Linux-x86_64.tar.gz deskvnc-support
+          sha256sum OraxDesk-Support-Linux-x86_64.tar.gz | tee SHA256SUMS-OraxDesk-Support-Linux.txt
           if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
-            gh release upload "${GITHUB_REF_NAME}" DeskVNC-Support-Linux-x86_64.tar.gz SHA256SUMS-DeskVNC-Support-Linux.txt --clobber
+            gh release upload "${GITHUB_REF_NAME}" OraxDesk-Support-Linux-x86_64.tar.gz SHA256SUMS-OraxDesk-Support-Linux.txt --clobber
           fi
 
       - uses: actions/upload-artifact@v4
         with:
           name: deskvnc-support-linux
           path: |
-            DeskVNC-Support-Linux-x86_64.tar.gz
-            SHA256SUMS-DeskVNC-Support-Linux.txt
+            OraxDesk-Support-Linux-x86_64.tar.gz
+            SHA256SUMS-OraxDesk-Support-Linux.txt
           if-no-files-found: error
           retention-days: 14
 
@@ -659,7 +659,7 @@ jobs:
           # Name the platforms rather than counting files, so a partial upload
           # is caught here instead of by whoever downloads the gap.
           missing=0
-          for want in 'DeskVNC-Support-macOS.zip' 'DeskVNC-Support-Windows.zip' 'DeskVNC-Support-Linux-x86_64.tar.gz' '.dmg' '.msi' '-setup.exe' '.deb' '.rpm' '.AppImage'; do
+          for want in 'OraxDesk-Support-macOS.zip' 'OraxDesk-Support-Windows.zip' 'OraxDesk-Support-Linux-x86_64.tar.gz' '.dmg' '.msi' '-setup.exe' '.deb' '.rpm' '.AppImage'; do
             if ! grep -qF "$want" /tmp/assets.txt; then
               echo "::error::release $TAG is missing an asset matching '$want'"
               missing=1

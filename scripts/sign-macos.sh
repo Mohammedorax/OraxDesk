@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Sign a DeskVNCViewer .app bundle or bare binary with a stable code identity.
+# Sign a OraxDesk .app bundle or bare binary with a stable code identity.
 #
-#   scripts/sign-macos.sh target/release/bundle/macos/DeskVNCViewer.app
+#   scripts/sign-macos.sh target/release/bundle/macos/OraxDesk.app
 #   scripts/sign-macos.sh target/debug/deskvncviewer
 #
 # Why this exists: an unsigned (linker ad-hoc) build has a designated

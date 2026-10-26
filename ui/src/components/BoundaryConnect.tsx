@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { BoundaryProviderSetup } from "./BoundaryProviderSetup";
 import { Dialog } from "./primitives";
 import { mustInvoke, openSessionWindow, readClipboard } from "../lib/tauri";
@@ -31,7 +31,7 @@ function remember(key: string, value: string): void {
   }
 }
 
-/** A machine ID: 64 hex characters, as DeskVNC Support shows it. */
+/** A machine ID: 64 hex characters, as OraxDesk Support shows it. */
 function looksLikeMachineId(text: string): boolean {
   return /^[0-9a-fA-F]{64}$/.test(text.trim());
 }
@@ -51,8 +51,8 @@ function looksLikeNumber(text: string): boolean {
 /**
  * Help someone: connecting to a person who asked for help, both ways in.
  *
- * Help someone now: the person presses Get help in DeskVNC, or opens
- * DeskVNC Support, presses Get a code or Create
+ * Help someone now: the person presses Get help in OraxDesk, or opens
+ * OraxDesk Support, presses Get a code or Create
  * invitation and sends it; it is pasted here for you when it is already on the
  * clipboard. Connect to a computer: a machine with unattended access, by its
  * ID, saved to the Library so it opens like any other computer afterwards.
@@ -78,6 +78,22 @@ export function BoundaryConnect() {
    * move to. See the tab list below.
    */
   const tabRefs = useRef<Partial<Record<Mode, HTMLButtonElement | null>>>({});
+
+  useEffect(() => {
+    if (!open) return;
+    let alive = true;
+    void registry
+      .origin()
+      .then((url) => {
+        if (!alive || url === "") return;
+        setRegistryUrl(url);
+        void rememberRegistryUrl(url);
+      })
+      .catch(() => undefined);
+    return () => {
+      alive = false;
+    };
+  }, [open]);
 
   const reset = () => {
     setOpen(false);
@@ -291,14 +307,14 @@ export function BoundaryConnect() {
           </ol>
           <label className="text-sm">{t("support.theirCode")}<textarea required spellCheck={false} autoComplete="off" maxLength={16384} rows={4} value={invitation} onChange={(event) => { setInvitation(event.target.value); setPasted(false); }} placeholder={t("support.theirCodePlaceholder")} className="mt-1 w-full rounded border border-subtle bg-inset p-2 font-mono text-xs" /></label>
           {pasted && <p className="-mt-2 text-xs text-secondary">{t("support.pasted")}</p>}
-          {numeric && <label className="text-sm">{t("support.registryUrl")}<input type="url" value={registryUrl} onChange={(event) => { setRegistryUrl(event.target.value); rememberRegistryUrl(event.target.value); }} placeholder="https://your-registry.workers.dev" className="mt-1 w-full rounded border border-subtle bg-inset p-2" /><span className="mt-1 block text-xs text-secondary">{t("support.registryHint")}</span></label>}
+          {numeric && <label className="text-sm">{t("support.registryUrl")}<input type="url" value={registryUrl} onChange={(event) => setRegistryUrl(event.target.value)} placeholder="https://your-registry.workers.dev" className="mt-1 w-full rounded border border-subtle bg-inset p-2" /><span className="mt-1 block text-xs text-secondary">{t("support.registryHint")}</span></label>}
           {numeric && <label className="text-sm">{t("support.codeServiceUrl")}<input type="url" value={codeService} onChange={(event) => setCodeService(event.target.value)} placeholder="https://codes.example.com" className="mt-1 w-full rounded border border-subtle bg-inset p-2" /><span className="mt-1 block text-xs text-secondary">{t("support.codeServiceHint")}</span></label>}
           <p className="text-xs text-secondary">{t("support.duringSession")}</p>
           <BoundaryProviderSetup active={open} />
         </> : <>
           <p className="text-sm text-secondary">{t("support.machineIntro")}</p>
           <label className="text-sm">{t("support.computerId")}<input required spellCheck={false} autoComplete="off" value={machineId} onChange={(event) => { setMachineId(event.target.value); setPasted(false); }} placeholder={t("support.computerIdPlaceholder")} className="mt-1 w-full rounded border border-subtle bg-inset p-2 font-mono text-xs" dir="ltr" /><span className="mt-1 block text-xs text-secondary">{t("support.computerIdHint")}</span></label>
-          <label className="text-sm">{t("support.registryUrl")}<input type="url" value={registryUrl} onChange={(event) => { setRegistryUrl(event.target.value); rememberRegistryUrl(event.target.value); }} placeholder="https://your-registry.workers.dev" className="mt-1 w-full rounded border border-subtle bg-inset p-2" dir="ltr" /><span className="mt-1 block text-xs text-secondary">{t("support.registryNumberHint")}</span></label>
+          <label className="text-sm">{t("support.registryUrl")}<input type="url" value={registryUrl} onChange={(event) => setRegistryUrl(event.target.value)} placeholder="https://your-registry.workers.dev" className="mt-1 w-full rounded border border-subtle bg-inset p-2" dir="ltr" /><span className="mt-1 block text-xs text-secondary">{t("support.registryNumberHint")}</span></label>
           {pasted && <p className="-mt-2 text-xs text-secondary">{t("support.pasted")}</p>}
           {machineId.trim() !== "" && !looksLikeMachineId(machineId) && !looksLikeNumber(machineId) && <p className="-mt-2 text-xs text-danger">{t("support.notAnId")}</p>}
           {looksLikeNumber(machineId) && registryUrl.trim() === "" && <p className="-mt-2 text-xs text-secondary">{t("support.numberNeedsRegistry")}</p>}

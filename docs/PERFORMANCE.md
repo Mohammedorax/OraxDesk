@@ -1,6 +1,6 @@
 # Performance
 
-How DeskVNCViewer's pixel hot path is measured, what it currently costs, and how
+How OraxDesk's pixel hot path is measured, what it currently costs, and how
 it compares with the budgets in **PRD/13 §3.6**.
 
 > Every number here is reproducible with the commands in [§2](#2-how-to-reproduce).

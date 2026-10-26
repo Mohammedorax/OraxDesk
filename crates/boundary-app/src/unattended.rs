@@ -45,7 +45,7 @@ pub struct Unattended {
     key: Option<boundary_session::unattended::SecretKey>,
     pub access: Access,
     listener: Option<Listener>,
-    /// Held while listening, so DeskVNC on this computer does not listen
+    /// Held while listening, so OraxDesk on this computer does not listen
     /// as the same ID at the same time.
     claim: Option<std::fs::File>,
     /// Helpers connected unattended now, in the order they came in.
@@ -148,7 +148,7 @@ impl Unattended {
             self.fail("No display found to share unattended".into());
             return;
         };
-        // One answerer per computer: DeskVNC, this app, or the copy at the
+        // One answerer per computer: OraxDesk, this app, or the copy at the
         // sign in or lock screen. Whoever holds the claim has the ID; this
         // copy keeps asking and takes over when the holder lets go.
         match boundary_provision::platform::claim_unattended() {
@@ -158,7 +158,7 @@ impl Unattended {
             }
             Ok(None) => {
                 if !self.handed_over {
-                    self.say("DeskVNC, or the copy at the sign in or lock screen, is answering unattended connections for this computer. This app takes over when it stops");
+                    self.say("OraxDesk, or the copy at the sign in or lock screen, is answering unattended connections for this computer. This app takes over when it stops");
                 }
                 self.handed_over = true;
                 return;
@@ -559,7 +559,7 @@ impl Unattended {
                 changed |= ui.checkbox(&mut helper.control, "may control").changed();
                 changed |= ui
                     .checkbox(&mut helper.tools, "may run commands and copy files")
-                    .on_hover_text("For a helper whose tools, such as DeskVNC's agents, work on this computer while you are away. Commands run as you.")
+                    .on_hover_text("For a helper whose tools, such as OraxDesk's agents, work on this computer while you are away. Commands run as you.")
                     .changed();
                 if ui.button("Remove").clicked() {
                     remove = Some(index);
@@ -722,7 +722,7 @@ pub mod autostart {
     use boundary_provision::autostart::{self, Entry};
 
     const ENTRY: Entry = Entry {
-        name: "DeskVNC Support",
+        name: "OraxDesk Support",
         label: "com.psmux.deskvnc.support",
         file: "deskvnc-support",
     };
@@ -734,7 +734,7 @@ pub mod autostart {
         // off macOS.
         anyhow::ensure!(
             !on || crate::install::translocated().is_none(),
-            "Move DeskVNC Support to Applications first, so it can start when you sign in"
+            "Move OraxDesk Support to Applications first, so it can start when you sign in"
         );
         autostart::set(ENTRY, on)
     }

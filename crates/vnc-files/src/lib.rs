@@ -1,6 +1,6 @@
 //! # vnc-files
 //!
-//! File transfer for DeskVNCViewer, over an **SFTP sidecar** (PRD/08 §2.1).
+//! File transfer for OraxDesk, over an **SFTP sidecar** (PRD/08 §2.1).
 //!
 //! There is no cross-vendor RFB file-transfer standard, TightVNC 1.3,
 //! TightVNC 2.x and UltraVNC each invented their own, mutually incompatible,
