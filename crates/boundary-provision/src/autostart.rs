@@ -38,8 +38,23 @@ fn reg(args: &[&str]) -> Result<std::process::Output> {
         .output()?)
 }
 #[cfg(windows)]
+fn enabled_name(name: &str) -> bool {
+    reg(&["query", RUN, "/v", name]).is_ok_and(|o| o.status.success())
+}
+#[cfg(windows)]
 pub fn enabled(entry: Entry) -> bool {
-    reg(&["query", RUN, "/v", entry.name]).is_ok_and(|o| o.status.success())
+    enabled_name(entry.name)
+}
+#[cfg(windows)]
+pub fn migrate(entry: Entry, legacy_name: &str) -> Result<()> {
+    if !enabled_name(legacy_name) {
+        return Ok(());
+    }
+    let _ = reg(&["delete", RUN, "/v", legacy_name, "/f"]);
+    if !enabled(entry) {
+        set(entry, true)?;
+    }
+    Ok(())
 }
 #[cfg(windows)]
 pub fn set(entry: Entry, on: bool) -> Result<()> {
@@ -69,6 +84,13 @@ fn plist(entry: Entry) -> Result<std::path::PathBuf> {
 #[cfg(target_os = "macos")]
 pub fn enabled(entry: Entry) -> bool {
     plist(entry).is_ok_and(|p| p.exists())
+}
+#[cfg(target_os = "macos")]
+pub fn migrate(entry: Entry, _legacy_name: &str) -> Result<()> {
+    if enabled(entry) {
+        set(entry, true)?;
+    }
+    Ok(())
 }
 #[cfg(target_os = "macos")]
 pub fn set(entry: Entry, on: bool) -> Result<()> {
@@ -107,6 +129,13 @@ fn desktop_file(entry: Entry) -> Result<std::path::PathBuf> {
 #[cfg(all(unix, not(target_os = "macos")))]
 pub fn enabled(entry: Entry) -> bool {
     desktop_file(entry).is_ok_and(|p| p.exists())
+}
+#[cfg(all(unix, not(target_os = "macos")))]
+pub fn migrate(entry: Entry, _legacy_name: &str) -> Result<()> {
+    if enabled(entry) {
+        set(entry, true)?;
+    }
+    Ok(())
 }
 #[cfg(all(unix, not(target_os = "macos")))]
 pub fn set(entry: Entry, on: bool) -> Result<()> {

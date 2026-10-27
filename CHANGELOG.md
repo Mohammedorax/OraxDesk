@@ -10,6 +10,14 @@ to stored data and to the IPC contract between the Rust core and the frontend.
 
 ## [Unreleased]
 
+## [0.31.2] (2026-10-27)
+
+### Fixed
+
+* A legacy DeskVNC sign-in entry is removed on upgrade, and the new OraxDesk
+  entry is enabled in its place. On macOS and Linux, an existing entry is
+  rewritten to point at the current executable.
+
 ## [0.31.1] (2026-10-27)
 
 ### Added

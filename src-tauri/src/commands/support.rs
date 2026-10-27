@@ -43,6 +43,10 @@ const AUTOSTART: autostart::Entry = autostart::Entry {
     label: "com.deskvncviewer.desktop.background",
     file: "deskvnc",
 };
+
+pub(crate) fn migrate_autostart() {
+    let _ = autostart::migrate(AUTOSTART, "DeskVNC");
+}
 /// How often a switched on but stopped listener tries again, for when
 /// OraxDesk Support held the lock and has since quit.
 const RETRY: Duration = Duration::from_secs(15);

@@ -131,6 +131,7 @@ pub fn run() {
             // Get help: sharing this computer, and unattended access when
             // the person switched it on.
             commands::support::install(app.handle());
+            commands::support::migrate_autostart();
             // Started at sign in for unattended access: out of the way until
             // a helper connects, when the window comes forward to say so.
             if std::env::args().any(|a| a == boundary_provision::autostart::BACKGROUND) {
