@@ -516,6 +516,8 @@ fn main() {
             // catch exactly that, but it is not in CI's test list.
             "registry_health",
             "registry_origin",
+            "registry_auto_register",
+            "registry_set_auto_register",
             "registry_set_origin",
             "registry_register_device",
             "registry_register_helper",

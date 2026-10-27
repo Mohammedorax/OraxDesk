@@ -44,6 +44,9 @@ const ar = {
   "device.registered": "الرقم مسجل وجاهز للبحث.",
   "device.registerFailed": "تعذّر تسجيل رقم هذا الجهاز. تحقّق من الاتصال ثم أعد المحاولة.",
   "device.registerRetry": "أعد المحاولة",
+  "device.autoRegister": "تسجيل هذا الجهاز تلقائيًا في سجل OraxDesk",
+  "device.autoRegisterHint": "يمنع التسجيل مستقبلًا. لا يحذف الرقم المسجل بالفعل.",
+  "device.autoRegisterOff": "التسجيل التلقائي متوقف.",
   "device.id": "معرّف هذا الجهاز، للوصول دون الحضور",
   "device.copyId": "نسخ المعرّف",
 
@@ -769,6 +772,7 @@ const ar = {
   "library.alreadyOpen": "{name} مفتوح أصلًا، وأُحضر إلى الأمام",
   "library.connectingTo": "جارٍ الاتصال بـ {address}",
   "library.connectingToPort": "جارٍ الاتصال بـ {address} على المنفذ {port}",
+  "library.lookingUpNumber": "جارٍ البحث عن الرقم {number}…",
   "library.numberNeedsRegistry": "الرقم التسعيني يحتاج سجل OraxDesk. اضبط عنوان السجل من «ساعد شخصًا» ← «أصل إلى جهاز» أولًا.",
   "library.numberLookupFailed": "تعذّر البحث عن الرقم {number}. تحقّق من اتصالك بالسجل ثم أعد المحاولة.",
   "library.numberNotRegistered": "لا يوجد جهاز بهذا الرقم في السجل. اطلب من الشخص الموجود هناك فتح OraxDesk وتحديثه، ثم أعد المحاولة.",
@@ -1369,6 +1373,9 @@ const en: Record<keyof typeof ar, string> = {
   "device.registered": "The number is registered and ready to look up.",
   "device.registerFailed": "Could not register this computer's number. Check the connection and try again.",
   "device.registerRetry": "Try again",
+  "device.autoRegister": "Register this computer automatically in the OraxDesk registry",
+  "device.autoRegisterHint": "Prevents future registration. It does not delete a number already registered.",
+  "device.autoRegisterOff": "Automatic registration is off.",
   "device.id": "This computer's ID, for reaching it unattended",
   "device.copyId": "Copy ID",
 
@@ -2114,6 +2121,7 @@ const en: Record<keyof typeof ar, string> = {
   "library.alreadyOpen": "{name} is already open, brought it to the front",
   "library.connectingTo": "Connecting to {address}",
   "library.connectingToPort": "Connecting to {address} on port {port}",
+  "library.lookingUpNumber": "Looking up number {number}…",
   "library.numberNeedsRegistry":
     "A nine-digit number needs the OraxDesk registry. Set the registry URL under Help someone → A computer I can reach first.",
   "library.numberLookupFailed":

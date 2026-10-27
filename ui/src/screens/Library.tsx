@@ -56,7 +56,7 @@ import { loadRdpDefaults } from "../lib/rdpDefaults";
 import { QuickConnect } from "../components/QuickConnect";
 import { mustInvoke } from "../lib/tauri";
 import { DeviceIdentityCard } from "../components/DeviceIdentityCard";
-import { rememberRegistryUrl, registry } from "../lib/support";
+import { registry } from "../lib/support";
 import { ContextMenu, Dialog, EmptyState, Select, TileSkeleton, type MenuItem } from "../components/primitives";
 import {
   IconActivity,
@@ -323,6 +323,7 @@ export function Library({
         /^\d{9}$/.test(digits) &&
         inTauri()
       ) {
+        push("info", t("library.lookingUpNumber", { number: digits }));
         void (async () => {
           try {
             const registryUrl = await registry.origin();
@@ -330,7 +331,6 @@ export function Library({
               push("danger", t("library.numberNeedsRegistry"));
               return;
             }
-            await rememberRegistryUrl(registryUrl);
             const record = await registry.lookupNumber(registryUrl, digits);
             connectAdHoc("boundary", record.id, 0, digits);
           } catch (err) {

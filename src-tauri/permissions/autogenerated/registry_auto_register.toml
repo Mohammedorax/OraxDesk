@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-registry-auto-register"
+description = "Enables the registry_auto_register command without any pre-configured scope."
+commands.allow = ["registry_auto_register"]
+
+[[permission]]
+identifier = "deny-registry-auto-register"
+description = "Denies the registry_auto_register command without any pre-configured scope."
+commands.deny = ["registry_auto_register"]

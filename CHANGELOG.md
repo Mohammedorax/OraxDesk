@@ -10,6 +10,19 @@ to stored data and to the IPC contract between the Rust core and the frontend.
 
 ## [Unreleased]
 
+## [0.31.1] (2026-10-27)
+
+### Added
+
+* Automatic registry registration can be switched off in the device-number
+  card. Turning it off prevents future registration without deleting the
+  existing number.
+
+### Changed
+
+* A device-number lookup now says that it is looking up the number immediately,
+  and no longer writes the registry origin before every lookup.
+
 ## [0.31.0] (2026-10-27)
 
 ### Added

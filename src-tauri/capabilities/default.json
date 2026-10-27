@@ -156,6 +156,8 @@
 
     "allow-registry-health",
     "allow-registry-origin",
+    "allow-registry-auto-register",
+    "allow-registry-set-auto-register",
     "allow-registry-set-origin",
     "allow-registry-register-device",
     "allow-registry-register-helper",

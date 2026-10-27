@@ -217,6 +217,9 @@ export interface RegistryDevice {
 export const registry = {
   health: (url: string) => mustInvoke<RegistryHealth>("registry_health", { url }),
   origin: () => mustInvoke<string>("registry_origin"),
+  autoRegister: () => mustInvoke<boolean>("registry_auto_register"),
+  setAutoRegister: (enabled: boolean) =>
+    mustInvoke<void>("registry_set_auto_register", { enabled }),
   /**
    * Register this computer under its machine key.
    *

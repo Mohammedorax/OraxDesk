@@ -111,8 +111,11 @@ pub fn run() {
                     tokio::time::sleep(std::time::Duration::from_secs(delay)).await;
                     let state = registry_app.state::<AppState>();
                     match commands::registry::register_this_device(&state).await {
-                        Ok(record) => {
+                        Ok(Some(record)) => {
                             tracing::info!(number = ?record.number, "registered this computer with the registry");
+                            delay = 6 * 60 * 60;
+                        }
+                        Ok(None) => {
                             delay = 6 * 60 * 60;
                         }
                         Err(error) => {
@@ -294,6 +297,8 @@ pub fn run() {
             // device registry (optional; the app works without it)
             commands::registry::registry_health,
             commands::registry::registry_origin,
+            commands::registry::registry_auto_register,
+            commands::registry::registry_set_auto_register,
             commands::registry::registry_register_device,
             commands::registry::registry_register_helper,
             commands::registry::registry_create_code,

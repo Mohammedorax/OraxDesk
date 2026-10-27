@@ -39,8 +39,9 @@ export function DeviceNumber({ machineId }: { machineId: string }): ReactNode {
   const { t } = useI18n();
   const [number, setNumber] = useState("");
   const [registration, setRegistration] = useState<
-    "idle" | "working" | "ok" | { error: string }
+    "idle" | "working" | "ok" | "disabled" | { error: string }
   >("idle");
+  const [autoRegister, setAutoRegister] = useState(true);
 
   const register = useCallback(async (): Promise<void> => {
     if (!inTauri()) return;
@@ -60,8 +61,33 @@ export function DeviceNumber({ machineId }: { machineId: string }): ReactNode {
   }, []);
 
   useEffect(() => {
-    void register();
+    let alive = true;
+    void registry
+      .autoRegister()
+      .then((enabled) => {
+        if (!alive) return;
+        setAutoRegister(enabled);
+        if (enabled) void register();
+        else setRegistration("disabled");
+      })
+      .catch(() => {
+        if (alive) void register();
+      });
+    return () => {
+      alive = false;
+    };
   }, [register]);
+
+  const toggleAutoRegister = async (enabled: boolean): Promise<void> => {
+    setAutoRegister(enabled);
+    if (!enabled) {
+      setRegistration("disabled");
+      await registry.setAutoRegister(false).catch(() => undefined);
+      return;
+    }
+    await registry.setAutoRegister(true).catch(() => undefined);
+    await register();
+  };
 
   useEffect(() => {
     let alive = true;
@@ -119,6 +145,18 @@ export function DeviceNumber({ machineId }: { machineId: string }): ReactNode {
         </div>
       </div>
       <p className="mt-1 text-xs text-secondary">{t("device.numberHint")}</p>
+      <label className="mt-2 flex items-start gap-2 text-xs text-secondary">
+        <input
+          type="checkbox"
+          checked={autoRegister}
+          onChange={(event) => void toggleAutoRegister(event.target.checked)}
+          className="mt-0.5"
+        />
+        <span>
+          <span className="block text-primary">{t("device.autoRegister")}</span>
+          {t("device.autoRegisterHint")}
+        </span>
+      </label>
       {registration === "working" ? (
         <p className="mt-1 text-xs text-secondary">{t("device.registering")}</p>
       ) : null}

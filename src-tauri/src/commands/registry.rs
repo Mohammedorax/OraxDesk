@@ -36,6 +36,9 @@ pub(crate) const DEFAULT_REGISTRY_URL: &str = "https://orax-registry.oraxhome.wo
 /// The setting the number the registry knows this computer by is stored under.
 const REGISTRY_NUMBER_KEY: &str = "registry_number";
 
+/// Whether this computer registers itself without being asked.
+const REGISTRY_AUTO_KEY: &str = "registry_auto_register";
+
 /// This computer's lasting identity, the same key Boundary already uses.
 fn machine_key() -> Result<SecretKey, String> {
     let dir = boundary_provision::platform::data_dir().map_err(|error| format!("{error:#}"))?;
@@ -242,6 +245,33 @@ pub async fn registry_origin(state: State<'_, AppState>) -> Result<String, Strin
     Ok(stored_origin(&state).await?.unwrap_or_default())
 }
 
+async fn auto_register_enabled(state: &AppState) -> Result<bool, String> {
+    let store = state.store.clone();
+    let value = super::blocking(move || store.get_setting(REGISTRY_AUTO_KEY))
+        .await
+        .map_err(|error| error.to_string())?;
+    Ok(value
+        .map(|value| value.trim().to_ascii_lowercase())
+        .is_none_or(|value| value != "0" && value != "false" && value != "off"))
+}
+
+#[tauri::command]
+pub async fn registry_auto_register(state: State<'_, AppState>) -> Result<bool, String> {
+    auto_register_enabled(&state).await
+}
+
+#[tauri::command]
+pub async fn registry_set_auto_register(
+    state: State<'_, AppState>,
+    enabled: bool,
+) -> Result<(), String> {
+    let store = state.store.clone();
+    let value = if enabled { "1" } else { "0" };
+    super::blocking(move || store.set_setting(REGISTRY_AUTO_KEY, value))
+        .await
+        .map_err(|error| error.to_string())
+}
+
 /// Turn a nine-digit number into a device record through the configured
 /// registry. Used before any VNC dial so a number can never become a hostname.
 pub(crate) async fn lookup_device_number(
@@ -261,11 +291,14 @@ pub(crate) async fn lookup_device_number(
 /// Idempotent, so starting the app again only refreshes its metadata.
 pub(crate) async fn register_this_device(
     state: &AppState,
-) -> Result<orax_registry::DeviceRecord, String> {
+) -> Result<Option<orax_registry::DeviceRecord>, String> {
+    if !auto_register_enabled(state).await? {
+        return Ok(None);
+    }
     let origin = stored_origin(state)
         .await?
         .ok_or_else(|| "no registry origin has been set".to_string())?;
-    register_device_at(state, &origin).await
+    register_device_at(state, &origin).await.map(Some)
 }
 
 async fn register_device_at(
