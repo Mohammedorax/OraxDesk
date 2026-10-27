@@ -10,6 +10,16 @@ to stored data and to the IPC contract between the Rust core and the frontend.
 
 ## [Unreleased]
 
+## [0.31.3] (2026-10-28)
+
+### Added
+
+* OraxDesk checks GitHub Releases for a newer version on startup, downloads
+  and installs it, and relaunches. Updates are signed with a free Tauri
+  minisign key, not a paid code-signing certificate.
+* Pushing a `v*` tag now publishes a Windows release and `latest.json` through
+  a dedicated updater workflow.
+
 ## [0.31.2] (2026-10-27)
 
 ### Fixed

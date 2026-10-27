@@ -23,6 +23,7 @@ import { inTauri, safeListen } from "./lib/tauri";
 import { syncSessionMenu } from "./lib/menuSync";
 import { PREF_HIDE_TOOLBAR, readBoolPref, writeBoolPref } from "./lib/prefs";
 import { installContextMenuSuppressor } from "./lib/contextMenu";
+import { installAvailableUpdate } from "./lib/updater";
 
 /**
  * Tell the native menu that nothing is connected in the window in front.
@@ -82,6 +83,14 @@ export default function App(): ReactNode {
    * fields keep theirs, see `lib/contextMenu.ts`.
    */
   useEffect(() => installContextMenuSuppressor(), []);
+
+  useEffect(() => {
+    if (isSession) return;
+    const timer = window.setTimeout(() => {
+      void installAvailableUpdate().catch(() => undefined);
+    }, 15000);
+    return () => window.clearTimeout(timer);
+  }, [isSession]);
 
   return (
     <SettingsProvider>

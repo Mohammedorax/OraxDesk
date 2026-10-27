@@ -6,8 +6,6 @@ name: Release
 #   push tag v*        the same, plus a draft GitHub release with the files
 on:
   workflow_dispatch:
-  push:
-    tags: ["v*"]
 
 env:
   CARGO_TERM_COLOR: always

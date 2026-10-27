@@ -1,0 +1,59 @@
+name: Publish Windows update
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUSTFLAGS: -C target-feature=+crt-static
+
+jobs:
+  publish:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install frontend dependencies
+        run: npm ci --prefix ui
+
+      - name: Build and stage the sidecar
+        shell: pwsh
+        run: |
+          cargo build --release --target x86_64-pc-windows-msvc -p dvv
+          New-Item -ItemType Directory -Force -Path src-tauri/binaries | Out-Null
+          Copy-Item target\x86_64-pc-windows-msvc\release\dvv.exe src-tauri\binaries\dvv-x86_64-pc-windows-msvc.exe -Force
+
+      - name: Build, sign and publish the updater release
+        uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: OraxDesk ${{ github.ref_name }}
+          releaseBody: |
+            Download the Windows installer below.
+
+            Existing OraxDesk installations check this release automatically and
+            install updates signed by the OraxDesk updater key.
+
+            Full changes in CHANGELOG.md.
+          releaseDraft: false
+          prerelease: false
+          args: --target x86_64-pc-windows-msvc
+          updaterJsonPreferNsis: true
+          uploadUpdaterJson: true
+
