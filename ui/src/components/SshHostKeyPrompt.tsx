@@ -97,12 +97,13 @@ export function SshHostKeyPrompt({
 }
 
 function KeyBlock({ label, value }: { label: string; value: string }): ReactNode {
+  const t = useT();
   return (
     <div className="space-y-1 rounded-md bg-inset p-3.5">
       <div className="text-xs text-secondary">{label}</div>
       <div
         className="mono break-all text-xs leading-relaxed text-primary"
-        aria-label={`${label} SSH fingerprint`}
+        aria-label={t("sshHostKey.fingerprintAria", { label })}
       >
         {value}
       </div>

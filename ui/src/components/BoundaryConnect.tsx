@@ -152,18 +152,19 @@ export function BoundaryConnect() {
     // A nine-digit number is resolved to the device id through the registry, so
     // a person can read the number off their screen instead of copying an id.
     let target = machineId.trim().toLowerCase();
-    if (/^[0-9 ]+$/.test(target) && target.replaceAll(" ", "").length === 9) {
+    const number = target.replace(/[\s.-]/g, "");
+    if (/^[\d\s.-]+$/.test(target) && /^\d{9}$/.test(number)) {
       const url = registryUrl.trim();
       if (url === "") throw new Error(t("support.registryUrlRequired"));
       await rememberRegistryUrl(url);
       let record: { id: string };
       try {
-        record = await registry.lookupNumber(url, target);
+        record = await registry.lookupNumber(url, number);
       } catch (err) {
         // The usual reason is that the other computer has not registered with
         // this registry, which is a different thing from a wrong number and
         // one the person reading the screen can fix.
-        throw new Error(t("support.numberNotRegistered", { reason: describeError(err) }));
+        throw new Error(t("support.numberNotRegistered"));
       }
       target = record.id;
     }
@@ -200,7 +201,9 @@ export function BoundaryConnect() {
     (mode === "invite"
       ? invitation.trim() !== ""
       : looksLikeMachineId(machineId) ||
-        (/^[0-9 ]+$/.test(machineId.trim()) && machineId.replaceAll(" ", "").length === 9 && registryUrl.trim() !== ""));
+        (/^[\d\s.-]+$/.test(machineId.trim()) &&
+          /^\d{9}$/.test(machineId.replace(/[\s.-]/g, "")) &&
+          registryUrl.trim() !== ""));
 
   /**
    * The two ways in, as a tab list.

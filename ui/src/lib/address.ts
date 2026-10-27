@@ -418,7 +418,8 @@ export function presetProtocol(target: { port: number }): ProtocolKind {
 
 export function compactDeviceNumber(input: string): string {
   const trimmed = input.trim();
-  return /^\d{3}(?:\s+\d{3}){2}$/.test(trimmed) ? trimmed.replace(/\s+/g, "") : input;
+  const compact = trimmed.replace(/[\s.-]/g, "");
+  return /^[\d\s.-]+$/.test(trimmed) && /^\d{9}$/.test(compact) ? compact : input;
 }
 
 /**

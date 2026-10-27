@@ -12,6 +12,13 @@ Download the file for your platform from the
 | Fedora, RHEL | `OraxDesk-<version>-1.x86_64.rpm` |
 | Any x64 Linux | `OraxDesk_<version>_amd64.AppImage` |
 
+## Upgrading from DeskVNCViewer
+
+OraxDesk keeps the existing library, credentials and device identity. Uninstall
+the old **DeskVNCViewer** application first: the Windows MSI upgrades in place,
+but the NSIS, macOS and Linux packages can otherwise keep both applications side
+by side and contend for the same data and single-instance lock.
+
 ## macOS
 
 Open the DMG and drag the app to Applications.

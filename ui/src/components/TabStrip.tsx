@@ -131,7 +131,7 @@ export function TabStrip({
             label={tab.title}
             // Said in words rather than left to a shape, because a shape is
             // exactly what a screen reader cannot pass on.
-            status={driven ? `${status.label}, agent driving` : status.label}
+            status={driven ? t("common.tabDriven", { status: status.label }) : status.label}
           />
         );
       })}

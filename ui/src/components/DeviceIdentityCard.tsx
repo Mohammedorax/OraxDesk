@@ -19,13 +19,24 @@ export function DeviceIdentityCard(): ReactNode {
 
   useEffect(() => {
     let alive = true;
-    void mustInvoke<Identity>("machine_identity")
-      .then((value) => {
-        if (alive) setIdentity(value);
-      })
-      .catch(() => undefined);
+    const load = (): void => {
+      void mustInvoke<Identity>("machine_identity")
+        .then((value) => {
+          if (alive) setIdentity(value);
+        })
+        .catch(() => undefined);
+    };
+    load();
+    const refresh = window.setTimeout(load, 6000);
+    const onNumber = (event: Event): void => {
+      const next = (event as CustomEvent<string>).detail;
+      if (next) setIdentity((previous) => (previous ? { ...previous, number: next } : previous));
+    };
+    window.addEventListener("oraxdesk:registry-number", onNumber);
     return () => {
       alive = false;
+      window.clearTimeout(refresh);
+      window.removeEventListener("oraxdesk:registry-number", onNumber);
     };
   }, []);
 
@@ -34,7 +45,11 @@ export function DeviceIdentityCard(): ReactNode {
     <div className="mx-4 mt-3 flex flex-wrap items-center justify-between gap-3 rounded border border-subtle bg-inset/40 px-3 py-2">
       <span className="text-sm text-secondary">{t("device.number")}</span>
       <div className="flex items-center gap-2">
-        <span className="mono select-all text-lg font-semibold tracking-wider">
+        <span
+          dir="ltr"
+          style={{ unicodeBidi: "isolate" }}
+          className="mono select-all text-lg font-semibold tracking-wider"
+        >
           {groupDigits(identity.number)}
         </span>
         <button

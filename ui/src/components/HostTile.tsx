@@ -67,8 +67,13 @@ export function ProtocolBadge({ protocol }: { protocol: string }): ReactNode {
 }
 
 function OnlineDot({ online }: { online: boolean | null | undefined }): ReactNode {
+  const t = useT();
   const cls = online ? "bg-success" : "bg-tertiary/60";
-  const label = online ? "Online" : online === false ? "Unreachable" : "Status unknown";
+  const label = online
+    ? t("common.online")
+    : online === false
+      ? t("common.unreachable")
+      : t("common.statusUnknown");
   return <span className={`inline-block h-2 w-2 shrink-0 rounded-full ${cls}`} role="img" aria-label={label} />;
 }
 
@@ -425,6 +430,7 @@ export function DiscoveredTile({
    */
   thumb?: string | null;
 }): ReactNode {
+  const t = useT();
   const { thumbnailUrl, requestThumbnail } = useHosts();
   const { forKey, livePreviews } = useSessions();
   const key = discoveredThumbKey(host.address, host.port);
@@ -449,12 +455,10 @@ export function DiscoveredTile({
   const proven = isWindowsNameSource(host.nameSource);
   const via = nameSourceLabel(host.nameSource);
   const osTitle = proven
-    ? `Windows, name resolved via ${via}, which only a Windows machine answers`
+    ? t("host.osWindowsResolved", { via: via ?? "" })
     : os === "unknown"
-      ? "Operating system not identified"
-      // Protocol neutral, and more accurate than it was: the inference has
-      // always used NetBIOS and RDP certificates as well as the RFB banner.
-      : `${osLabel(os)}, inferred from what it answers on the network`;
+      ? t("common.osUnknown")
+      : t("host.osInferred", { os: osLabel(os) ?? "" });
 
   // The MAC is not tile furniture: it is unreadable at a glance and only
   // matters at the moment you save the host (it becomes the Wake-on-LAN

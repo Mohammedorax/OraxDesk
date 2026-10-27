@@ -1042,11 +1042,11 @@ pub(crate) fn resolve_protocol(
 }
 
 fn device_number_candidate(address: &str, protocol: Option<&str>) -> Option<String> {
-    let compact: String = address
+    let separators_only = address
         .chars()
-        .filter(|c| !c.is_ascii_whitespace())
-        .collect();
-    if compact.len() != 9 || !compact.bytes().all(|b| b.is_ascii_digit()) {
+        .all(|c| c.is_ascii_digit() || c.is_ascii_whitespace() || c == '-' || c == '.');
+    let compact: String = address.chars().filter(|c| c.is_ascii_digit()).collect();
+    if !separators_only || compact.len() != 9 {
         return None;
     }
     if protocol
@@ -1067,9 +1067,7 @@ async fn registry_device_id(
     };
     let record = super::registry::lookup_device_number(state, &number)
         .await
-        .map_err(|error| {
-            format!("The registry does not have a computer numbered {number}: {error}")
-        })?;
+        .map_err(|error| format!("Could not resolve device number {number}: {error}"))?;
     Ok(Some((record.id, number)))
 }
 
@@ -2819,6 +2817,14 @@ mod device_number_tests {
         );
         assert_eq!(
             device_number_candidate("910 002 600", Some("boundary")),
+            Some("910002600".into())
+        );
+        assert_eq!(
+            device_number_candidate("910-002-600", None),
+            Some("910002600".into())
+        );
+        assert_eq!(
+            device_number_candidate("910.002.600", Some("vnc")),
             Some("910002600".into())
         );
     }

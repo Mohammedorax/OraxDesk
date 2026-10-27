@@ -214,7 +214,7 @@ export function PaneHeader({
         onClick={onZoom}
         className="shrink-0 rounded-sm p-0.5 text-tertiary hover:bg-strong/25 hover:text-primary"
         aria-label={zoomed ? t("common.restorePane", { title }) : t("common.maximisePane", { title })}
-        title={zoomed ? "Restore this pane" : "Maximise this pane"}
+        title={zoomed ? t("common.restorePane", { title }) : t("common.maximisePane", { title })}
       >
         {zoomed ? <IconMinimize size={11} /> : <IconMaximize size={11} />}
       </button>

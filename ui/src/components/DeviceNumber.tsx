@@ -48,7 +48,11 @@ export function DeviceNumber({ machineId }: { machineId: string }): ReactNode {
     try {
       const origin = await registry.origin();
       if (origin === "") throw new Error("no registry origin");
-      await registry.registerDevice(origin);
+      const saved = await registry.registerDevice(origin);
+      if (saved.number) {
+        setNumber(saved.number);
+        window.dispatchEvent(new CustomEvent("oraxdesk:registry-number", { detail: saved.number }));
+      }
       setRegistration("ok");
     } catch (err) {
       setRegistration({ error: describeError(err) });

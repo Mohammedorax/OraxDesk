@@ -113,7 +113,7 @@ pub fn run() {
                     match commands::registry::register_this_device(&state).await {
                         Ok(record) => {
                             tracing::info!(number = ?record.number, "registered this computer with the registry");
-                            break;
+                            delay = 6 * 60 * 60;
                         }
                         Err(error) => {
                             tracing::warn!(%error, "the registry did not register this computer; retrying");

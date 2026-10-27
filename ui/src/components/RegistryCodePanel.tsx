@@ -131,6 +131,8 @@ export function RegistryCodePanel({ invitation }: { invitation: string }): React
             setUrl(event.target.value);
           }}
           placeholder="https://orax-registry.example.workers.dev"
+          dir="ltr"
+          style={{ unicodeBidi: "isolate" }}
           className="mt-1 w-full rounded border border-subtle bg-inset p-2"
         />
       </label>

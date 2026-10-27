@@ -38,6 +38,9 @@ no account, no telemetry, and no paid tier holding a feature back.
    macOS is signed and notarized, so it opens normally. The Windows installer
    is signed too. Because the certificate is new, SmartScreen may still ask
    once: choose **More info**, then **Run anyway**.
+   If you already have **DeskVNCViewer** installed, uninstall it before
+   installing OraxDesk. The MSI upgrades in place; the NSIS, macOS and Linux
+   packages may otherwise keep both applications side by side.
 2. Open it and press **New Host**, or paste an address straight into the bar at
    the top and press **Connect**, which saves nothing.
 3. Double click a tile. That is the whole flow.
@@ -287,6 +290,8 @@ Licensed under either of
 * MIT License ([LICENSE-MIT](LICENSE-MIT) or <https://opensource.org/licenses/MIT>)
 
 at your option.
+
+Attribution notices are in [NOTICE](NOTICE).
 
 Unless you explicitly state otherwise, any contribution intentionally submitted
 for inclusion in this work by you, as defined in the Apache-2.0 license, shall

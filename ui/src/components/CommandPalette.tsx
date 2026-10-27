@@ -124,7 +124,7 @@ export function CommandPalette({
         <div ref={listRef} id="palette-list" role="listbox" className="max-h-80 overflow-y-auto p-1.5">
           {entries.length === 0 ? (
             <div className="px-3 py-6 text-center text-sm text-tertiary">
-              No matches for “{query}”
+              {t("common.noPaletteMatch", { query })}
             </div>
           ) : (
             entries.map((entry, i) => (

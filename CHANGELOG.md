@@ -10,6 +10,36 @@ to stored data and to the IPC contract between the Rust core and the frontend.
 
 ## [Unreleased]
 
+## [0.31.0] (2026-10-27)
+
+### Added
+
+* The nine-digit device number is registered automatically at the OraxDesk
+  registry, with retrying registration, visible status and a retry button.
+* Nine-digit numbers are resolved to a Boundary device before any VNC dial, so
+  a device number can never be treated as a hostname.
+
+### Changed
+
+* The product, installer, windows, menus and documentation are now OraxDesk.
+  Existing storage, keychain and bundle identifiers are retained so the library
+  and the device identity survive the upgrade.
+* Remaining interface strings in the sidebar, command palette, pane picker, tab
+  strip, session dialogs and SSH host-key prompt are translated into Arabic.
+* The Windows MSI pins the original upgrade code, so it upgrades an existing
+  installation instead of installing beside it.
+
+### Fixed
+
+* A failed registry lookup no longer shows a mixed Arabic/English error, and a
+  missing device number says that the other computer has not registered yet.
+* The Library device number is LTR-isolated in Arabic, and refreshes after the
+  registry assigns a number.
+* Registration is refreshed every six hours so an unused device is not removed
+  from the registry by cleanup.
+* Grouped device numbers with spaces, hyphens or dots are treated as numbers in
+  both the UI and the session guard.
+
 ## [0.30.0] (2026-10-17)
 
 ### Added

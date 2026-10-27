@@ -317,8 +317,12 @@ export function Library({
   // wrong kind of thing.
   const connectAdHocResolved = useCallback(
     (protocol: ProtocolKind, address: string, port: number): void => {
-      const digits = address.trim().replaceAll(" ", "");
-      if (/^\d{9}$/.test(digits) && inTauri()) {
+      const digits = address.replace(/[\s.-]/g, "");
+      if (
+        (protocol === "vnc" || protocol === "boundary") &&
+        /^\d{9}$/.test(digits) &&
+        inTauri()
+      ) {
         void (async () => {
           try {
             const registryUrl = await registry.origin();

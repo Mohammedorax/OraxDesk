@@ -126,7 +126,7 @@ export function PanePicker({
       if (!outcome) return;
       if (outcome.reused) {
         if (sessions[outcome.sessionId]) adopt(tabId, paneId, outcome.sessionId);
-        else push("info", `${label} is already open in a window of its own`);
+        else push("info", t("common.alreadyOpenWindow", { name: label }));
         return;
       }
       if (outcome.target === "tab" && outcome.params) {
