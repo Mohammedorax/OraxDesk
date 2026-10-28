@@ -10,6 +10,12 @@ to stored data and to the IPC contract between the Rust core and the frontend.
 
 ## [Unreleased]
 
+### Fixed
+
+* A device number that an older build had stored in the helper-name box is
+  replaced with the neutral helper name instead of being shown to the person
+  being helped.
+
 ## [0.31.5] (2026-10-28)
 
 ### Added

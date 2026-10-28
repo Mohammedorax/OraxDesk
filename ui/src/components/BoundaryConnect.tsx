@@ -127,7 +127,12 @@ export function BoundaryConnect({
   const [invitation, setInvitation] = useState("");
   const [codeService, setCodeService] = useState("");
   const [registryUrl, setRegistryUrl] = useState(rememberedRegistryUrl());
-  const [name, setName] = useState(() => remembered(NAME_KEY) || t("support.defaultHelperName"));
+  const [name, setName] = useState(() => {
+    const saved = remembered(NAME_KEY).trim();
+    // An old build let a device number be saved in the name box. It is not a
+    // name, and showing it to the person being helped is confusing.
+    return saved === "" || /^\d{6,12}$/.test(saved) ? t("support.defaultHelperName") : saved;
+  });
   const [machineId, setMachineId] = useState("");
   const [machineName, setMachineName] = useState("");
   const [password, setPassword] = useState("");
@@ -221,7 +226,10 @@ export function BoundaryConnect({
     }
     await mustInvoke("connect_boundary", {
       invitation: resolved,
-      helperName: name.trim() || t("support.defaultHelperName"),
+      helperName:
+        name.trim() === "" || /^\d{6,12}$/.test(name.trim())
+          ? t("support.defaultHelperName")
+          : name.trim(),
       codeService: codeService.trim() || null,
     });
   };
