@@ -23,9 +23,10 @@ import {
  * The approval itself and the banner shown while someone is connected live in
  * `SupportOverlay`, so they appear whether or not this window is open.
  */
-export function GetHelp(): ReactNode {
+export function GetHelp({ variant = "toolbar" }: { variant?: "toolbar" | "hero" } = {}): ReactNode {
   const { t } = useI18n();
   const [open, setOpen] = useState(false);
+  const hero = variant === "hero";
   const view = useSupport();
   const show = () => {
     setOpen(true);
@@ -40,7 +41,11 @@ export function GetHelp(): ReactNode {
     <>
       <button
         type="button"
-        className={`rounded-md border px-3 py-1.5 text-sm hover:bg-inset ${busy ? "border-danger text-danger" : "border-subtle text-primary"}`}
+        className={
+          hero
+            ? "btn-primary px-6 py-3 text-base"
+            : `rounded-md border px-3 py-1.5 text-sm hover:bg-inset ${busy ? "border-danger text-danger" : "border-subtle text-primary"}`
+        }
         onClick={show}
         title={t("gethelp.intro")}
       >
@@ -162,6 +167,27 @@ function DisplayPicker({ view, run }: { view: SupportView; run: Run }): ReactNod
 function Share({ view, run }: { view: SupportView; run: Run }): ReactNode {
   const { t } = useI18n();
   const label = view.codesAvailable ? t("gethelp.getCode") : t("gethelp.createInvitation");
+  const groupedCode = view.code ? view.code.replace(/(\d{4})(?=\d)/g, "$1 ") : "";
+  const shareMessage = view.code ? t("registry.shareMessage", { code: groupedCode }) : "";
+
+  const fullInvitation = view.invitation ? (
+    <details className="text-xs text-secondary">
+      <summary className="cursor-pointer">{t("gethelp.fallbackInvitation")}</summary>
+      <textarea
+        readOnly
+        rows={4}
+        value={view.invitation}
+        className="mono mt-2 w-full rounded border border-subtle bg-inset p-2 text-xs"
+        onFocus={(event) => event.target.select()}
+      />
+      <div className="mt-2">
+        <Copy text={view.invitation} label={t("gethelp.copyInvitationText")} />
+      </div>
+      <p className="mt-1">{t("gethelp.sendPrivately")}</p>
+      {view.codeMessage ? <p className="mt-1 text-sm text-danger">{view.codeMessage}</p> : null}
+    </details>
+  ) : null;
+
   let body: ReactNode;
   if (!view.sharing) {
     if (!view.screenPermission) body = <ScreenPermission />;
@@ -188,61 +214,44 @@ function Share({ view, run }: { view: SupportView; run: Run }): ReactNode {
           <p className="text-xs text-secondary">{t("gethelp.shareIntro")}</p>
         </>
       );
-  } else if (!view.invitation || view.codeBusy) {
-    body = (
-      <>
-        <p className="text-sm text-secondary">{view.invitation ? t("gethelp.gettingCode") : t("gethelp.creatingCode")}</p>
-        {view.invitation ? (
-          <div>
-            <button type="button" className="btn-secondary px-3 py-1 text-xs" onClick={() => run(support.fullInvitation)}>
-              {t("gethelp.useFullInvitation")}
-            </button>
-          </div>
-        ) : null}
-      </>
-    );
   } else if (view.code) {
     body = (
       <>
-        <p className="mono select-all text-center text-3xl font-semibold tracking-wider">{view.code}</p>
+        <p dir="ltr" style={{ unicodeBidi: "isolate" }} className="mono select-all text-center text-3xl font-semibold tracking-wider">
+          {groupedCode}
+        </p>
         <p className="text-xs text-secondary">{t("gethelp.readOut")}</p>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <Copy text={view.code} label={t("gethelp.copyCode")} />
-          <Copy text={view.invitation} label={t("gethelp.copyInvitation")} />
+          <Copy text={shareMessage} label={t("gethelp.copyMessage")} />
         </div>
+        {fullInvitation}
+      </>
+    );
+  } else if (view.invitation) {
+    body = (
+      <>
+        {view.codeBusy ? <p className="text-sm text-secondary">{t("gethelp.gettingCode")}</p> : null}
+        {!view.codeBusy ? <RegistryCodePanel invitation={view.invitation} /> : null}
+        {fullInvitation}
       </>
     );
   } else {
-    body = (
-      <>
-        <textarea
-          readOnly
-          rows={4}
-          value={view.invitation}
-          className="mono w-full rounded border border-subtle bg-inset p-2 text-xs"
-          onFocus={(event) => event.target.select()}
-        />
-        <div>
-          <Copy text={view.invitation} label={t("gethelp.copyInvitationText")} />
-        </div>
-        <p className="text-xs text-secondary">{t("gethelp.sendPrivately")}</p>
-        {view.codeMessage ? <p className="text-sm text-danger">{view.codeMessage}</p> : null}
-      </>
-    );
+    body = <p className="text-sm text-secondary">{t("gethelp.creatingCode")}</p>;
   }
+
   return (
     <div className="flex flex-col gap-3">
       <div>
         <h3 className="font-semibold">{t("gethelp.allowRemoteControl")}</h3>
         <p className="text-sm text-secondary">
           {t("gethelp.giveAccess", {
-            what: view.codesAvailable ? t("gethelp.thisCode") : t("gethelp.thisInvitation"),
+            what: view.code ? t("gethelp.thisCode") : t("gethelp.thisInvitation"),
           })}
         </p>
       </div>
       {view.unattended.machineId ? <DeviceNumber machineId={view.unattended.machineId} /> : null}
       {body}
-      {view.sharing && view.invitation ? <RegistryCodePanel invitation={view.invitation} /> : null}
       {view.sharing ? (
         <div>
           <button type="button" className="btn-secondary" onClick={() => run(support.stop)}>
@@ -356,14 +365,37 @@ function Sharing({ view, run }: { view: SupportView; run: Run }): ReactNode {
 }
 
 function StatusLine({ view }: { view: SupportView }): ReactNode {
-  const color = view.error ? "bg-danger" : view.connected || !view.sharing ? "bg-success" : "bg-warning";
+  const { t } = useI18n();
+  const state = view.error
+    ? "error"
+    : view.connected
+      ? "connected"
+      : view.sharing
+        ? "waiting"
+        : "ready";
+  const color =
+    state === "error" ? "bg-danger" : state === "ready" || state === "connected" ? "bg-success" : "bg-warning";
+  const label =
+    state === "error"
+      ? t("gethelp.statusError")
+      : state === "connected"
+        ? t("gethelp.statusConnected")
+        : state === "waiting"
+          ? t("gethelp.statusWaiting")
+          : t("gethelp.statusReady");
   return (
     <div className="flex flex-wrap items-center gap-2 text-xs">
       <span className={`inline-block size-2 rounded-full ${color}`} />
-      <span>{view.status}</span>
-      {view.warning ? <span className="text-warning">{view.warning}</span> : null}
-      {view.route ? <span className="text-secondary">{view.route}</span> : null}
-      <span className="ml-auto text-secondary">{view.networkLabel}</span>
+      <span>{label}</span>
+      <details className="ml-auto text-secondary">
+        <summary className="cursor-pointer">{t("gethelp.statusDetails")}</summary>
+        <div className="mt-1 flex flex-col gap-1 text-end">
+          {view.status ? <span>{view.status}</span> : null}
+          {view.warning ? <span className="text-warning">{view.warning}</span> : null}
+          {view.route ? <span>{view.route}</span> : null}
+          {view.networkLabel ? <span>{view.networkLabel}</span> : null}
+        </div>
+      </details>
     </div>
   );
 }

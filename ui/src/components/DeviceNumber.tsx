@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { useI18n } from "../lib/i18n";
-import { registry } from "../lib/support";
+import { registryErrorKind } from "../lib/help";
+import { registry, support } from "../lib/support";
 import { inTauri, mustInvoke, writeClipboard } from "../lib/tauri";
 import { describeError } from "../lib/util";
 
@@ -42,9 +43,18 @@ export function DeviceNumber({ machineId }: { machineId: string }): ReactNode {
     "idle" | "working" | "ok" | "disabled" | { error: string }
   >("idle");
   const [autoRegister, setAutoRegister] = useState(true);
+  /**
+   * The registration is a network round trip and the background task also
+   * retries, so two clicks (or a focus event) must not start two registrations
+   * at once. This is a ref rather than state because the guard has to be true
+   * before React has rendered the "working" state.
+   */
+  const inFlight = useRef(false);
+  const retryDelay = useRef(5_000);
 
   const register = useCallback(async (): Promise<void> => {
-    if (!inTauri()) return;
+    if (!inTauri() || inFlight.current) return;
+    inFlight.current = true;
     setRegistration("working");
     try {
       const origin = await registry.origin();
@@ -54,9 +64,12 @@ export function DeviceNumber({ machineId }: { machineId: string }): ReactNode {
         setNumber(saved.number);
         window.dispatchEvent(new CustomEvent("oraxdesk:registry-number", { detail: saved.number }));
       }
+      retryDelay.current = 5_000;
       setRegistration("ok");
     } catch (err) {
       setRegistration({ error: describeError(err) });
+    } finally {
+      inFlight.current = false;
     }
   }, []);
 
@@ -85,9 +98,38 @@ export function DeviceNumber({ machineId }: { machineId: string }): ReactNode {
       await registry.setAutoRegister(false).catch(() => undefined);
       return;
     }
+    retryDelay.current = 5_000;
     await registry.setAutoRegister(true).catch(() => undefined);
     await register();
   };
+
+  // A failed registration retries itself. The backend already has its own
+  // retry loop; this one keeps the card truthful while the person is looking
+  // at it, and it backs off instead of hammering a registry that is down.
+  useEffect(() => {
+    if (!autoRegister || typeof registration !== "object") return;
+    const delay = retryDelay.current;
+    retryDelay.current = Math.min(Math.round(delay * 2), 5 * 60_000);
+    const timer = window.setTimeout(() => void register(), delay);
+    return () => window.clearTimeout(timer);
+  }, [autoRegister, registration, register]);
+
+  // Coming back from the date/time settings is the moment a clock failure is
+  // most likely fixed, and regaining the network is the moment an offline
+  // failure is most likely fixed. Both should retry immediately rather than
+  // waiting for the backoff timer.
+  useEffect(() => {
+    if (!autoRegister || typeof registration !== "object") return;
+    const retry = (): void => {
+      void register();
+    };
+    window.addEventListener("online", retry);
+    window.addEventListener("focus", retry);
+    return () => {
+      window.removeEventListener("online", retry);
+      window.removeEventListener("focus", retry);
+    };
+  }, [autoRegister, registration, register]);
 
   useEffect(() => {
     let alive = true;
@@ -109,10 +151,24 @@ export function DeviceNumber({ machineId }: { machineId: string }): ReactNode {
   }, [machineId]);
 
   if (number === "") return null;
+
+  const error = typeof registration === "object" ? registration.error : "";
+  const errorKind = error === "" ? "other" : registryErrorKind(error);
+  const ready = registration === "ok";
+  const canRead = ready || registration === "disabled";
+
   return (
     <div className="mt-2 rounded border border-subtle bg-inset/40 p-3">
       <div className="flex items-center justify-between gap-3">
-        <span className="text-sm text-secondary">{t("device.number")}</span>
+        <span className="flex items-center gap-2 text-sm text-secondary">
+          <span
+            aria-hidden="true"
+            className={`inline-block size-2 rounded-full ${
+              ready ? "bg-success" : error ? "bg-danger" : registration === "disabled" ? "bg-tertiary" : "bg-warning"
+            }`}
+          />
+          {t("device.number")}
+        </span>
         <div className="flex items-center gap-2">
           {/*
             The number is a run of digits with spaces in it, and it is read
@@ -138,6 +194,8 @@ export function DeviceNumber({ machineId }: { machineId: string }): ReactNode {
           <button
             type="button"
             className="btn-secondary"
+            disabled={!canRead}
+            title={canRead ? undefined : t("device.registerNotReady")}
             onClick={() => void writeClipboard(number).catch(() => undefined)}
           >
             {t("device.copyNumber")}
@@ -157,24 +215,47 @@ export function DeviceNumber({ machineId }: { machineId: string }): ReactNode {
           {t("device.autoRegisterHint")}
         </span>
       </label>
-      {registration === "working" ? (
+      {registration === "idle" || registration === "working" ? (
         <p className="mt-1 text-xs text-secondary">{t("device.registering")}</p>
       ) : null}
       {registration === "ok" ? (
-        <p className="mt-1 text-xs text-secondary">{t("device.registered")}</p>
+        <p className="mt-1 text-xs text-success">{t("device.registered")}</p>
+      ) : null}
+      {registration === "disabled" ? (
+        <p className="mt-1 text-xs text-secondary">{t("device.autoRegisterOff")}</p>
       ) : null}
       {typeof registration === "object" ? (
-        <div className="mt-1 flex flex-wrap items-center gap-2">
+        <div className="mt-2 rounded border border-danger/40 bg-danger/10 p-2">
           <p role="alert" className="text-xs text-danger">
-            {t("device.registerFailed", { reason: registration.error })}
+            {errorKind === "clock"
+              ? t("device.registerClock")
+              : errorKind === "network"
+                ? t("device.registerNetwork")
+                : t("device.registerNotReady")}
           </p>
-          <button
-            type="button"
-            className="btn-secondary px-2 py-0.5 text-xs"
-            onClick={() => void register()}
-          >
-            {t("device.registerRetry")}
-          </button>
+          <details className="mt-1 text-xs text-secondary">
+            <summary className="cursor-pointer">{t("device.registerFailed")}</summary>
+            <p className="mt-1 break-all font-mono text-2xs">{error}</p>
+          </details>
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              className="btn-secondary px-2 py-0.5 text-xs"
+              onClick={() => void register()}
+            >
+              {t("device.registerRetry")}
+            </button>
+            {errorKind === "clock" ? (
+              <button
+                type="button"
+                className="btn-secondary px-2 py-0.5 text-xs"
+                onClick={() => void support.openTimeSettings().catch(() => undefined)}
+              >
+                {t("device.fixTime")}
+              </button>
+            ) : null}
+          </div>
+          <p className="mt-1 text-2xs text-secondary">{t("device.retrying")}</p>
         </div>
       ) : null}
     </div>

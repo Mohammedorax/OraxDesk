@@ -1237,6 +1237,13 @@ pub async fn support_request_screen_permission() -> Result<(), String> {
 pub async fn support_open_input_settings() -> Result<(), String> {
     boundary_platform::open_input_settings().map_err(|e| format!("{e:#}"))
 }
+
+/// Open the OS date and time settings, for a registry that rejected this
+/// computer's clock or an invitation that looked expired on the other side.
+#[tauri::command]
+pub async fn support_open_time_settings() -> Result<(), String> {
+    boundary_platform::open_time_settings().map_err(|e| format!("{e:#}"))
+}
 #[tauri::command]
 pub async fn support_save_network(
     app: AppHandle,

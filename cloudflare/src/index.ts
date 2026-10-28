@@ -156,6 +156,10 @@ async function health(env: Env): Promise<Response> {
       api: "v1",
       db: dbOk ? "ok" : "unavailable",
       invitation_key: invitationKey,
+      // A device whose clock is wrong can still sign a request correctly by
+      // measuring this against its own clock. Date is a fallback for older
+      // Workers; this field gives the same answer without parsing a header.
+      server_time: Math.floor(Date.now() / 1000),
     },
     healthy ? 200 : 503,
   );

@@ -1,5 +1,6 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { writeClipboard } from "../lib/tauri";
+import { helpLink } from "../lib/help";
 import { rememberRegistryUrl, rememberedRegistryUrl, registry } from "../lib/support";
 import { useI18n } from "../lib/i18n";
 
@@ -20,6 +21,9 @@ export function RegistryCodePanel({ invitation }: { invitation: string }): React
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const [copied, setCopied] = useState(false);
+  /** Auto-create only once; a failure leaves the button in the person's hand. */
+  const autoTried = useRef(false);
   /** What the registry said about itself, once it has been asked. */
   const [health, setHealth] = useState<{ status: string; db: string; invitation_key: string } | null>(
     null,
@@ -67,7 +71,7 @@ export function RegistryCodePanel({ invitation }: { invitation: string }): React
     };
   }, [url]);
 
-  const create = async () => {
+  const create = useCallback(async (): Promise<void> => {
     setBusy(true);
     setError("");
     setMessage("");
@@ -94,7 +98,17 @@ export function RegistryCodePanel({ invitation }: { invitation: string }): React
     } finally {
       setBusy(false);
     }
-  };
+  }, [invitation, lang, t, url]);
+
+  // One click on "Get a code" should end with a code on screen, not with a
+  // second button that says "create a code". The registry URL is resolved
+  // first, so this waits for the origin rather than firing at an empty URL.
+  useEffect(() => {
+    if (autoTried.current || code !== null || busy) return;
+    if (url.trim() === "") return;
+    autoTried.current = true;
+    void create();
+  }, [busy, code, create, url]);
 
   const withdraw = async () => {
     if (!revokeToken) return;
@@ -113,91 +127,116 @@ export function RegistryCodePanel({ invitation }: { invitation: string }): React
     }
   };
 
+  const copyText = (text: string): void => {
+    void writeClipboard(text).then((ok) => {
+      if (!ok) return;
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1500);
+    });
+  };
   const grouped = code ? code.replace(/(\d{4})(?=\d)/g, "$1 ") : "";
+  const shareMessage = code ? t("registry.shareMessage", { code: grouped }) : "";
 
   return (
-    <div className="rounded border border-subtle p-3">
+    <div className="rounded border border-subtle bg-surface/50 p-3">
       <h4 className="text-sm font-semibold">{t("registry.title")}</h4>
-      <p className="mt-1 text-xs text-secondary">
-        {t("registry.description")}
+      <p className="mt-1 text-xs text-secondary">{t("registry.description")}</p>
 
-      </p>
-      <label className="mt-2 block text-sm">
-        {t("registry.url")}
-        <input
-          type="url"
-          value={url}
-          onChange={(event) => {
-            setUrl(event.target.value);
-          }}
-          placeholder="https://orax-registry.example.workers.dev"
-          dir="ltr"
-          style={{ unicodeBidi: "isolate" }}
-          className="mt-1 w-full rounded border border-subtle bg-inset p-2"
-        />
-      </label>
-      {health ? (
-        <p
-          className={
-            health.status === "ok"
-              ? "mt-1 text-xs text-secondary"
-              : "mt-1 text-xs text-danger"
-          }
-        >
-          {health.status === "ok"
-            ? t("registry.healthy")
-            : t("registry.degraded", {
-                db: health.db,
-                key: health.invitation_key,
-              })}
-        </p>
+      {busy && code === null ? (
+        <p className="mt-2 text-sm text-secondary">{t("registry.autoCreating")}</p>
       ) : null}
-      <div className="mt-2 flex flex-wrap gap-2">
+
+      {code ? (
+        <>
+          {/* The code is read out loud, so its groups are pinned left to
+              right: in an Arabic paragraph the neutral spaces would reverse
+              the groups on screen while the copied value stayed correct. */}
+          <p
+            dir="ltr"
+            style={{ unicodeBidi: "isolate" }}
+            className="mono mt-3 select-all text-center text-3xl font-semibold tracking-wider"
+          >
+            {grouped}
+          </p>
+          <p className="mt-1 text-xs text-secondary">{t("registry.readOut")}</p>
+          <div className="mt-2 flex flex-wrap gap-2">
+            <button type="button" className="btn-primary px-3 py-1 text-xs" onClick={() => copyText(grouped)}>
+              {copied ? t("gethelp.copied") : t("registry.copy")}
+            </button>
+            <button type="button" className="btn-secondary px-3 py-1 text-xs" onClick={() => copyText(shareMessage)}>
+              {t("registry.copyMessage")}
+            </button>
+            <button type="button" className="btn-secondary px-3 py-1 text-xs" onClick={() => copyText(helpLink(code))}>
+              {t("registry.link")}
+            </button>
+            {revokeToken ? (
+              <button type="button" className="btn-secondary px-3 py-1 text-xs" disabled={busy} onClick={() => void withdraw()}>
+                {t("registry.withdraw")}
+              </button>
+            ) : null}
+            <button
+              type="button"
+              className="btn-secondary px-3 py-1 text-xs"
+              disabled={busy}
+              onClick={() => void create()}
+            >
+              {t("registry.createAnother")}
+            </button>
+          </div>
+          {error ? <p role="alert" className="mt-2 text-sm text-danger">{error}</p> : null}
+        </>
+      ) : error ? (
+        <div className="mt-2">
+          <p role="alert" className="text-sm text-danger">{error}</p>
+          <button
+            type="button"
+            className="btn-secondary mt-2 px-3 py-1 text-xs"
+            disabled={busy || url.trim() === ""}
+            onClick={() => void create()}
+          >
+            {t("device.registerRetry")}
+          </button>
+        </div>
+      ) : (
         <button
           type="button"
-          className="btn-secondary"
+          className="btn-primary mt-2 px-3 py-1 text-xs"
           disabled={busy || url.trim() === ""}
           onClick={() => void create()}
         >
-          {code ? t("registry.createAnother") : t("registry.create")}
+          {t("registry.create")}
         </button>
-        {code ? (
-          <button
-            type="button"
-            className="btn-secondary"
-            onClick={() => void writeClipboard(code).catch(() => undefined)}
-          >
-            {t("registry.copy")}
-          </button>
-        ) : null}
-        {code && revokeToken ? (
-          <button
-            type="button"
-            className="btn-secondary"
-            disabled={busy}
-            onClick={() => void withdraw()}
-          >
-            {t("registry.withdraw")}
-          </button>
-        ) : null}
-      </div>
-      {code ? (
-        // The code is read out loud to the person who will use it, so the
-        // order of the groups is not a detail. In an Arabic paragraph the
-        // spaces between them are bidi neutrals and take the paragraph's
-        // direction, so "1234 5678 9012" is displayed as "9012 5678 1234".
-        // The run is isolated and pinned left to right, so the digits read in
-        // the order they are in.
-        <p
-          dir="ltr"
-          style={{ unicodeBidi: "isolate" }}
-          className="mono mt-2 select-all text-center text-2xl font-semibold tracking-wider"
-        >
-          {grouped}
-        </p>
-      ) : null}
+      )}
+
       {message ? <p className="mt-1 text-xs text-secondary">{message}</p> : null}
-      {error ? <p role="alert" className="mt-1 text-sm text-danger">{error}</p> : null}
+
+      {/* The registry origin and its health are deployment details. A beginner
+          only needs the code; an administrator can still reach them here. */}
+      <details className="mt-2 text-xs text-secondary">
+        <summary className="cursor-pointer">{t("registry.advanced")}</summary>
+        <label className="mt-2 block text-sm">
+          {t("registry.url")}
+          <input
+            type="url"
+            value={url}
+            onChange={(event) => setUrl(event.target.value)}
+            placeholder="https://orax-registry.example.workers.dev"
+            dir="ltr"
+            style={{ unicodeBidi: "isolate" }}
+            className="mt-1 w-full rounded border border-subtle bg-inset p-2"
+          />
+        </label>
+        {health ? (
+          <p className={health.status === "ok" ? "mt-1" : "mt-1 text-danger"}>
+            {health.status === "ok"
+              ? t("registry.healthy")
+              : t("registry.degraded", {
+                  db: health.db,
+                  key: health.invitation_key,
+                })}
+          </p>
+        ) : null}
+      </details>
     </div>
   );
 }

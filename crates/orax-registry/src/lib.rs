@@ -35,7 +35,14 @@ use reqwest::{
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::{
+    collections::HashMap,
+    sync::{
+        Arc, Mutex, OnceLock,
+        atomic::{AtomicI64, Ordering},
+    },
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+};
 
 pub mod directory;
 pub mod keys;
@@ -116,6 +123,58 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 /// than by a request that ends in the same place later.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(8);
 
+/// How long a measured server-time offset is reused before being measured
+/// again. The offset is only used to sign requests that live for seconds, so
+/// this is generous; re-measuring on every call would add a round trip to
+/// every code and every refresh.
+const CLOCK_SYNC_MAX_AGE: Duration = Duration::from_secs(10 * 60);
+
+/// The difference between the registry's clock and this computer's, shared by
+/// every `Client` for the same origin.
+///
+/// A `Client` is created per command, so without this, a clock correction
+/// learned while registering would be forgotten before the code was created.
+/// It is keyed by origin because two registries can be in different time
+/// zones (or one can be a test server with a deliberately odd clock).
+#[derive(Default)]
+struct ClockOffset {
+    seconds: AtomicI64,
+    synced_at: Mutex<Option<Instant>>,
+}
+
+impl ClockOffset {
+    fn get(&self) -> i64 {
+        self.seconds.load(Ordering::Relaxed)
+    }
+
+    fn set(&self, seconds: i64) {
+        self.seconds.store(seconds, Ordering::Relaxed);
+        *self
+            .synced_at
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(Instant::now());
+    }
+
+    fn is_fresh(&self) -> bool {
+        self.synced_at
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .is_some_and(|at| at.elapsed() < CLOCK_SYNC_MAX_AGE)
+    }
+}
+
+fn clock_for(origin: &str) -> Arc<ClockOffset> {
+    static CLOCKS: OnceLock<Mutex<HashMap<String, Arc<ClockOffset>>>> = OnceLock::new();
+    let clocks = CLOCKS.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut clocks = clocks
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    clocks
+        .entry(origin.to_string())
+        .or_insert_with(|| Arc::new(ClockOffset::default()))
+        .clone()
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("enter an HTTPS registry URL (plain http is only allowed for loopback)")]
@@ -183,6 +242,10 @@ pub struct Health {
     pub db: Option<String>,
     #[serde(default)]
     pub invitation_key: Option<String>,
+    /// The registry's Unix time, when the deployment supplies it. Older
+    /// Workers do not; the client uses the HTTP Date header instead.
+    #[serde(default)]
+    pub server_time: Option<i64>,
 }
 
 #[derive(Deserialize)]
@@ -244,11 +307,27 @@ pub fn device_id(key: &SecretKey) -> String {
     key.public().to_string()
 }
 
-fn now_seconds() -> i64 {
+fn local_seconds() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|elapsed| elapsed.as_secs() as i64)
         .unwrap_or_default()
+}
+
+/// The registry's one answer that means "your clock is wrong", not "your key
+/// is wrong". A 401 is used for both, so the body is what separates them.
+fn is_clock_rejection(bytes: &[u8]) -> bool {
+    let text = String::from_utf8_lossy(bytes).to_ascii_lowercase();
+    text.contains("timestamp")
+        || text.contains("outside the allowed window")
+        || text.contains("clock")
+}
+
+/// The offset implied by a server time and the local times around the
+/// response. The midpoint removes half the round trip on average.
+fn measured_offset(server: i64, local_before: i64, local_after: i64) -> i64 {
+    let local_midpoint = local_before.saturating_add(local_after) / 2;
+    server.saturating_sub(local_midpoint)
 }
 
 fn nonce() -> Result<String, Error> {
@@ -312,16 +391,19 @@ pub struct Client {
     /// request it received. The default port is left out on both sides.
     origin: String,
     http: reqwest::Client,
+    clock: Arc<ClockOffset>,
 }
 
 impl Client {
     pub fn new(base: &str) -> Result<Self, Error> {
         let base = base_url(base)?;
         let origin = base.origin().ascii_serialization();
+        let clock = clock_for(&origin);
         Ok(Self {
             base,
             origin,
             http: shared_http()?.clone(),
+            clock,
         })
     }
 
@@ -329,6 +411,62 @@ impl Client {
         let mut url = self.base.clone();
         url.set_path(path);
         url
+    }
+
+    /// This computer's time corrected by the registry's measured offset.
+    fn now_seconds(&self) -> i64 {
+        local_seconds().saturating_add(self.clock.get())
+    }
+
+    /// Treat a server timestamp as the registry's current time.
+    ///
+    /// The offset is measured around the response, so half the round trip is
+    /// the best estimate of the delay. Seconds of error are irrelevant to a
+    /// ±120 second signing window.
+    fn accept_server_time(&self, server: i64, local_before: i64, local_after: i64) {
+        let offset = measured_offset(server, local_before, local_after);
+        self.clock.set(offset);
+        tracing::info!(
+            offset_seconds = offset,
+            "corrected this computer's clock against the registry"
+        );
+    }
+
+    /// Read the registry's time from `/healthz`, falling back to its standard
+    /// HTTP `Date` header for Workers deployed before `server_time` existed.
+    async fn fetch_server_time(&self) -> Result<i64, Error> {
+        let local_before = local_seconds();
+        let response = self.http.get(self.url("/healthz")).send().await?;
+        let date = response
+            .headers()
+            .get(reqwest::header::DATE)
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| httpdate::parse_http_date(value).ok())
+            .and_then(|value| value.duration_since(UNIX_EPOCH).ok())
+            .map(|value| value.as_secs() as i64);
+        let bytes = Self::read_body(response).await?;
+        let local_after = local_seconds();
+        let body: Value = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
+        let server = body
+            .get("server_time")
+            .and_then(Value::as_i64)
+            .or(date)
+            .ok_or_else(|| Error::Decode("the registry did not report its time".into()))?;
+        self.accept_server_time(server, local_before, local_after);
+        Ok(self.now_seconds())
+    }
+
+    /// Measure the registry's clock again and cache the offset for every
+    /// client talking to the same origin.
+    pub async fn sync_time(&self) -> Result<(), Error> {
+        self.fetch_server_time().await?;
+        Ok(())
+    }
+
+    /// The current offset, for diagnostics and for the UI to explain a
+    /// correction it made.
+    pub fn clock_offset_seconds(&self) -> i64 {
+        self.clock.get()
     }
 
     /// The body of a response, read with the size cap applied while the
@@ -393,56 +531,90 @@ impl Client {
         keys: Option<(&SecretKey, &SecretKey)>,
         body: Option<Value>,
     ) -> Result<(reqwest::StatusCode, Vec<u8>), Error> {
-        let mut request = self.http.request(method.clone(), self.url(path));
-        if body.is_some() {
-            request = request.json(&body);
-        }
-        if let Some((signing_key, identity)) = keys {
-            let body_bytes = match &body {
-                Some(value) => {
-                    serde_json::to_vec(value).map_err(|error| Error::Decode(error.to_string()))?
-                }
-                None => Vec::new(),
-            };
-            let body_hash = hex::encode(Sha256::digest(&body_bytes));
-            let timestamp = now_seconds();
-            let nonce = nonce()?;
-            let canonical = canonical_string(
-                &self.origin,
-                method.as_str(),
-                path,
-                &body_hash,
-                timestamp,
-                &nonce,
-            );
-            let signature = signing_key.sign(canonical.as_bytes());
-            let mut headers = HeaderMap::new();
-            let id = device_id(identity);
-            headers.insert(
-                "x-orax-device",
-                HeaderValue::from_str(&id).map_err(|_| Error::Decode("device id".into()))?,
-            );
-            headers.insert(
-                "x-orax-timestamp",
-                HeaderValue::from_str(&timestamp.to_string())
-                    .map_err(|_| Error::Decode("timestamp".into()))?,
-            );
-            headers.insert(
-                "x-orax-nonce",
-                HeaderValue::from_str(&nonce).map_err(|_| Error::Decode("nonce".into()))?,
-            );
-            headers.insert(
-                "x-orax-signature",
-                HeaderValue::from_str(&URL_SAFE_NO_PAD.encode(signature.to_bytes()))
-                    .map_err(|_| Error::Decode("signature".into()))?,
-            );
-            request = request.headers(headers);
+        // Measure before the first signed call when the cached offset is
+        // stale. This is what makes a computer whose clock is hours out work
+        // on the FIRST registration instead of failing once and correcting on
+        // the retry. If the time endpoint is unreachable, the local clock is
+        // used and the 401 path below still has a chance to correct it.
+        if keys.is_some() && !self.clock.is_fresh() {
+            if let Err(error) = self.sync_time().await {
+                tracing::warn!(%error, "could not measure the registry clock");
+            }
         }
 
-        let response = request.send().await?;
-        let status = response.status();
-        let bytes = Self::read_body(response).await?;
-        Ok((status, bytes))
+        let mut corrected = false;
+        loop {
+            let mut request = self.http.request(method.clone(), self.url(path));
+            if body.is_some() {
+                request = request.json(&body);
+            }
+            if let Some((signing_key, identity)) = keys {
+                let body_bytes = match &body {
+                    Some(value) => serde_json::to_vec(value)
+                        .map_err(|error| Error::Decode(error.to_string()))?,
+                    None => Vec::new(),
+                };
+                let body_hash = hex::encode(Sha256::digest(&body_bytes));
+                let timestamp = self.now_seconds();
+                let nonce = nonce()?;
+                let canonical = canonical_string(
+                    &self.origin,
+                    method.as_str(),
+                    path,
+                    &body_hash,
+                    timestamp,
+                    &nonce,
+                );
+                let signature = signing_key.sign(canonical.as_bytes());
+                let mut headers = HeaderMap::new();
+                let id = device_id(identity);
+                headers.insert(
+                    "x-orax-device",
+                    HeaderValue::from_str(&id).map_err(|_| Error::Decode("device id".into()))?,
+                );
+                headers.insert(
+                    "x-orax-timestamp",
+                    HeaderValue::from_str(&timestamp.to_string())
+                        .map_err(|_| Error::Decode("timestamp".into()))?,
+                );
+                headers.insert(
+                    "x-orax-nonce",
+                    HeaderValue::from_str(&nonce).map_err(|_| Error::Decode("nonce".into()))?,
+                );
+                headers.insert(
+                    "x-orax-signature",
+                    HeaderValue::from_str(&URL_SAFE_NO_PAD.encode(signature.to_bytes()))
+                        .map_err(|_| Error::Decode("signature".into()))?,
+                );
+                request = request.headers(headers);
+            }
+
+            let response = request.send().await?;
+            let status = response.status();
+            let bytes = Self::read_body(response).await?;
+
+            // A wrong system clock and a wrong key both answer 401. The body
+            // says which; only the clock one is a reason to measure the
+            // server's time and sign the same call again. The retry is
+            // bounded to one, and the request body is rebuilt each time so
+            // the new timestamp and nonce are covered by the new signature.
+            if !corrected
+                && keys.is_some()
+                && status.as_u16() == 401
+                && is_clock_rejection(&bytes)
+            {
+                match self.sync_time().await {
+                    Ok(()) => {
+                        corrected = true;
+                        continue;
+                    }
+                    Err(error) => {
+                        tracing::warn!(%error, "could not correct the clock with the registry");
+                    }
+                }
+            }
+            return Ok((status, bytes));
+        }
     }
 
     /// Registers this device, or refreshes an existing registration.
@@ -697,6 +869,10 @@ impl Client {
         };
         let parsed: Health =
             serde_json::from_slice(&bytes).map_err(|error| Error::Decode(error.to_string()))?;
+        if let Some(server) = parsed.server_time {
+            let local = local_seconds();
+            self.accept_server_time(server, local, local);
+        }
         if status.is_success() {
             return Ok(parsed);
         }
@@ -790,5 +966,76 @@ mod tests {
         assert!(Client::new("https://registry.example.com/").is_ok());
         assert!(Client::new("http://127.0.0.1:8787").is_ok());
         assert!(Client::new("http://localhost:8787").is_ok());
+    }
+
+    #[test]
+    fn a_clock_rejection_is_distinguished_from_a_bad_key() {
+        assert!(is_clock_rejection(
+            br#"{"error":{"code":"unauthorized","message":"Request timestamp is outside the allowed window"}}"#
+        ));
+        assert!(is_clock_rejection(
+            br#"{"error":{"code":"unauthorized","message":"clock skew too large"}}"#
+        ));
+        assert!(!is_clock_rejection(
+            br#"{"error":{"code":"unauthorized","message":"This device is not registered"}}"#
+        ));
+        assert!(!is_clock_rejection(
+            br#"{"error":{"code":"unauthorized","message":"the registry key does not match"}}"#
+        ));
+    }
+
+    #[test]
+    fn offset_removes_half_of_the_round_trip() {
+        // The registry says 1_700_000_000; this computer's clock reads
+        // 1_699_996_400 at the start and 1_699_996_402 at the end.
+        assert_eq!(measured_offset(1_700_000_000, 1_699_996_400, 1_699_996_402), 3_599);
+        // And it works in the other direction too.
+        assert_eq!(measured_offset(1_699_990_000, 1_700_000_000, 1_700_000_002), -10_001);
+    }
+
+    #[test]
+    fn a_cached_offset_survives_a_new_client_for_the_same_origin() {
+        let origin = "https://clock-test.example";
+        let first = Client::new(origin).expect("valid");
+        first.clock.set(3_600);
+        let second = Client::new(origin).expect("valid");
+        assert_eq!(second.clock.get(), 3_600);
+    }
+
+    #[tokio::test]
+    async fn sync_time_measures_a_server_an_hour_ahead() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let address = listener.local_addr().expect("address");
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.expect("accept");
+            let mut request = [0u8; 1024];
+            let _ = socket.read(&mut request).await.expect("read");
+            let server_time = local_seconds() + 3_600;
+            let body = format!(
+                r#"{{"status":"ok","api":"v1","server_time":{server_time}}}"#
+            );
+            let date = httpdate::fmt_http_date(SystemTime::now());
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nDate: {date}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            socket
+                .write_all(response.as_bytes())
+                .await
+                .expect("write");
+        });
+
+        let client = Client::new(&format!("http://{address}")).expect("loopback client");
+        client.sync_time().await.expect("sync");
+        assert!(
+            (3_598..=3_602).contains(&client.clock_offset_seconds()),
+            "offset was {}",
+            client.clock_offset_seconds()
+        );
+        server.await.expect("server task");
     }
 }

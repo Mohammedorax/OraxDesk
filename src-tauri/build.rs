@@ -414,6 +414,7 @@ fn main() {
             "support_stop_unattended_tools",
             "support_request_screen_permission",
             "support_open_input_settings",
+            "support_open_time_settings",
             "support_save_network",
             "disconnect_session",
             "send_input",

@@ -9,6 +9,9 @@ description = "Client for the OraxDesk device registry and signal code API"
 base64.workspace = true
 getrandom.workspace = true
 hex.workspace = true
+# The Date header is the fallback for registries that predate the
+# `server_time` field, so a clock-corrected request works against both.
+httpdate = "1"
 iroh.workspace = true
 # The directory resolves into a boxed stream. The stream type iroh's address
 # lookup wants is `futures_lite`'s, which is not the one `futures` has, and

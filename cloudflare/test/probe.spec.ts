@@ -65,10 +65,18 @@ describe("runtime capabilities", () => {
   it("healthz reports database and configuration", async () => {
     const response = await SELF.fetch("https://registry.test/healthz");
     expect(response.status).toBe(200);
-    const body = await response.json<{ status: string; db: string; invitation_key: string }>();
+    const body = await response.json<{
+      status: string;
+      db: string;
+      invitation_key: string;
+      server_time: number;
+    }>();
     expect(body.status).toBe("ok");
     expect(body.db).toBe("ok");
     expect(body.invitation_key).toBe("ok");
+    // The client measures this against its own clock to sign requests even
+    // when the computer's clock is hours out.
+    expect(Math.abs(body.server_time - Date.now() / 1000)).toBeLessThan(5);
   });
 
   it("has the D1 binding and the migrated schema", async () => {

@@ -255,3 +255,34 @@ pub fn open_input_settings() -> Result<()> {
     }
     Ok(())
 }
+
+/// Open the operating system's date and time settings.
+///
+/// OraxDesk cannot change the clock itself: doing that needs administrator
+/// rights, and silently changing a person's clock is worse than asking them
+/// to do it. The registry rejects signed requests more than two minutes out,
+/// and an invitation looks expired to a helper when the host's clock is off,
+/// so the one useful action is to put the settings page in front of them.
+pub fn open_time_settings() -> Result<()> {
+    #[cfg(windows)]
+    {
+        // `start` is a cmd built-in; explorer.exe returns a failure code even
+        // when it opens the page, so cmd is the reliable form.
+        std::process::Command::new("cmd")
+            .args(["/C", "start", "", "ms-settings:dateandtime"])
+            .spawn()?;
+    }
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .arg("x-apple.systempreferences:com.apple.preference.datetime")
+            .spawn()?;
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let _ = std::process::Command::new("gnome-control-center")
+            .arg("datetime")
+            .spawn();
+    }
+    Ok(())
+}

@@ -148,6 +148,7 @@ export const support = {
   stopUnattendedTools: (id: number) => mustInvoke("support_stop_unattended_tools", { id }),
   requestScreenPermission: () => mustInvoke("support_request_screen_permission"),
   openInputSettings: () => mustInvoke("support_open_input_settings"),
+  openTimeSettings: () => mustInvoke("support_open_time_settings"),
   saveNetwork: (profile: NetworkProfile) => mustInvoke("support_save_network", { profile }),
 };
 

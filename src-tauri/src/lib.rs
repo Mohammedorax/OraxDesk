@@ -34,6 +34,44 @@ use state::AppState;
 /// Called on both `CloseRequested` and `Destroyed`: a window can be destroyed
 /// without ever asking to close, and `CloseRequested` never fires for one
 /// that was destroyed outright.
+/// Keep a restored window on the screen it is actually on.
+///
+/// The window-state plugin faithfully restores the size from the last run,
+/// which is right until the person moves to a smaller display: a 2182x1390
+/// window on a 1440x960 screen puts the sidebar, the help buttons and the
+/// bottom of every dialog outside the visible area. A beginner sees a broken
+/// app and has no obvious way to fix it. Clamp the restored size to the
+/// current monitor, leaving a small margin for the taskbar and window border.
+fn fit_main_window(window: &tauri::WebviewWindow) {
+    let Ok(Some(monitor)) = window.current_monitor() else {
+        return;
+    };
+    let Ok(size) = window.outer_size() else {
+        return;
+    };
+    let monitor = monitor.size();
+    let max_width = ((monitor.width as f64) * 0.92).round() as u32;
+    let max_height = ((monitor.height as f64) * 0.92).round() as u32;
+    if size.width <= max_width && size.height <= max_height {
+        return;
+    }
+    let width = size.width.min(max_width);
+    let height = size.height.min(max_height);
+    // A restored maximized window can be larger than the monitor when the
+    // last run was on a bigger display. Unmaximize before resizing, or
+    // Windows keeps the old maximized bounds and the resize does nothing.
+    let _ = window.unmaximize();
+    let _ = window.set_size(tauri::PhysicalSize::new(width, height));
+    let _ = window.center();
+    tracing::info!(
+        width,
+        height,
+        monitor_width = monitor.width,
+        monitor_height = monitor.height,
+        "clamped the restored window to the current monitor"
+    );
+}
+
 fn shutdown_window(window: &tauri::Window) {
     if let Some(state) = window.try_state::<AppState>() {
         state.shutdown_sessions_for_window(window.label());
@@ -108,6 +146,20 @@ pub fn run() {
             let files_state = commands::files::FilesState::new(data_dir);
             let host_keys = files_state.host_key_verifier();
             app.manage(AppState::new(store, credentials, host_keys));
+            if let Some(window) = app.get_webview_window("main") {
+                fit_main_window(&window);
+            }
+            // The window-state plugin restores after setup, and in a maximized
+            // restore it can still be larger than the current display. Check
+            // once more after the restore has landed, then leave the window
+            // alone so a person can resize it normally.
+            let fit_app = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                tokio::time::sleep(std::time::Duration::from_millis(1200)).await;
+                if let Some(window) = fit_app.get_webview_window("main") {
+                    fit_main_window(&window);
+                }
+            });
             let registry_app = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 let mut delay = 3u64;
@@ -334,6 +386,7 @@ pub fn run() {
             commands::support::support_stop_unattended_tools,
             commands::support::support_request_screen_permission,
             commands::support::support_open_input_settings,
+            commands::support::support_open_time_settings,
             commands::support::support_save_network,
             commands::session::disconnect_session,
             commands::session::send_input,
@@ -404,6 +457,14 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("failed to build tauri application")
         .run(|app, event| {
+            // The window-state plugin restores AFTER setup, so the clamp in
+            // setup can see the pre-restore size. Ready is the first point at
+            // which the real, restored window exists.
+            if let RunEvent::Ready = event {
+                if let Some(window) = app.get_webview_window("main") {
+                    fit_main_window(&window);
+                }
+            }
             if let RunEvent::ExitRequested { .. } = event {
                 // Release the keyboard before anything else can fail: the app
                 // must never exit leaving a native hook installed.

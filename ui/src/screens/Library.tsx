@@ -54,6 +54,8 @@ import { CommandPalette, type PaletteAction } from "../components/CommandPalette
 import { HostDialog, draftFromHost, type HostDraft } from "../components/HostDialog";
 import { loadRdpDefaults } from "../lib/rdpDefaults";
 import { QuickConnect } from "../components/QuickConnect";
+import { GetHelp } from "../components/GetHelp";
+import { BoundaryConnect } from "../components/BoundaryConnect";
 import { mustInvoke } from "../lib/tauri";
 import { DeviceIdentityCard } from "../components/DeviceIdentityCard";
 import { registry } from "../lib/support";
@@ -1609,8 +1611,31 @@ export function Library({
               icon={<IconMonitor size={56} />}
               title={t("library.emptyTitle")}
               body={t("library.emptyBody")}
-              primary={{ label: t("library.findOnNetwork"), onClick: () => void startScan().catch((err: unknown) => push("danger", describeError(err))) }}
-              secondary={{ label: t("library.addComputerManually"), onClick: () => setHostDialog(draftFromHost(null)) }}
+              extra={
+                <div className="flex flex-col items-center gap-3">
+                  <div className="flex flex-wrap items-center justify-center gap-3">
+                    <GetHelp variant="hero" />
+                    <BoundaryConnect variant="hero" />
+                  </div>
+                  <div className="flex flex-wrap items-center justify-center gap-2 text-xs text-secondary">
+                    <button
+                      type="button"
+                      className="underline hover:text-primary"
+                      onClick={() => void startScan().catch((err: unknown) => push("danger", describeError(err)))}
+                    >
+                      {t("library.findOnNetwork")}
+                    </button>
+                    <span aria-hidden="true">·</span>
+                    <button
+                      type="button"
+                      className="underline hover:text-primary"
+                      onClick={() => setHostDialog(draftFromHost(null))}
+                    >
+                      {t("library.addComputerManually")}
+                    </button>
+                  </div>
+                </div>
+              }
             />
           ) : (
             <>

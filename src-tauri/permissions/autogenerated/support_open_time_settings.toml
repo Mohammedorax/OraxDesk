@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-support-open-time-settings"
+description = "Enables the support_open_time_settings command without any pre-configured scope."
+commands.allow = ["support_open_time_settings"]
+
+[[permission]]
+identifier = "deny-support-open-time-settings"
+description = "Denies the support_open_time_settings command without any pre-configured scope."
+commands.deny = ["support_open_time_settings"]

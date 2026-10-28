@@ -35,17 +35,15 @@ impl Invitation {
         })?;
         let result: Self = serde_json::from_slice(&URL_SAFE_NO_PAD.decode(text)?)?;
         ensure!(result.version == 1, "Unsupported invitation version");
-        ensure!(
-            result.expires > now(),
-            "This invitation has expired. Ask for a new one"
-        );
-        ensure!(
-            result.expires <= now() + INVITE_SECONDS + 60,
-            "Invalid invitation expiry"
-        );
+        // The expiry is deliberately NOT checked against this computer's
+        // clock. The host owns the invitation's lifetime and enforces it with
+        // a monotonic deadline, so a helper whose clock is hours (or days)
+        // ahead or behind can still use a live invitation. This is what makes
+        // "Invalid invitation expiry" impossible to produce by clock skew.
         Ok(result)
     }
 }
+
 pub fn now() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -204,7 +202,9 @@ pub fn validate_hello(message: Message, invite: &Invitation) -> Result<(String, 
             version == 1 && bool::from(secret.ct_eq(&invite.secret)),
             "Invalid invitation"
         );
-        ensure!(invite.expires > now(), "Invitation expired");
+        // `invite.expires` is informational. The listener's own monotonic
+        // deadline is the authority, and it is unaffected by a clock change
+        // between creating and accepting an invitation.
         ensure!(
             !name.trim().is_empty() && name.len() <= 80 && !name.chars().any(char::is_control),
             "Invalid helper name"
@@ -241,5 +241,26 @@ mod tests {
         assert!(Invitation::decode("hello").is_err());
         assert!(Invitation::decode(&"x".repeat(20000)).is_err());
         assert!(Invitation::decode("boundary1:AAAA").is_err());
+    }
+
+    #[test]
+    fn an_invitation_is_not_rejected_by_a_wall_clock() {
+        // The helper must accept the invitation envelope even when its own
+        // clock is wrong; the host's monotonic session deadline rejects a
+        // stale invitation, not this computer's date.
+        let expires = 0u64; // a value no sane clock would call live
+        let key = iroh::SecretKey::generate();
+        let invitation = Invitation {
+            version: 1,
+            address: EndpointAddr {
+                id: key.public(),
+                addrs: Default::default(),
+            },
+            secret: [0u8; 32],
+            expires,
+        };
+        let encoded = invitation.encode().expect("encode");
+        let decoded = Invitation::decode(&encoded).expect("a wrong clock must not reject it");
+        assert_eq!(decoded.expires, expires);
     }
 }

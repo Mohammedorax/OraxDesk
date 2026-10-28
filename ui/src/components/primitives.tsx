@@ -218,18 +218,22 @@ export function EmptyState({
   body,
   primary,
   secondary,
+  extra,
 }: {
   icon?: ReactNode;
   title: string;
   body?: string;
   primary?: { label: string; onClick: () => void };
   secondary?: { label: string; onClick: () => void };
+  /** Role buttons or other composed actions, shown after the plain ones. */
+  extra?: ReactNode;
 }): ReactNode {
   return (
     <div className="flex h-full min-h-64 flex-col items-center justify-center gap-3 px-8 text-center">
       {icon ? <div className="text-tertiary">{icon}</div> : null}
       <h2 className="text-lg font-semibold text-primary">{title}</h2>
       {body ? <p className="max-w-md text-sm text-secondary">{body}</p> : null}
+      {extra ? <div className="mt-2">{extra}</div> : null}
       <div className="mt-2 flex items-center gap-3">
         {primary ? (
           <button type="button" className="btn-primary" onClick={primary.onClick}>

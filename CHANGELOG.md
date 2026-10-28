@@ -10,6 +10,40 @@ to stored data and to the IPC contract between the Rust core and the frontend.
 
 ## [Unreleased]
 
+## [0.31.4] (2026-10-28)
+
+### Added
+
+* The device-number card shows whether the number is actually registered,
+  gives the real reason when it is not, and offers a one-click time-settings
+  action when the registry rejects the computer's clock.
+* Registration retries automatically after a failure, when the network comes
+  back, and when the app regains focus.
+* The Get help flow creates its registry code automatically, with a copyable
+  share message and a copy-to-paste `oraxdesk://` link. The full invitation is
+  now an advanced fallback instead of the main field.
+* The helper dialog takes one code or link, auto-pastes it from the clipboard,
+  defaults the helper name, and hides registry and code-service settings under
+  Advanced.
+* The empty Library now starts with two large beginner actions: Get help and
+  Help someone.
+* The main window is clamped to the current monitor after a restored layout,
+  so a window saved on a larger display cannot put its controls off-screen.
+
+### Fixed
+
+* Registry calls are signed with the registry's time rather than the local
+  wall clock. The client measures the offset from `/healthz` (`server_time`,
+  with the HTTP `Date` header as a fallback), caches it per origin, and retries
+  a clock-rejected request once with the corrected timestamp.
+* Invitation acceptance no longer depends on either computer's wall clock. The
+  host's monotonic ten-minute deadline is the authority, so a clock that is
+  hours ahead or behind can no longer produce `Invalid invitation expiry`.
+* A failed registration no longer presents an unregistered number as ready to
+  be read out.
+* The connection status is shown in Arabic, with the technical status, route
+  and network mode kept in a separate details section.
+
 ## [0.31.3] (2026-10-28)
 
 ### Added
