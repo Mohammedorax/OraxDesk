@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-take-pending-help-code"
+description = "Enables the take_pending_help_code command without any pre-configured scope."
+commands.allow = ["take_pending_help_code"]
+
+[[permission]]
+identifier = "deny-take-pending-help-code"
+description = "Denies the take_pending_help_code command without any pre-configured scope."
+commands.deny = ["take_pending_help_code"]

@@ -211,7 +211,7 @@ dependencies = [
 
 [[package]]
 name = "agent-lease"
-version = "0.31.4"
+version = "0.31.5"
 dependencies = [
  "serde",
  "serde_json",
@@ -220,7 +220,7 @@ dependencies = [
 
 [[package]]
 name = "agent-perception"
-version = "0.31.4"
+version = "0.31.5"
 dependencies = [
  "image",
  "limb-core",
@@ -234,7 +234,7 @@ dependencies = [
 
 [[package]]
 name = "agent-plane"
-version = "0.31.4"
+version = "0.31.5"
 dependencies = [
  "agent-lease",
  "agent-perception",
@@ -984,7 +984,7 @@ dependencies = [
 
 [[package]]
 name = "boundary"
-version = "0.31.4"
+version = "0.31.5"
 dependencies = [
  "anyhow",
  "boundary-codes",
@@ -1003,7 +1003,7 @@ dependencies = [
 
 [[package]]
 name = "boundary-codes"
-version = "0.31.4"
+version = "0.31.5"
 dependencies = [
  "anyhow",
  "axum",
@@ -1017,7 +1017,7 @@ dependencies = [
 
 [[package]]
 name = "boundary-driver"
-version = "0.31.4"
+version = "0.31.5"
 dependencies = [
  "anyhow",
  "boundary-session",
@@ -1030,7 +1030,7 @@ dependencies = [
 
 [[package]]
 name = "boundary-platform"
-version = "0.31.4"
+version = "0.31.5"
 dependencies = [
  "anyhow",
  "boundary-session",
@@ -1042,7 +1042,7 @@ dependencies = [
 
 [[package]]
 name = "boundary-provision"
-version = "0.31.4"
+version = "0.31.5"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1062,7 +1062,7 @@ dependencies = [
 
 [[package]]
 name = "boundary-session"
-version = "0.31.4"
+version = "0.31.5"
 dependencies = [
  "anyhow",
  "argon2 0.5.3",
@@ -1602,6 +1602,26 @@ name = "const-oid"
 version = "0.10.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a6ef517f0926dd24a1582492c791b6a4818a4d94e789a334894aa15b0d12f55c"
+
+[[package]]
+name = "const-random"
+version = "0.1.18"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "87e00182fe74b066627d63b85fd550ac2998d4b0bd86bfed477a0ae4c7c71359"
+dependencies = [
+ "const-random-macro",
+]
+
+[[package]]
+name = "const-random-macro"
+version = "0.1.16"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f9d839f2a20b0aee515dc581a6172f2321f96cab76c1a38a4c584a194955390e"
+dependencies = [
+ "getrandom 0.2.17",
+ "once_cell",
+ "tiny-keccak",
+]
 
 [[package]]
 name = "constant_time_eq"
@@ -2169,7 +2189,7 @@ dependencies = [
 
 [[package]]
 name = "deskvncviewer"
-version = "0.31.4"
+version = "0.31.5"
 dependencies = [
  "agent-perception",
  "anyhow",
@@ -2195,6 +2215,7 @@ dependencies = [
  "tauri",
  "tauri-build",
  "tauri-plugin-clipboard-manager",
+ "tauri-plugin-deep-link",
  "tauri-plugin-dialog",
  "tauri-plugin-global-shortcut",
  "tauri-plugin-notification",
@@ -2349,6 +2370,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "dlv-list"
+version = "0.5.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "442039f5147480ba31067cb00ada1adae6892028e40e45fc5de7b7df6dcc1b5f"
+dependencies = [
+ "const-random",
+]
+
+[[package]]
 name = "dns-lookup"
 version = "3.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2477,7 +2507,7 @@ checksum = "92773504d58c093f6de2459af4af33faa518c13451eb8f2b5698ed3d36e7c813"
 
 [[package]]
 name = "dvv"
-version = "0.31.4"
+version = "0.31.5"
 dependencies = [
  "agent-lease",
  "agent-perception",
@@ -4996,7 +5026,7 @@ dependencies = [
 
 [[package]]
 name = "limb-core"
-version = "0.31.4"
+version = "0.31.5"
 dependencies = [
  "agent-lease",
  "bytes",
@@ -5047,7 +5077,7 @@ checksum = "11d3d7f243d5c5a8b9bb5d6dd2b1602c0cb0b9db1621bafc7ed66e35ff9fe092"
 
 [[package]]
 name = "local-pipe"
-version = "0.31.4"
+version = "0.31.5"
 dependencies = [
  "tokio",
  "windows-sys 0.59.0",
@@ -6585,7 +6615,7 @@ checksum = "04744f49eae99ab78e0d5c0b603ab218f515ea8cfe5a456d7629ad883a3b6e7d"
 
 [[package]]
 name = "orax-registry"
-version = "0.31.4"
+version = "0.31.5"
 dependencies = [
  "base64 0.22.1",
  "getrandom 0.3.4",
@@ -6620,6 +6650,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8c7c9e0d9b23589f26070720bac724174bfec1083e82f7854cdd0267518343c0"
 dependencies = [
  "num-traits",
+]
+
+[[package]]
+name = "ordered-multimap"
+version = "0.7.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "49203cdcae0030493bad186b28da2fa25645fa276a51b6fec8010d281e02ef79"
+dependencies = [
+ "dlv-list",
+ "hashbrown 0.14.5",
 ]
 
 [[package]]
@@ -7645,7 +7685,7 @@ dependencies = [
 
 [[package]]
 name = "rdp-auth"
-version = "0.31.4"
+version = "0.31.5"
 dependencies = [
  "aes 0.8.4",
  "cbc 0.1.2",
@@ -7669,7 +7709,7 @@ dependencies = [
 
 [[package]]
 name = "rdp-codecs"
-version = "0.31.4"
+version = "0.31.5"
 dependencies = [
  "criterion",
  "hex",
@@ -7680,7 +7720,7 @@ dependencies = [
 
 [[package]]
 name = "rdp-core"
-version = "0.31.4"
+version = "0.31.5"
 dependencies = [
  "bytes",
  "futures",
@@ -7705,7 +7745,7 @@ dependencies = [
 
 [[package]]
 name = "rdp-pdu"
-version = "0.31.4"
+version = "0.31.5"
 dependencies = [
  "bytes",
  "hex",
@@ -7814,7 +7854,7 @@ checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 
 [[package]]
 name = "remote-core"
-version = "0.31.4"
+version = "0.31.5"
 dependencies = [
  "agent-lease",
  "bytes",
@@ -7830,7 +7870,7 @@ dependencies = [
 
 [[package]]
 name = "remote-pixel"
-version = "0.31.4"
+version = "0.31.5"
 dependencies = [
  "criterion",
 ]
@@ -8087,6 +8127,16 @@ dependencies = [
  "tokio",
  "wasm-bindgen",
  "wasm-bindgen-futures",
+]
+
+[[package]]
+name = "rust-ini"
+version = "0.21.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "796e8d2b6696392a43bea58116b667fb4c29727dc5abd27d6acf338bb4f688c7"
+dependencies = [
+ "cfg-if",
+ "ordered-multimap",
 ]
 
 [[package]]
@@ -9065,7 +9115,7 @@ dependencies = [
 
 [[package]]
 name = "ssh-core"
-version = "0.31.4"
+version = "0.31.5"
 dependencies = [
  "bytes",
  "parking_lot",
@@ -9124,7 +9174,7 @@ dependencies = [
 
 [[package]]
 name = "ssh-transport"
-version = "0.31.4"
+version = "0.31.5"
 dependencies = [
  "aes 0.8.4",
  "argon2 0.5.3",
@@ -9569,6 +9619,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "tauri-plugin-deep-link"
+version = "2.6.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ab551d9bec27bb79d1c7fe5ed38c5cfd1cebb86efa745acc65f5853f345f6e56"
+dependencies = [
+ "dunce",
+ "plist",
+ "rust-ini",
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-plugin",
+ "tauri-utils",
+ "thiserror 2.0.19",
+ "tracing",
+ "url",
+ "windows-registry",
+ "windows-result 0.4.1",
+]
+
+[[package]]
 name = "tauri-plugin-dialog"
 version = "2.7.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -9990,6 +10061,15 @@ checksum = "7e689342a48d2ea927c87ea50cabf8594854bf940e9310208848d680d668ed85"
 dependencies = [
  "num-conv",
  "time-core",
+]
+
+[[package]]
+name = "tiny-keccak"
+version = "2.0.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2c9d3793400a45f954c52e73d068316d76b6f4e36977e3fcebb13a2721e80237"
+dependencies = [
+ "crunchy",
 ]
 
 [[package]]
@@ -10611,7 +10691,7 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
 name = "vnc-core"
-version = "0.31.4"
+version = "0.31.5"
 dependencies = [
  "aes 0.8.4",
  "byteorder",
@@ -10648,7 +10728,7 @@ dependencies = [
 
 [[package]]
 name = "vnc-discovery"
-version = "0.31.4"
+version = "0.31.5"
 dependencies = [
  "dns-lookup",
  "futures",
@@ -10669,7 +10749,7 @@ dependencies = [
 
 [[package]]
 name = "vnc-files"
-version = "0.31.4"
+version = "0.31.5"
 dependencies = [
  "async-trait",
  "futures",
@@ -10691,7 +10771,7 @@ dependencies = [
 
 [[package]]
 name = "vnc-input-capture"
-version = "0.31.4"
+version = "0.31.5"
 dependencies = [
  "core-foundation 0.10.1",
  "core-graphics 0.24.0",
@@ -10708,7 +10788,7 @@ dependencies = [
 
 [[package]]
 name = "vnc-store"
-version = "0.31.4"
+version = "0.31.5"
 dependencies = [
  "argon2 0.5.3",
  "chacha20poly1305",
@@ -10733,7 +10813,7 @@ dependencies = [
 
 [[package]]
 name = "vnc-transport"
-version = "0.31.4"
+version = "0.31.5"
 dependencies = [
  "hex",
  "openssl",

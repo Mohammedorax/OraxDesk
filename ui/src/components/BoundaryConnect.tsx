@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { BoundaryProviderSetup } from "./BoundaryProviderSetup";
 import { Dialog } from "./primitives";
-import { mustInvoke, openSessionWindow, readClipboard } from "../lib/tauri";
+import { mustInvoke, openSessionWindow, readClipboard, safeListen } from "../lib/tauri";
 import { rememberRegistryUrl, rememberedRegistryUrl, registry } from "../lib/support";
 import {
   helpCodeFromText,
@@ -15,6 +15,52 @@ import { useI18n } from "../lib/i18n";
 import { useHosts } from "../state/HostsContext";
 
 const NAME_KEY = "deskvnc.boundary.helperName";
+const HELP_EVENT = "oraxdesk://help-code";
+
+/**
+ * One bridge for deep links, outside React.
+ *
+ * StrictMode runs an effect twice: the first run asks Rust for the pending
+ * code, is cleaned up, and its promise resolves after it is no longer allowed
+ * to touch state. The code was then consumed and lost. The bridge has one
+ * consumer for the whole window, caches the code until a dialog subscribes,
+ * and hands it to the current subscriber rather than to a dead effect.
+ */
+const helpCodeHandlers = new Set<(code: string) => void>();
+let pendingHelpCode: string | null = null;
+let helpCodeBridgeStarted = false;
+
+function deliverHelpCode(code: string): void {
+    const value = code.trim();
+    if (value === "") return;
+    pendingHelpCode = value;
+    for (const handler of helpCodeHandlers) handler(value);
+    // A code is a one-shot handoff. Keep it briefly for a subscriber that is
+    // mounting right now, then stop offering a stale dialog on every remount.
+    window.setTimeout(() => {
+        if (pendingHelpCode === value) pendingHelpCode = null;
+    }, 5_000);
+}
+
+function startHelpCodeBridge(): void {
+    if (helpCodeBridgeStarted) return;
+    helpCodeBridgeStarted = true;
+    void safeListen<string>(HELP_EVENT, deliverHelpCode);
+    void mustInvoke<string | null>("take_pending_help_code")
+        .then((code) => {
+            if (code) deliverHelpCode(code);
+        })
+        .catch(() => undefined);
+}
+
+function subscribeHelpCode(handler: (code: string) => void): () => void {
+    helpCodeHandlers.add(handler);
+    if (pendingHelpCode) handler(pendingHelpCode);
+    startHelpCodeBridge();
+    return () => {
+        helpCodeHandlers.delete(handler);
+    };
+}
 
 /**
  * The two ways into the support window: to somebody who asked for help, and
@@ -65,7 +111,14 @@ function looksLikeNumber(text: string): boolean {
  * ID, saved to the Library so it opens like any other computer afterwards.
  * Rust validates and owns the invitation; it never enters a URL.
  */
-export function BoundaryConnect({ variant = "toolbar" }: { variant?: "toolbar" | "hero" } = {}) {
+export function BoundaryConnect({
+  variant = "toolbar",
+  acceptDeepLinks = true,
+}: {
+  variant?: "toolbar" | "hero";
+  /** Only the always-mounted toolbar instance should open from a link. */
+  acceptDeepLinks?: boolean;
+} = {}) {
   const { t, dir } = useI18n();
   const { saveHost, savePassword } = useHosts();
   const hero = variant === "hero";
@@ -102,6 +155,20 @@ export function BoundaryConnect({ variant = "toolbar" }: { variant?: "toolbar" |
       alive = false;
     };
   }, [open]);
+
+  // A link opens this dialog with the code already in the field, and the
+  // bridge above covers the launch case where the code arrives before the
+  // dialog has mounted.
+  useEffect(() => {
+    if (!acceptDeepLinks) return;
+    return subscribeHelpCode((code) => {
+      setOpen(true);
+      setMode("invite");
+      setInvitation(code);
+      setPasted(true);
+      setError("");
+    });
+  }, [acceptDeepLinks]);
 
   const reset = () => {
     setOpen(false);

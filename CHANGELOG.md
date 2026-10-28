@@ -10,6 +10,24 @@ to stored data and to the IPC contract between the Rust core and the frontend.
 
 ## [Unreleased]
 
+## [0.31.5] (2026-10-28)
+
+### Added
+
+* `oraxdesk://join/<code>` and `oraxdesk://help?code=<code>` links now open
+  OraxDesk and fill the help code in the helper dialog. A link received while
+  the app is starting is held until the webview is ready.
+* The helper approval dialog is larger, names the helper with an initial,
+  explains that nothing is visible until a choice is made, keeps the
+  connection identity behind a details control, and gives Decline its own
+  danger style.
+
+### Changed
+
+* The copy-link button now produces a link that actually opens the app; the
+  label says it is copied for pasting because the surrounding message may
+  still be sent through a chat.
+
 ## [0.31.4] (2026-10-28)
 
 ### Added

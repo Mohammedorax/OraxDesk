@@ -416,6 +416,7 @@ fn main() {
             "support_open_input_settings",
             "support_open_time_settings",
             "support_save_network",
+            "take_pending_help_code",
             "disconnect_session",
             "send_input",
             "trace_enabled",

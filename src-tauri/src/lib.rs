@@ -17,9 +17,55 @@ mod windows;
 
 use std::sync::Arc;
 
-use tauri::{Manager, RunEvent};
+use parking_lot::Mutex;
+use tauri::{Emitter, Manager, RunEvent, State};
+use tauri_plugin_deep_link::DeepLinkExt;
 
 use state::AppState;
+
+/// A code delivered by `oraxdesk://join/<code>` before the webview was ready.
+///
+/// The URL can arrive at process start, when no frontend listener exists yet.
+/// Holding it here lets the helper dialog ask for it once it mounts instead of
+/// losing the link.
+struct PendingHelpCode(Mutex<Option<String>>);
+
+/// The code inside the deep links this app understands.
+///
+/// Both forms are accepted because the copy button and older shares can differ:
+/// `oraxdesk://join/<code>` and `oraxdesk://help?code=<code>`. A full
+/// invitation is never parsed here; it is pasted into the dialog itself.
+fn help_code_from_url(value: &str) -> Option<String> {
+    let value = value.trim();
+    let rest = value
+        .strip_prefix("oraxdesk://join/")
+        .or_else(|| value.strip_prefix("oraxdesk://help/"))
+        .or_else(|| value.strip_prefix("oraxdesk://help?code="))?;
+    let code = rest
+        .split(['?', '#', '&'])
+        .next()
+        .unwrap_or("")
+        .trim()
+        .trim_end_matches('/');
+    (!code.is_empty()).then(|| code.to_string())
+}
+
+fn record_help_code(app: &tauri::AppHandle, code: String) {
+    if let Some(pending) = app.try_state::<PendingHelpCode>() {
+        *pending.0.lock() = Some(code.clone());
+    }
+    let _ = app.emit("oraxdesk://help-code", code);
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.show();
+        let _ = window.unminimize();
+        let _ = window.set_focus();
+    }
+}
+
+#[tauri::command]
+fn take_pending_help_code(pending: State<'_, PendingHelpCode>) -> Option<String> {
+    pending.0.lock().take()
+}
 
 /// Tear down everything a window owned: its sessions, its file transfers and
 /// its remote shells.
@@ -96,7 +142,15 @@ pub fn run() {
         builder = builder
             // Must be registered first so a second launch is forwarded before
             // any other plugin runs.
-            .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+                // A second launch from a link carries the URL as an argument.
+                // It must be handled before the window is merely focused, or
+                // the person sees the app come forward with an empty dialog.
+                for arg in argv {
+                    if let Some(code) = help_code_from_url(&arg) {
+                        record_help_code(app, code);
+                    }
+                }
                 if let Some(window) = app.get_webview_window("main") {
                     let _ = window.show();
                     let _ = window.unminimize();
@@ -127,6 +181,7 @@ pub fn run() {
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_store::Builder::new().build())
         .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_deep_link::init())
         .setup(|app| {
             #[cfg(desktop)]
             app.handle()
@@ -146,6 +201,30 @@ pub fn run() {
             let files_state = commands::files::FilesState::new(data_dir);
             let host_keys = files_state.host_key_verifier();
             app.manage(AppState::new(store, credentials, host_keys));
+            app.manage(PendingHelpCode(Mutex::new(None)));
+
+            // A link can arrive while the app is already running, or in the
+            // arguments of the process that was just started. Both paths go
+            // through the same pending slot, so a webview that has not mounted
+            // yet can still take the code when it is ready.
+            let deep_link_app = app.handle().clone();
+            let _ = deep_link_app.clone().deep_link().on_open_url(move |event| {
+                for url in event.urls() {
+                    if let Some(code) = help_code_from_url(url.as_str()) {
+                        record_help_code(&deep_link_app, code);
+                    }
+                }
+            });
+            for arg in std::env::args().skip(1) {
+                if let Some(code) = help_code_from_url(&arg) {
+                    record_help_code(app.handle(), code);
+                }
+            }
+            // Make the association work even when the app was started from a
+            // portable copy or an installer that could not write it. The
+            // installer still registers it for the normal case.
+            let _ = app.handle().deep_link().register_all();
+
             if let Some(window) = app.get_webview_window("main") {
                 fit_main_window(&window);
             }
@@ -305,6 +384,7 @@ pub fn run() {
             }
         })
         .invoke_handler(tauri::generate_handler![
+            take_pending_help_code,
             // hosts / library
             commands::hosts::list_hosts,
             commands::hosts::get_host,
@@ -490,4 +570,32 @@ pub fn run() {
                 std::thread::sleep(std::time::Duration::from_millis(250));
             }
         });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::help_code_from_url;
+
+    #[test]
+    fn reads_the_help_links_the_app_shares() {
+        assert_eq!(
+            help_code_from_url("oraxdesk://join/123456789012").as_deref(),
+            Some("123456789012")
+        );
+        assert_eq!(
+            help_code_from_url("oraxdesk://help?code=123456789012").as_deref(),
+            Some("123456789012")
+        );
+        assert_eq!(
+            help_code_from_url("oraxdesk://help/123456789012").as_deref(),
+            Some("123456789012")
+        );
+    }
+
+    #[test]
+    fn ignores_links_that_are_not_help_links() {
+        assert_eq!(help_code_from_url("https://example.com/join/123"), None);
+        assert_eq!(help_code_from_url("oraxdesk://settings"), None);
+        assert_eq!(help_code_from_url("oraxdesk://join/"), None);
+    }
 }

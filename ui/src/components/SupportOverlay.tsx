@@ -83,6 +83,7 @@ function Approval({
     return () => el?.close();
   }, []);
   const pending = asking;
+  const initial = pending.name.trim().slice(0, 1) || "?";
   const decide = (decision: Decision) => {
     setError("");
     onDecide(decision, allowTools, pair).catch((err) => setError(String(err)));
@@ -92,13 +93,24 @@ function Approval({
       ref={dialog}
       // Escape is not an answer. The helper waits until the person chooses.
       onCancel={(event) => event.preventDefault()}
-      className="m-auto w-full max-w-md rounded-lg border border-subtle bg-raised p-6 text-primary shadow-lg backdrop:bg-black/50"
+      className="m-auto w-full max-w-lg rounded-lg border border-subtle bg-raised p-6 text-primary shadow-lg backdrop:bg-black/50"
     >
-      <h2 className="text-lg font-semibold">{t("support.approveTitle")}</h2>
-      <p className="mt-3 text-base">{t("support.wantsToSee", { name: pending.name })}</p>
+      <div className="flex items-start gap-3">
+        <div className="grid size-12 shrink-0 place-items-center rounded-full bg-accent text-lg font-semibold text-accent-fg">
+          {initial}
+        </div>
+        <div>
+          <h2 className="text-lg font-semibold">{t("support.approveTitle")}</h2>
+          <p className="mt-1 text-base">{t("support.wantsToSee", { name: pending.name })}</p>
+        </div>
+      </div>
+      <p className="mt-3 text-sm text-secondary">{t("support.approveSafety")}</p>
       <p className="mt-1 text-xs text-secondary">{note}</p>
-      <p className="mt-3 text-xs text-secondary">{t("support.connectionIdentity")}</p>
-      <p className="mono break-all text-xs">{pending.peer}</p>
+      <details className="mt-3 text-xs text-secondary">
+        <summary className="cursor-pointer">{t("support.showIdentity")}</summary>
+        <p className="mt-1 text-xs">{t("support.connectionIdentity")}</p>
+        <p className="mono break-all text-xs">{pending.peer}</p>
+      </details>
       {pending.tools ? (
         <div className="mt-4">
           <label className="flex items-start gap-2 text-sm">
@@ -136,7 +148,7 @@ function Approval({
         <button type="button" className="btn-secondary" onClick={() => decide("view")}>
           {t("support.allowView")}
         </button>
-        <button type="button" className="btn-secondary" onClick={() => decide("deny")}>
+        <button type="button" className="btn-danger" onClick={() => decide("deny")}>
           {t("support.decline")}
         </button>
       </div>

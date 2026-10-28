@@ -1615,7 +1615,7 @@ export function Library({
                 <div className="flex flex-col items-center gap-3">
                   <div className="flex flex-wrap items-center justify-center gap-3">
                     <GetHelp variant="hero" />
-                    <BoundaryConnect variant="hero" />
+                    <BoundaryConnect variant="hero" acceptDeepLinks={false} />
                   </div>
                   <div className="flex flex-wrap items-center justify-center gap-2 text-xs text-secondary">
                     <button

@@ -32,6 +32,7 @@ tauri-plugin-window-state = "2"
 tauri-plugin-store = "2"
 tauri-plugin-process = "2"
 tauri-plugin-updater = "2"
+tauri-plugin-deep-link = "2"
 os_info = { version = "3", default-features = false }
 
 remote-core = { path = "../crates/remote-core" }

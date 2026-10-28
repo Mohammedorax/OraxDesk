@@ -42,7 +42,7 @@ const ar = {
   "registry.shareMessage": "أحتاج مساعدة على جهازي عبر OraxDesk.\nافتح OraxDesk ثم «ساعد شخصًا» وأدخل الرمز: {code}",
   "registry.readOut": "أرسل هذا الرمز إلى من يساعدك. لا تشاركه مع أي شخص آخر.",
   "registry.advanced": "إعدادات السجل المتقدمة",
-  "registry.link": "نسخ رابط للصق في OraxDesk",
+  "registry.link": "نسخ رابط المساعدة",
   "device.number": "رقم هذا الجهاز — اقرأه لمن يساعدك",
   "device.copyNumber": "نسخ الرقم",
   "device.numberHint": "تسعة أرقام ثابتة لهذا الجهاز. اقرأها على الهاتف لمن يساعدك، أو انسخها.",
@@ -187,7 +187,9 @@ const ar = {
   // طبقة الدعم: الموافقة واللافتات
   "support.approveTitle": "توافق على هذا المساعد؟",
   "support.wantsToSee": "{name} يريد رؤية شاشتك.",
+  "support.approveSafety": "لن يرى شيئًا حتى تختار. يمكنك إيقاف التحكم أو إنهاء الجلسة في أي وقت.",
   "support.connectionIdentity": "هوية اتصال المساعد",
+  "support.showIdentity": "اعرض هوية الاتصال",
   "support.noteInvited":
     "الاسم يقدّمه المساعد. أكّده مع الشخص الذي دعوته.",
   "support.noteUnpaired":
@@ -1394,7 +1396,7 @@ const en: Record<keyof typeof ar, string> = {
   "registry.shareMessage": "I need help with my computer through OraxDesk.\nOpen OraxDesk, choose \"Help someone\", and enter this code: {code}",
   "registry.readOut": "Send this code to the person helping you. Do not share it with anyone else.",
   "registry.advanced": "Advanced registry settings",
-  "registry.link": "Copy link to paste in OraxDesk",
+  "registry.link": "Copy help link",
   "device.number": "This computer's number — read it out",
   "device.copyNumber": "Copy number",
   "device.numberHint":
@@ -1544,7 +1546,10 @@ const en: Record<keyof typeof ar, string> = {
   // The support overlay: the approval dialog and the banners
   "support.approveTitle": "Approve this helper?",
   "support.wantsToSee": "{name} wants to see your screen.",
+  "support.approveSafety":
+    "They see nothing until you choose. You can stop control or end the session at any time.",
   "support.connectionIdentity": "Helper connection identity",
+  "support.showIdentity": "Show connection identity",
   "support.noteInvited":
     "The name is supplied by the helper. Confirm it with the person you invited.",
   "support.noteUnpaired":
