@@ -614,6 +614,8 @@ export function QuickConnect({
         use that profile, and a disabled button cannot explain itself, so the
         chip says "saved" and stays readable.
       */}
+      {!searchMode ? (
+        <>
       {trimmed !== "" && parsed.ok ? (
         <button
           type="button"
@@ -675,6 +677,8 @@ export function QuickConnect({
             : t("quick.remembered")}
         </span>
       )}
+        </>
+      ) : null}
     </div>
   );
 }

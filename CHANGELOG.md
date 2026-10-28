@@ -10,6 +10,14 @@ to stored data and to the IPC contract between the Rust core and the frontend.
 
 ## [Unreleased]
 
+## [0.31.8] (2026-10-28)
+
+### Fixed
+
+* Search mode no longer shows a second disabled Connect button beside the
+  smart field. The field is one box; the only control inside it is the mode
+  switch, and the separate Connect button appears only in connect mode.
+
 ## [0.31.7] (2026-10-28)
 
 ### Changed
