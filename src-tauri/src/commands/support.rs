@@ -840,6 +840,9 @@ fn show_main(app: &AppHandle) {
         let _ = window.show();
         let _ = window.unminimize();
         let _ = window.set_focus();
+        // Windows can refuse focus to a background process. The taskbar flash
+        // is the fallback that still tells the person an approval is waiting.
+        let _ = window.request_user_attention(Some(tauri::UserAttentionType::Critical));
     }
 }
 

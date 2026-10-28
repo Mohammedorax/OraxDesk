@@ -10,8 +10,15 @@ to stored data and to the IPC contract between the Rust core and the frontend.
 
 ## [Unreleased]
 
+## [0.31.6] (2026-10-28)
+
 ### Fixed
 
+* A bare 64-character OraxDesk machine ID in Quick Connect is now treated as
+  an OraxDesk Support (Boundary) target instead of being dialled as VNC. VNC,
+  SSH and RDP still require a network address and port.
+* When Windows refuses to bring the host window forward for an approval, the
+  taskbar is flashed so the request is not missed.
 * A device number that an older build had stored in the helper-name box is
   replaced with the neutral helper name instead of being shown to the person
   being helped.

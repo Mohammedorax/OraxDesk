@@ -114,7 +114,10 @@ export function QuickConnect({
 
   const trimmed = value.trim();
   const target = useMemo(() => compactDeviceNumber(value), [value]);
-  const parsed = useMemo(() => parseConnectTarget(target), [target]);
+  const parsed = useMemo(
+    () => parseConnectTarget(target, /^[0-9a-fA-F]{64}$/.test(target) ? "boundary" : undefined),
+    [target],
+  );
   /**
    * The user has overridden the chip for what is currently typed. Cleared on
    * every keystroke, so it applies to one address rather than becoming a
