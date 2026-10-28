@@ -26,7 +26,7 @@ import {
 } from "../lib/address";
 import { classNames, fuzzyMatch, modKeyLabel } from "../lib/util";
 import { useI18n, type MessageKey } from "../lib/i18n";
-import { IconArrowRight, IconClock, IconMonitor, IconZap } from "./icons";
+import { IconArrowRight, IconClock, IconMonitor, IconSearch, IconZap } from "./icons";
 
 /** Matches the Rust side's `normalize_address`, so both agree on "same machine". */
 function sameAddress(a: string, b: string): boolean {
@@ -36,6 +36,24 @@ function sameAddress(a: string, b: string): boolean {
       .replace(/\.+$/, "")
       .replace(/[A-Z]/g, (c) => c.toLowerCase()); // ASCII only, as Rust does
   return norm(a) === norm(b);
+}
+
+/**
+ * What a person typed is an endpoint rather than a library search.
+ *
+ * This is deliberately punctuation-based, not "parseConnectTarget says it is
+ * valid": almost any word parses as a VNC hostname, and switching modes on
+ * every letter would make the search box unusable. A colon, dot, slash or
+ * at-sign, or the two OraxDesk number forms, is the intent to connect.
+ */
+function looksLikeAddress(value: string): boolean {
+  const text = value.trim();
+  return (
+    /^[0-9a-fA-F]{64}$/.test(text) ||
+    /^\d{9}$/.test(text.replace(/[\s.-]/g, "")) ||
+    /[:/@]/.test(text) ||
+    /^(vnc|rdp|ssh):\/\//i.test(text)
+  );
 }
 
 /**
@@ -93,6 +111,9 @@ export function QuickConnect({
   onConnectHost,
   onConnectAddress,
   onRemember,
+  onSearch,
+  embedded = false,
+  showSupport = true,
 }: {
   hosts: HostProfile[];
   discovered: DiscoveredHost[];
@@ -102,6 +123,12 @@ export function QuickConnect({
   onConnectHost: (host: HostProfile) => void;
   onConnectAddress: (protocol: ProtocolKind, address: string, port: number) => void;
   onRemember: (address: string) => void;
+  /** In search mode this feeds the Library filter. */
+  onSearch?: (value: string) => void;
+  /** The header draws the field without its own border and padding. */
+  embedded?: boolean;
+  /** The sidebar owns the support actions when the field is in the header. */
+  showSupport?: boolean;
 }): ReactNode {
   const { t } = useI18n();
   const [value, setValue] = useState("");
@@ -110,7 +137,26 @@ export function QuickConnect({
   const [selected, setSelected] = useState(-1);
   /** Only red after the user actually tried to connect; typing is not an error. */
   const [attempted, setAttempted] = useState(false);
+  const [mode, setMode] = useState<"search" | "connect">("search");
   const listRef = useRef<HTMLDivElement>(null);
+  const searchMode = mode === "search";
+
+  // Search mode is the same field, not a second one: every keystroke is the
+  // Library filter, and the mode button is how a person says "I mean an
+  // address" without being guessed at.
+  useEffect(() => {
+    if (searchMode) onSearch?.(value);
+  }, [onSearch, searchMode, value]);
+
+  const setConnectMode = (): void => {
+    setMode("connect");
+    onSearch?.("");
+    setOpen(true);
+  };
+  const setSearchMode = (): void => {
+    setMode("search");
+    setOpen(true);
+  };
 
   const trimmed = value.trim();
   const target = useMemo(() => compactDeviceNumber(value), [value]);
@@ -377,7 +423,7 @@ export function QuickConnect({
       e.preventDefault();
       const entry = showList && selected >= 0 ? suggestions[selected] : undefined;
       if (entry) entry.run();
-      else if (trimmed !== "") connectTyped();
+      else if (trimmed !== "" && (!searchMode || savedMatch)) connectTyped();
     } else if (e.key === "Escape") {
       e.preventDefault();
       // First Escape dismisses the list, a second one abandons the address.
@@ -393,27 +439,38 @@ export function QuickConnect({
   const invalid = trimmed !== "" && !parsed.ok;
 
   return (
-    <div className="flex items-center gap-2 border-b border-subtle bg-surface/40 px-4 py-2">
-      <BoundaryConnect />
-      <GetHelp />
-      <div className="relative min-w-0 flex-1 md:max-w-xl">
-        <IconMonitor
-          size={15}
-          className="pointer-events-none absolute start-2.5 top-1/2 -translate-y-1/2 text-tertiary"
-        />
+    <div className={embedded ? "flex min-w-0 flex-1 items-center gap-2" : "flex items-center gap-2 border-b border-subtle bg-surface/40 px-4 py-2"}>
+      {showSupport ? <BoundaryConnect /> : null}
+      {showSupport ? <GetHelp /> : null}
+      <div className="relative min-w-[17rem] flex-1 md:max-w-xl">
+        {searchMode ? (
+          <IconSearch
+            size={15}
+            className="pointer-events-none absolute start-2.5 top-1/2 -translate-y-1/2 text-tertiary"
+          />
+        ) : (
+          <IconMonitor
+            size={15}
+            className="pointer-events-none absolute start-2.5 top-1/2 -translate-y-1/2 text-tertiary"
+          />
+        )}
         <input
           ref={inputRef}
-          className="field mono !ps-8"
-          placeholder={t("quick.placeholder", { key: modKeyLabel })}
-          aria-label={t("quick.label")}
+          className={searchMode ? "field !pe-20 !ps-8" : "field mono !pe-20 !ps-8"}
+          placeholder={
+            searchMode
+              ? t("library.searchPlaceholder", { chord: modKeyLabel })
+              : t("quick.placeholder", { key: modKeyLabel })
+          }
+          aria-label={searchMode ? t("library.searchAria") : t("quick.label")}
           spellCheck={false}
           autoComplete="off"
           // An address is not a sentence, and the layout is right-to-left by
           // default in this app: without this, the bidi algorithm reorders
           // the parts of `192.168.1.20:1` and `rdp://frontdesk`, and the
           // text ends up somewhere other than where it was typed.
-          dir="ltr"
-          style={{ unicodeBidi: "isolate" }}
+          dir={searchMode ? undefined : "ltr"}
+          style={searchMode ? undefined : { unicodeBidi: "isolate" }}
           role="combobox"
           aria-expanded={showList}
           aria-controls="quick-connect-list"
@@ -430,17 +487,34 @@ export function QuickConnect({
           aria-activedescendant={
             showList && selected >= 0 ? `quick-connect-option-${selected}` : undefined
           }
-          aria-invalid={invalid}
+          aria-invalid={!searchMode && invalid}
           value={value}
           onChange={(e) => {
-            setValue(e.target.value);
+            const next = e.target.value;
+            setValue(next);
             setAttempted(false);
             setOpen(true);
+            if (searchMode && looksLikeAddress(next)) setConnectMode();
           }}
           onFocus={() => setOpen(true)}
           onBlur={() => setOpen(false)}
           onKeyDown={onKeyDown}
         />
+        <button
+          type="button"
+          className="absolute end-1 top-1/2 -translate-y-1/2 rounded-sm bg-inset px-1.5 py-1 text-2xs font-medium text-secondary hover:bg-raised hover:text-primary"
+          title={searchMode ? t("quick.switchToConnect") : t("quick.switchToSearch")}
+          aria-label={searchMode ? t("quick.switchToConnect") : t("quick.switchToSearch")}
+          aria-pressed={!searchMode}
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={() => {
+            if (searchMode) setConnectMode();
+            else setSearchMode();
+            inputRef.current?.focus();
+          }}
+        >
+          {searchMode ? t("quick.modeConnect") : t("quick.modeSearch")}
+        </button>
         {showList ? (
           <div
             ref={listRef}

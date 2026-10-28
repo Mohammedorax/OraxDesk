@@ -10,6 +10,17 @@ to stored data and to the IPC contract between the Rust core and the frontend.
 
 ## [Unreleased]
 
+## [0.31.7] (2026-10-28)
+
+### Changed
+
+* The Library search and the quick-connect address are now one field in the
+  top bar. It searches saved computers by default, switches to connection mode
+  automatically for an address, number or 64-character machine ID, and has a
+  small button inside the field to switch modes by hand.
+* Get help and Help someone moved to the bottom of the sidebar, so the smart
+  field has room to be readable instead of shrinking between toolbar controls.
+
 ## [0.31.6] (2026-10-28)
 
 ### Fixed

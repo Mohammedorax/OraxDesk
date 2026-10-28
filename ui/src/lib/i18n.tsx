@@ -111,6 +111,10 @@ const ar = {
   // شريط الاتصال السريع
   "quick.placeholder": "اتصل بعنوان، مثل 192.168.1.20:1 أو rdp://frontdesk  ({key}T)",
   "quick.label": "العنوان الذي تريد الاتصال به",
+  "quick.modeSearch": "بحث",
+  "quick.modeConnect": "اتصال",
+  "quick.switchToSearch": "بدّل إلى البحث",
+  "quick.switchToConnect": "بدّل إلى الاتصال",
   "quick.connect": "اتصال",
   "quick.savedHost": "مضيف محفوظ",
   "quick.recent": "مؤخّر",
@@ -1467,6 +1471,10 @@ const en: Record<keyof typeof ar, string> = {
   // The quick connect bar
   "quick.placeholder": "Connect to an address, e.g. 192.168.1.20:1 or rdp://frontdesk  ({key}T)",
   "quick.label": "Address to connect to",
+  "quick.modeSearch": "Search",
+  "quick.modeConnect": "Connect",
+  "quick.switchToSearch": "Switch to search",
+  "quick.switchToConnect": "Switch to connect",
   "quick.connect": "Connect",
   "quick.savedHost": "saved host",
   "quick.recent": "recent",

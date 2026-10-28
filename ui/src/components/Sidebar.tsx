@@ -42,6 +42,7 @@ export function Sidebar({
   onGroupContextMenu,
   dragging = false,
   dropOverKey = null,
+  footer,
 }: {
   hosts: HostProfile[];
   groups: HostGroup[];
@@ -70,6 +71,8 @@ export function Sidebar({
   dragging?: boolean;
   /** The `data-drop` key currently under the pointer, if any. */
   dropOverKey?: string | null;
+  /** Support actions, kept at the bottom of the always-visible sidebar. */
+  footer?: ReactNode;
 }): ReactNode {
   const { t: translate } = useI18n();
   const groupCount = (gid: string): number => {
@@ -228,6 +231,11 @@ export function Sidebar({
           onClick={onOpenPreferences}
         />
       </div>
+      {footer ? (
+        <div className="mt-2 flex shrink-0 flex-col gap-2 border-t border-subtle pt-2 [&>button]:w-full [&>button]:justify-center">
+          {footer}
+        </div>
+      ) : null}
     </nav>
     {agentsOpen ? <AgentConnect onClose={() => setAgentsOpen(false)} /> : null}
     </>

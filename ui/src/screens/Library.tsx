@@ -67,7 +67,6 @@ import {
   IconList,
   IconMonitor,
   IconPlus,
-  IconSearch,
   IconTabs,
   IconWindows,
   IconZap,
@@ -149,7 +148,6 @@ export function Library({
   const [activeTagIds, setActiveTagIds] = useState<Set<string>>(new Set());
   const [tagMode, setTagMode] = useState<"and" | "or">("or");
   const [namePrompt, setNamePrompt] = useState<"group" | "tag" | null>(null);
-  const searchRef = useRef<HTMLInputElement>(null);
   const quickConnectRef = useRef<HTMLInputElement>(null);
 
   const focusQuickConnect = useCallback((): void => {
@@ -1178,8 +1176,8 @@ export function Library({
         focusQuickConnect();
       } else if (mod && e.key.toLowerCase() === "f") {
         e.preventDefault();
-        searchRef.current?.focus();
-        searchRef.current?.select();
+        quickConnectRef.current?.focus();
+        quickConnectRef.current?.select();
       } else if (mod && e.key.toLowerCase() === "n") {
         e.preventDefault();
         setHostDialog(draftFromHost(null));
@@ -1434,20 +1432,18 @@ export function Library({
       */}
       <header className="flex flex-wrap items-center gap-3 border-b border-subtle bg-surface/80 px-4 py-2.5">
         <h1 className="mr-1 text-sm font-semibold tracking-tight text-primary">OraxDesk</h1>
-        <div className="relative min-w-56 max-w-md flex-1">
-          <IconSearch size={15} className="pointer-events-none absolute start-2.5 top-1/2 -translate-y-1/2 text-tertiary" />
-          <input
-            ref={searchRef}
-            className="field !ps-8"
-            placeholder={t("library.searchPlaceholder", { chord: modKeyLabel })}
-            aria-label={t("library.searchAria")}
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Escape") setSearch("");
-            }}
-          />
-        </div>
+        <QuickConnect
+          hosts={hosts}
+          discovered={discovered}
+          recents={settings.quickConnectHistory}
+          inputRef={quickConnectRef}
+          onConnectHost={connectHost}
+          onConnectAddress={connectAdHocResolved}
+          onRemember={rememberQuickConnect}
+          onSearch={setSearch}
+          embedded
+          showSupport={false}
+        />
         <label className="flex shrink-0 items-center gap-1.5 text-xs text-secondary">
           {t("library.sort")}
           <Select
@@ -1550,15 +1546,6 @@ export function Library({
       </header>
 
       <DeviceIdentityCard />
-      <QuickConnect
-        hosts={hosts}
-        discovered={discovered}
-        recents={settings.quickConnectHistory}
-        inputRef={quickConnectRef}
-        onConnectHost={connectHost}
-        onConnectAddress={connectAdHocResolved}
-        onRemember={rememberQuickConnect}
-      />
 
       {/* `relative` anchors the floating selection bar: it must NOT be part of
           the flow, or appearing on the first click would push every tile down
@@ -1589,6 +1576,12 @@ export function Library({
           onGroupContextMenu={(group, x, y) => setGroupMenu({ group, x, y })}
           dragging={drag !== null}
           dropOverKey={drag?.over ?? null}
+          footer={
+            <div className="flex flex-col gap-2">
+              <GetHelp />
+              <BoundaryConnect />
+            </div>
+          }
         />
 
         <main
