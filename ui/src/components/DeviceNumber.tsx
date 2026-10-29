@@ -44,6 +44,19 @@ export function DeviceNumber({ machineId }: { machineId: string }): ReactNode {
   >("idle");
   const [autoRegister, setAutoRegister] = useState(true);
   /**
+   * Copying is silent in the clipboard, so the button itself has to say that
+   * it happened. It goes back to its own label after a moment rather than
+   * staying changed, because the button is still the way to copy it again.
+   */
+  const [copied, setCopied] = useState(false);
+  const copiedTimer = useRef<number | null>(null);
+  useEffect(
+    () => () => {
+      if (copiedTimer.current !== null) window.clearTimeout(copiedTimer.current);
+    },
+    [],
+  );
+  /**
    * The registration is a network round trip and the background task also
    * retries, so two clicks (or a focus event) must not start two registrations
    * at once. This is a ref rather than state because the guard has to be true
@@ -159,8 +172,8 @@ export function DeviceNumber({ machineId }: { machineId: string }): ReactNode {
 
   return (
     <div className="mt-2 rounded border border-subtle bg-inset/40 p-3">
-      <div className="flex items-center justify-between gap-3">
-        <span className="flex items-center gap-2 text-sm text-secondary">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <span className="flex items-center gap-2 text-xs text-tertiary">
           <span
             aria-hidden="true"
             className={`inline-block size-2 rounded-full ${
@@ -169,7 +182,7 @@ export function DeviceNumber({ machineId }: { machineId: string }): ReactNode {
           />
           {t("device.number")}
         </span>
-        <div className="flex items-center gap-2">
+        <div className="flex min-w-0 shrink-0 items-center gap-2">
           {/*
             The number is a run of digits with spaces in it, and it is read
             OUT LOUD to another person, so its order is not a detail.
@@ -182,12 +195,14 @@ export function DeviceNumber({ machineId }: { machineId: string }): ReactNode {
             the lookup fails.
 
             The run is isolated and pinned left to right, so the digits are
-            in the order they are in.
+            in the order they are in. Tabular figures keep the digits from
+            shifting as the number changes, and it is the largest thing in
+            the card because it is the thing a person reads aloud.
           */}
           <span
             dir="ltr"
             style={{ unicodeBidi: "isolate" }}
-            className="mono select-all text-lg font-semibold tracking-wider"
+            className="mono shrink-0 whitespace-nowrap text-2xl font-semibold tabular-nums tracking-wider"
           >
             {groupDigits(number)}
           </span>
@@ -196,10 +211,20 @@ export function DeviceNumber({ machineId }: { machineId: string }): ReactNode {
             className="btn-secondary"
             disabled={!canRead}
             title={canRead ? undefined : t("device.registerNotReady")}
-            onClick={() => void writeClipboard(number).catch(() => undefined)}
+            onClick={() =>
+              void writeClipboard(number).then((ok) => {
+                if (!ok) return;
+                setCopied(true);
+                if (copiedTimer.current !== null) window.clearTimeout(copiedTimer.current);
+                copiedTimer.current = window.setTimeout(() => setCopied(false), 1600);
+              })
+            }
           >
-            {t("device.copyNumber")}
+            {copied ? t("device.copied") : t("device.copyNumber")}
           </button>
+          <span className="sr-only" aria-live="polite">
+            {copied ? t("device.copied") : ""}
+          </span>
         </div>
       </div>
       <p className="mt-1 text-xs text-secondary">{t("device.numberHint")}</p>

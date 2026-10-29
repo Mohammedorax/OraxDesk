@@ -6,6 +6,12 @@
  * button: the sidebar already carries three of those at the foot, and a
  * fourth would read as a peer of "Get help" rather than as a delete.
  *
+ * It exists only while there is a selection. A permanently visible trash can
+ * says that deleting is something this window always offers, and a disabled
+ * one says there is a reason to look at it and work out why; what the button
+ * does depends entirely on the grid, so it appears with the selection and
+ * leaves with it.
+ *
  * The button is never the last step. It asks, and the Library's own
  * confirmation does the deleting: a delete that happened on one click would
  * be the only destructive gesture in the app that cannot be seen coming.
@@ -22,13 +28,13 @@ export function SidebarDeleteButton({
   targets,
   onAsk,
 }: {
-  /** The machines the button would delete. Empty means it cannot act. */
+  /** The machines the button would delete. Empty means there is nothing to show. */
   targets: HostProfile[];
   /** Ask before anything is deleted. */
   onAsk: () => void;
 }): ReactNode {
   const t = useT();
-  const ready = targets.length > 0;
+  if (targets.length === 0) return null;
   const one = targets.length === 1 ? targets[0] : null;
 
   /**
@@ -39,27 +45,19 @@ export function SidebarDeleteButton({
    */
   const name = one
     ? t("library.deleteSelectedTitle", { name: one.friendlyName })
-    : ready
-      ? t("library.deleteSelectedTitleMany", { count: targets.length })
-      : t("library.deleteSelected");
+    : t("library.deleteSelectedTitleMany", { count: targets.length });
   const hint = one
     ? one.friendlyName
-    : ready
-      ? t("library.deleteSelectedMany", { count: targets.length })
-      : t("library.deleteNothingSelected");
+    : t("library.deleteSelectedMany", { count: targets.length });
 
   return (
     <>
       <button
         type="button"
         aria-label={name}
-        // The reason a disabled control cannot be used is in the tooltip for
-        // a mouse and in the description for a screen reader: a greyed-out
-        // button with no reason is a dead end.
         aria-describedby={HINT_ID}
-        title={ready ? name : t("library.deleteNothingSelected")}
-        disabled={!ready}
-        className="rounded-sm p-1.5 text-tertiary hover:bg-inset hover:text-danger disabled:cursor-default disabled:text-tertiary/40 disabled:hover:bg-transparent disabled:hover:text-tertiary/40"
+        title={name}
+        className="rounded-sm p-1.5 text-tertiary hover:bg-inset hover:text-danger"
         onClick={onAsk}
       >
         <IconTrash size={15} />

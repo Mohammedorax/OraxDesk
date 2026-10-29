@@ -195,7 +195,7 @@ function SharingBanner({ view }: { view: SupportView }): ReactNode {
             ? t("support.canSeeAndControl", { name })
             : t("support.canSeeScreen", { name })}
         </span>
-        <div className="ml-auto flex gap-2">
+        <div className="ms-auto flex gap-2">
           {view.control ? (
             <button type="button" className="btn-secondary px-3 py-1 text-xs" onClick={() => void support.setControl(false)}>
               {t("support.stopControl")}
@@ -228,7 +228,7 @@ function UnattendedBanner({ active }: { active: SupportView["unattended"]["activ
             ? t("support.isConnectedControl", { name: active.name })
             : t("support.isConnectedWatching", { name: active.name })}
         </span>
-        <div className="ml-auto flex gap-2">
+        <div className="ms-auto flex gap-2">
           {active.tools ? (
             <button type="button" className="btn-secondary px-3 py-1 text-xs" onClick={() => void support.stopUnattendedTools(active.id)}>
               {t("support.stopCommands")}

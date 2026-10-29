@@ -271,7 +271,7 @@ export function About({ onClose }: { onClose: () => void }): ReactNode {
             >
               {t("about.contactDeveloper")}
             </button>
-            <button type="button" className="btn-primary ml-auto" data-autofocus onClick={onClose}>
+            <button type="button" className="btn-primary ms-auto" data-autofocus onClick={onClose}>
               {t("about.close")}
             </button>
           </div>
@@ -327,7 +327,7 @@ export function About({ onClose }: { onClose: () => void }): ReactNode {
             >
               {t("about.documentation")}
             </button>
-            <button type="button" className="btn-primary ml-auto" onClick={onClose}>
+            <button type="button" className="btn-primary ms-auto" onClick={onClose}>
               {t("about.close")}
             </button>
           </div>

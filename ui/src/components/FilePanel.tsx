@@ -270,7 +270,7 @@ export function FilePanel({ files, hostName, onClose }: FilePanelProps): ReactNo
             disabled={focused === "remote" && conn.state !== "connected"}
             onClick={() => setCreating({ pane: focused, name: t("files.newFolder") })}
           >
-            <IconPlus size={13} className="mr-1 inline" />
+            <IconPlus size={13} className="me-1 inline" />
             {t("files.newFolder")}
           </button>
           <button
@@ -291,7 +291,7 @@ export function FilePanel({ files, hostName, onClose }: FilePanelProps): ReactNo
             disabled={activePane.selected.length === 0}
             onClick={() => setConfirmDelete({ pane: focused, paths: activePane.selected })}
           >
-            <IconTrash size={13} className="mr-1 inline" />
+            <IconTrash size={13} className="me-1 inline" />
             {t("files.delete")}
           </button>
           {/*

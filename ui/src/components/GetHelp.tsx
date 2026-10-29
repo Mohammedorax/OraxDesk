@@ -3,7 +3,7 @@ import { BoundaryProviderSetup } from "./BoundaryProviderSetup";
 import { DeviceNumber } from "./DeviceNumber";
 import { RegistryCodePanel } from "./RegistryCodePanel";
 import { writeClipboard } from "../lib/tauri";
-import { Dialog } from "./primitives";
+import { Dialog, Select } from "./primitives";
 import { useI18n, useT } from "../lib/i18n";
 import {
   setCodeService,
@@ -148,8 +148,8 @@ function ScreenPermission(): ReactNode {
 
 function DisplayPicker({ view, run }: { view: SupportView; run: Run }): ReactNode {
   return (
-    <select
-      className="field"
+    <Select
+      wrapperClassName="min-w-0 flex-1"
       value={view.display ?? ""}
       disabled={view.sharing}
       onChange={(event) => run(() => support.setDisplay(Number(event.target.value)))}
@@ -159,7 +159,7 @@ function DisplayPicker({ view, run }: { view: SupportView; run: Run }): ReactNod
           {display.name}
         </option>
       ))}
-    </select>
+    </Select>
   );
 }
 
@@ -387,7 +387,7 @@ function StatusLine({ view }: { view: SupportView }): ReactNode {
     <div className="flex flex-wrap items-center gap-2 text-xs">
       <span className={`inline-block size-2 rounded-full ${color}`} />
       <span>{label}</span>
-      <details className="ml-auto text-secondary">
+      <details className="ms-auto text-secondary">
         <summary className="cursor-pointer">{t("gethelp.statusDetails")}</summary>
         <div className="mt-1 flex flex-col gap-1 text-end">
           {view.status ? <span>{view.status}</span> : null}
@@ -501,7 +501,7 @@ function UnattendedSettings({ view, run }: { view: SupportView; run: Run }): Rea
                 />
                 {t("gethelp.mayRunTools")}
               </label>
-              <button type="button" className="btn-secondary ml-auto px-2.5 py-1 text-xs" onClick={() => run(() => support.removeHelper(helper.id))}>
+              <button type="button" className="btn-secondary ms-auto px-2.5 py-1 text-xs" onClick={() => run(() => support.removeHelper(helper.id))}>
                 {t("gethelp.remove")}
               </button>
             </li>

@@ -34,6 +34,7 @@ import {
 } from "../lib/rdpDefaults";
 import { classNames } from "../lib/util";
 import { IconX } from "../components/icons";
+import { Select } from "../components/primitives";
 
 const TABS = [
   "General", "Appearance", "Connections", "Session", "Input", "Clipboard", "Files", "Security", "Network", "Agents",
@@ -381,8 +382,8 @@ export function Preferences({ onClose }: { onClose: () => void }): ReactNode {
                   <span className="mt-0.5 block text-xs text-tertiary">
                     {t("prefs.resolutionForNewHint")}
                   </span>
-                  <select
-                    className="field mt-1.5"
+                  <Select
+                    className="mt-1.5"
                     value={encodeResolution(rdpResolution)}
                     onChange={(e) => {
                       const next = decodeResolution(e.target.value);
@@ -396,7 +397,7 @@ export function Preferences({ onClose }: { onClose: () => void }): ReactNode {
                         {w} x {h}
                       </option>
                     ))}
-                  </select>
+                  </Select>
                 </label>
                 <Toggle
                   label={t("prefs.playRemoteSound")}

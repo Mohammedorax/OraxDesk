@@ -373,7 +373,7 @@ function GroupRow({
           active ? "bg-accent/15 font-medium text-primary" : "text-secondary hover:bg-inset hover:text-primary",
           over && "ring-2 ring-accent",
         )}
-        style={{ paddingLeft: 8 + depth * 14 }}
+        style={{ paddingInlineStart: 8 + depth * 14 }}
         onClick={() => onSelect({ kind: "group", id: group.id })}
         onContextMenu={(e) => {
           if (!onContextMenu) return;

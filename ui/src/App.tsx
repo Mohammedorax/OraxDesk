@@ -1,4 +1,13 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import {
+  lazy,
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { SettingsProvider, useSettings } from "./state/SettingsContext";
 import { ToastProvider } from "./state/ToastContext";
 import { HostsProvider } from "./state/HostsContext";
@@ -6,11 +15,6 @@ import { DiscoveryProvider } from "./state/DiscoveryContext";
 import { SessionsProvider } from "./state/SessionsContext";
 import { AgentActivityProvider, useAgentActivity } from "./state/AgentActivityContext";
 import { TabsProvider, useTabs } from "./state/TabsContext";
-import { Library } from "./screens/Library";
-import { Session } from "./screens/Session";
-import { Preferences } from "./screens/Preferences";
-import { About } from "./screens/About";
-import { Onboarding } from "./screens/Onboarding";
 import { TabStrip, tabPanelId } from "./components/TabStrip";
 import { Pane } from "./components/Pane";
 import { SplitView } from "./components/SplitView";
@@ -24,6 +28,46 @@ import { syncSessionMenu } from "./lib/menuSync";
 import { PREF_HIDE_TOOLBAR, readBoolPref, writeBoolPref } from "./lib/prefs";
 import { installContextMenuSuppressor } from "./lib/contextMenu";
 import { installAvailableUpdate } from "./lib/updater";
+
+const Library = lazy(() =>
+  import("./screens/Library").then((module) => ({ default: module.Library })),
+);
+const Session = lazy(() => import("./screens/Session").then((module) => ({ default: module.Session })));
+const Preferences = lazy(() =>
+  import("./screens/Preferences").then((module) => ({ default: module.Preferences })),
+);
+const About = lazy(() => import("./screens/About").then((module) => ({ default: module.About })));
+const Onboarding = lazy(() =>
+  import("./screens/Onboarding").then((module) => ({ default: module.Onboarding })),
+);
+
+function ScreenLoading(): ReactNode {
+  const t = useT();
+  return (
+    <div
+      className="flex h-full min-h-0 items-center justify-center text-sm text-secondary"
+      role="status"
+      aria-live="polite"
+    >
+      {t("files.loading")}
+    </div>
+  );
+}
+
+function ModalLoading(): ReactNode {
+  const t = useT();
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-scrim text-sm text-primary"
+      role="status"
+      aria-live="polite"
+    >
+      <div className="rounded-md border border-subtle bg-raised px-4 py-3 shadow-(--shadow-pop)">
+        {t("files.loading")}
+      </div>
+    </div>
+  );
+}
 
 /**
  * Tell the native menu that nothing is connected in the window in front.
@@ -61,8 +105,14 @@ function SessionWindow(): ReactNode {
   }, []);
   return (
     <>
-      <Session />
-      {aboutOpen ? <About onClose={() => setAboutOpen(false)} /> : null}
+      <Suspense fallback={<ScreenLoading />}>
+        <Session />
+      </Suspense>
+      {aboutOpen ? (
+        <Suspense fallback={<ModalLoading />}>
+          <About onClose={() => setAboutOpen(false)} />
+        </Suspense>
+      ) : null}
     </>
   );
 }
@@ -413,13 +463,15 @@ function MainShell(): ReactNode {
 
   if (showOnboarding) {
     return (
-      <Onboarding
-        onDone={() => setSkippedOnboarding(true)}
-        onAddDiscovered={(id) => {
-          setAutoAddDiscoveredId(id);
-          setSkippedOnboarding(true);
-        }}
-      />
+      <Suspense fallback={<ScreenLoading />}>
+        <Onboarding
+          onDone={() => setSkippedOnboarding(true)}
+          onAddDiscovered={(id) => {
+            setAutoAddDiscoveredId(id);
+            setSkippedOnboarding(true);
+          }}
+        />
+      </Suspense>
     );
   }
 
@@ -457,12 +509,14 @@ function MainShell(): ReactNode {
       */}
       <div className="relative min-h-0 flex-1">
         <Pane visible={libraryInFront} id={tabPanelId(null)} label={t("common.library")}>
-          <Library
-            onOpenPreferences={() => setPrefsOpen(true)}
-            onOpenAbout={() => setAboutOpen(true)}
-            autoAddDiscoveredId={autoAddDiscoveredId}
-            onAutoAddHandled={() => setAutoAddDiscoveredId(null)}
-          />
+          <Suspense fallback={<ScreenLoading />}>
+            <Library
+              onOpenPreferences={() => setPrefsOpen(true)}
+              onOpenAbout={() => setAboutOpen(true)}
+              autoAddDiscoveredId={autoAddDiscoveredId}
+              onAutoAddHandled={() => setAutoAddDiscoveredId(null)}
+            />
+          </Suspense>
         </Pane>
         <SplitView onAppHotkey={appHotkey} />
       </div>
@@ -480,8 +534,16 @@ function MainShell(): ReactNode {
       */}
       <AgentWall onShowSession={selectSession} />
 
-      {prefsOpen ? <Preferences onClose={() => setPrefsOpen(false)} /> : null}
-      {aboutOpen ? <About onClose={() => setAboutOpen(false)} /> : null}
+      {prefsOpen ? (
+        <Suspense fallback={<ModalLoading />}>
+          <Preferences onClose={() => setPrefsOpen(false)} />
+        </Suspense>
+      ) : null}
+      {aboutOpen ? (
+        <Suspense fallback={<ModalLoading />}>
+          <About onClose={() => setAboutOpen(false)} />
+        </Suspense>
+      ) : null}
     </div>
   );
 }

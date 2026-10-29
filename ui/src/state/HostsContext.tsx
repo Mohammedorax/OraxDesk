@@ -81,6 +81,14 @@ interface HostsContextValue {
   groups: HostGroup[];
   tags: HostTag[];
   loading: boolean;
+  /**
+   * The last read of the library failed.
+   *
+   * Separate from `loading` and from an empty `hosts` list: "I could not ask"
+   * and "there is nothing saved" look the same on screen, and only one of
+   * them should invite the person to add their first machine.
+   */
+  loadFailed: boolean;
   refresh: () => Promise<void>;
   /** A full reload, tile pictures included. */
   reload: () => Promise<void>;
@@ -144,6 +152,7 @@ export function HostsProvider({ children }: { children: ReactNode }): ReactNode 
   const [groups, setGroups] = useState<HostGroup[]>([]);
   const [tags, setTags] = useState<HostTag[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadFailed, setLoadFailed] = useState(false);
   /**
    * Tile images live in React state, NOT a ref: a ref plus a bump counter left
    * outside the context value never reaches the tiles, because re-rendering
@@ -302,6 +311,7 @@ export function HostsProvider({ children }: { children: ReactNode }): ReactNode 
         setHosts(withMockThumbnails(MOCK_HOSTS));
         setGroups(MOCK_GROUPS);
         setTags(MOCK_TAGS);
+        setLoadFailed(false);
         setLoading(false);
         return;
       }
@@ -322,10 +332,14 @@ export function HostsProvider({ children }: { children: ReactNode }): ReactNode 
       ]);
       // A read that lost the race is not the answer any more.
       if (generation !== libraryGeneration.current) return;
-      // A read that failed leaves what is on screen alone.
-      setHosts((prev) =>
-        Array.isArray(h) ? applyFavorites(h, favoriteIdsRef.current) : prev,
-      );
+      // A read that failed leaves what is on screen alone, and says so: the
+      // caller can offer a retry instead of the first-run empty state.
+      if (Array.isArray(h)) {
+        setLoadFailed(false);
+        setHosts(applyFavorites(h, favoriteIdsRef.current));
+      } else {
+        setLoadFailed(true);
+      }
       setGroups((prev) => (Array.isArray(g) ? g : prev));
       setTags((prev) => (Array.isArray(t) ? t : prev));
       setLoading(false);
@@ -728,13 +742,13 @@ export function HostsProvider({ children }: { children: ReactNode }): ReactNode 
 
   const value = useMemo(
     () => ({
-      hosts, groups, tags, loading, refresh, reload, saveHost, deleteHost, saveGroup,
+      hosts, groups, tags, loading, loadFailed, refresh, reload, saveHost, deleteHost, saveGroup,
       deleteGroup, saveTag, deleteTag, setHostTags, setHostsGroup, addTagToHosts,
       removeTagFromHosts, savePassword, saveSshPassphrase, saveRdpCredentials, deletePassword,
       wakeHost, toggleFavorite, thumbnailUrl, requestThumbnail, refreshThumbnail,
     }),
     [
-      hosts, groups, tags, loading, refresh, reload, saveHost, deleteHost, saveGroup,
+      hosts, groups, tags, loading, loadFailed, refresh, reload, saveHost, deleteHost, saveGroup,
       deleteGroup, saveTag, deleteTag, setHostTags, setHostsGroup, addTagToHosts,
       removeTagFromHosts, savePassword, saveSshPassphrase, saveRdpCredentials, deletePassword,
       wakeHost, toggleFavorite, thumbnailUrl, requestThumbnail, refreshThumbnail,

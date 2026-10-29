@@ -527,7 +527,7 @@ export function SshTerminal({
               className="pointer-events-none absolute left-1/2 top-3 -translate-x-1/2 rounded-pill border border-subtle bg-raised/95 px-3 py-1 text-2xs text-secondary shadow-(--shadow-pop)"
               role="status"
             >
-              <span className="mr-1.5 inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-accent align-middle" />
+              <span className="me-1.5 inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-accent align-middle" />
               {t("ssh.connectingTo", { endpoint: connectingEndpoint })}
             </div>
           ) : null}
@@ -643,6 +643,7 @@ function ReconnectingBanner({
 }): ReactNode {
   // Mirrors `Session.tsx`'s `ReconnectOverlay`: a bare spinner with no number
   // is what makes people force-quit, so the countdown is the point.
+  const t = useT();
   const [remaining, setRemaining] = useState(delayMs);
   useEffect(() => {
     setRemaining(delayMs);
@@ -667,13 +668,13 @@ function ReconnectingBanner({
           <div className="indeterminate-bar h-0.5 w-1/3 bg-accent" />
         </div>
         <p className="mt-3 text-sm font-medium text-primary">
-          Reconnecting… attempt {attempt}
-          {secs > 0 ? ` · retrying in ${secs}s` : " · retrying now"}
+          {t("ssh.reconnecting", { attempt })}
+          {secs > 0 ? t("overlay.retryingIn", { secs }) : t("overlay.retryingNow")}
         </p>
         {reason ? <p className="mt-1 text-xs text-secondary">{reason}</p> : null}
         <div className="mt-3 flex justify-end">
           <button type="button" className="btn-primary px-3 py-1 text-xs" onClick={onRetryNow}>
-            Reconnect now
+            {t("overlay.retryNow")}
           </button>
         </div>
       </div>
@@ -704,7 +705,7 @@ function DisconnectedBanner({
           </button>
           {canRetry ? (
             <button type="button" className="btn-primary px-3 py-1 text-xs" onClick={onReconnect}>
-              Reconnect
+              {t("overlay.reconnect")}
             </button>
           ) : null}
         </div>

@@ -285,10 +285,12 @@ export function HostTile({
       onDoubleClick={onConnect}
       onContextMenu={onContextMenu}
       onKeyDown={(e) => {
-        if (e.key === "Enter") {
-          e.preventDefault();
-          onConnect();
-        }
+        // Enter belongs to whatever is focused. The quick actions are real
+        // buttons inside this tile and their keydown bubbles here; without
+        // this test, tabbing to "Edit" and pressing Enter started a session.
+        if (e.key !== "Enter" || e.target !== e.currentTarget) return;
+        e.preventDefault();
+        onConnect();
       }}
     >
       {/* 16:10 live preview, thumbnail, or hashed-color placeholder */}
@@ -384,6 +386,9 @@ function QuickAction({
         e.stopPropagation();
         onClick();
       }}
+      // The tile's own Enter handler is one level up; a key pressed here is
+      // this button's, and it must not also be read as "connect".
+      onKeyDown={(e) => e.stopPropagation()}
       onDoubleClick={(e) => e.stopPropagation()}
     >
       {children}

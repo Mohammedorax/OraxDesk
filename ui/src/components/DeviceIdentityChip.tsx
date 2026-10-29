@@ -69,25 +69,37 @@ export function DeviceIdentityChip(): ReactNode {
       onClick={copy}
       aria-label={`${t("device.number")}: ${groupDigits(identity.number)}`}
       title={`${t("device.numberHint")} ${t("device.copyNumber")}`}
-      className="group flex shrink-0 items-center gap-1.5 rounded-sm border border-subtle bg-inset/50 px-2 py-1 text-2xs text-secondary transition-colors hover:border-strong hover:text-primary"
+      className="group flex min-w-0 shrink items-center gap-2 rounded-md border border-subtle bg-inset/50 px-2.5 py-1 transition-colors hover:border-strong"
     >
-      <IconMonitor size={13} className="text-tertiary" />
+      <IconMonitor size={14} className="shrink-0 text-tertiary" />
+      {/*
+        The label is the secondary half and may be clipped when the bar is
+        narrow; the digits below never are. The person reads the number aloud,
+        so it is the largest thing in the chip and the one that must survive
+        every window width.
+      */}
+      <span className="min-w-0 truncate text-2xs text-tertiary" title={t("device.numberLabel")}>
+        {copied ? t("device.copied") : t("device.numberLabel")}
+      </span>
       {/*
         The spaces between the groups are bidi neutrals: in an Arabic
         paragraph "123 456 789" would be laid out right to left. The run is
         isolated and pinned LTR so the digits stay in the order they are in.
+        Tabular figures keep each digit in its own column, so the number does
+        not jump sideways when it is refreshed or when a neighbouring control
+        changes width.
       */}
       <span
         dir="ltr"
         style={{ unicodeBidi: "isolate" }}
-        className="mono select-all text-xs font-medium tracking-wide text-primary"
+        className="mono shrink-0 whitespace-nowrap text-sm font-semibold tabular-nums tracking-wide text-primary"
       >
         {groupDigits(identity.number)}
       </span>
       {copied ? (
-        <IconCheck size={13} className="text-success" />
+        <IconCheck size={14} className="shrink-0 text-success" />
       ) : (
-        <IconClipboard size={13} className="text-tertiary group-hover:text-primary" />
+        <IconClipboard size={14} className="shrink-0 text-tertiary group-hover:text-primary" />
       )}
       <span className="sr-only" aria-live="polite">
         {copied ? t("device.copied") : ""}

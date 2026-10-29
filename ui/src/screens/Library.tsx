@@ -69,6 +69,7 @@ import { registry } from "../lib/support";
 import { ContextMenu, Dialog, EmptyState, Select, TileSkeleton, type MenuItem } from "../components/primitives";
 import {
   IconActivity,
+  IconAlert,
   IconGrid,
   IconHelp,
   IconList,
@@ -133,7 +134,7 @@ export function Library({
   autoAddDiscoveredId?: string | null;
   onAutoAddHandled?: () => void;
 }): ReactNode {
-  const { hosts, groups, tags, loading, saveHost, deleteHost, saveGroup, saveTag, setHostTags, setHostsGroup, addTagToHosts, removeTagFromHosts, savePassword, saveSshPassphrase, saveRdpCredentials, wakeHost, toggleFavorite, refresh, reload, refreshThumbnail } = useHosts();
+  const { hosts, groups, tags, loading, loadFailed, saveHost, deleteHost, saveGroup, saveTag, setHostTags, setHostsGroup, addTagToHosts, removeTagFromHosts, savePassword, saveSshPassphrase, saveRdpCredentials, wakeHost, toggleFavorite, refresh, reload, refreshThumbnail } = useHosts();
   const { discovered, scan, startScan } = useDiscovery();
   const { settings, update } = useSettings();
   const { livePreviews, setLivePreviews } = useSessions();
@@ -1599,41 +1600,32 @@ export function Library({
         label: t("library.menuDelete"),
         danger: true,
         separatorAbove: true,
-        onSelect: () => {
-          // The toast waits for the delete.
-          //
-          // The delete can fail, and it does: the credential store may be
-          // locked, or the disk may be full. Saying "Deleted" before it
-          // happened, and offering an Undo for a row that never left, is
-          // worse than saying nothing: the user is told a thing is gone
-          // that is still there. The multi-delete path already does it this
-          // way, and this is the same operation with one row.
-          void deleteHost(host.id).then(
-            () => {
-              push("info", t("library.deleted", { name: host.friendlyName }), {
-                label: t("library.undo"),
-                run: () => void restoreHost(host),
-              });
-            },
-            (error: unknown) => {
-              push(
-                "danger",
-                t("library.deleteFailed", {
-                  name: host.friendlyName,
-                  reason: describeError(error),
-                }),
-              );
-            },
-          );
-        },
+        // The same question the sidebar's trash button asks. Deleting from
+        // here used to be a single click plus an Undo that could not restore
+        // the saved password, which is the one part of a host that cannot be
+        // rebuilt from the profile; the confirmation is the last moment where
+        // that is still true.
+        onSelect: () => setDeleteAsk([host]),
       },
     ],
-    [allowMultiple, tabbed, connectHost, editHost, saveHost, deleteHost, restoreHost, wakeHost, refreshThumbnail, push, t],
+    [allowMultiple, tabbed, connectHost, editHost, saveHost, wakeHost, refreshThumbnail, push, t],
   );
 
   // ------------------------------------------------------------ render
 
   const nothingSaved = !loading && hosts.length === 0;
+  /**
+   * The window is genuinely empty: nothing saved, nothing discovered, and no
+   * failed read to explain the gap.
+   *
+   * Support lives in one place at a time. This is the empty state that already
+   * offers help and "reach a computer" as full-size buttons, so the sidebar's
+   * copies of the same two actions would be a second set in one window; once
+   * there are tiles to look at, the sidebar is where they belong. A failed
+   * read is not this state: it has no hero buttons, so the sidebar keeps its
+   * own.
+   */
+  const emptyState = nothingSaved && unsavedDiscovered.length === 0 && !loadFailed;
   const gridClass = classNames("host-grid", settings.compact && "is-compact");
 
   return (
@@ -1814,11 +1806,13 @@ export function Library({
             />
           }
           footer={
-            <div className="flex flex-col gap-2">
-              <GetHelp />
-              <BoundaryConnect />
-              <InboxDialog />
-            </div>
+            emptyState ? undefined : (
+              <div className="flex flex-col gap-2">
+                <GetHelp />
+                <BoundaryConnect />
+                <InboxDialog />
+              </div>
+            )
           }
         />
 
@@ -1837,7 +1831,20 @@ export function Library({
                 <TileSkeleton key={i} />
               ))}
             </div>
-          ) : nothingSaved && unsavedDiscovered.length === 0 ? (
+          ) : loadFailed && hosts.length === 0 ? (
+            /*
+              A failed read is not an empty library. Showing "How do you want
+              to start?" here told the person their machines were gone when
+              the app had simply not managed to ask the store, and offered
+              them a scan or a new host as if nothing had ever been saved.
+            */
+            <EmptyState
+              icon={<IconAlert size={56} />}
+              title={t("library.loadFailedTitle")}
+              body={t("library.loadFailedBody")}
+              primary={{ label: t("library.loadFailedRetry"), onClick: () => void reload() }}
+            />
+          ) : emptyState ? (
             <EmptyState
               icon={<IconMonitor size={56} />}
               title={t("library.emptyTitle")}
@@ -1847,6 +1854,10 @@ export function Library({
                   <div className="flex flex-wrap items-center justify-center gap-3">
                     <GetHelp variant="hero" />
                     <BoundaryConnect variant="hero" acceptDeepLinks={false} />
+                    {/* The inbox is the third way in and has no hero size of
+                        its own. It stays here rather than in the sidebar so
+                        the empty window still offers one set of actions. */}
+                    <InboxDialog />
                   </div>
                   <div className="flex flex-wrap items-center justify-center gap-2 text-xs text-secondary">
                     <button
@@ -2173,7 +2184,7 @@ function SelectionBar({
           ))}
         </Select>
       </label>
-      <button type="button" className="btn-secondary ml-auto !py-1 !text-xs" onClick={onClear}>
+      <button type="button" className="btn-secondary ms-auto !py-1 !text-xs" onClick={onClear}>
         {t("library.clearSelection")}
       </button>
     </div>
@@ -2301,7 +2312,7 @@ function RowBandwidth({
 }): ReactNode {
   if (!bandwidth) return null;
   return (
-    <span className="ml-2 whitespace-nowrap text-2xs text-tertiary [font-variant-numeric:tabular-nums]">
+    <span className="ms-2 whitespace-nowrap text-2xs text-tertiary [font-variant-numeric:tabular-nums]">
       ↓ {formatBps(bandwidth.rx)} ↑ {formatBps(bandwidth.tx)}
     </span>
   );

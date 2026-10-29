@@ -21,8 +21,16 @@
  * framebuffer on the way back. So geometry is computed for every tab against
  * the same measured area, and `visibility` is all that changes.
  */
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
-import { Session } from "../screens/Session";
+import {
+  lazy,
+  Suspense,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { PaneVisible } from "./Pane";
 import { PaneHeader, PANE_HEADER_PX } from "./PaneHeader";
 import { PanePicker } from "./PanePicker";
@@ -38,6 +46,8 @@ import {
   type LayoutNode,
   type Rect,
 } from "../lib/layout";
+
+const Session = lazy(() => import("../screens/Session").then((module) => ({ default: module.Session })));
 
 /**
  * Take the pointer if the browser will give it, and shrug if it will not.
@@ -433,29 +443,41 @@ export function SplitView({
               <div className="relative min-h-0 flex-1">
                 <PaneVisible value={focused}>
                   {session ? (
-                  <Session
-                    params={session.params}
-                    embedded
-                    onScreen={onScreen}
-                    focused={focused}
-                    frame={{
-                      x: area.originX + rect.x,
-                      y: area.originY + rect.y + headerPx,
-                      width: rect.width,
-                      height: Math.max(0, rect.height - headerPx),
-                    }}
-                    onSplit={(dir) => {
-                      // The button is on the focused pane's toolbar, but say so
-                      // outright rather than relying on it: `split` acts on
-                      // whichever pane holds the keyboard.
-                      focusPane(tab.id, pane.id);
-                      splitPane(dir);
-                    }}
-                    onClose={() => (split ? closePane(tab.id, pane.id) : close(tab.id))}
-                    onDesktopName={(name) => setTitle(session.id, name)}
-                    onState={(state) => setState(session.id, state)}
-                    onAppHotkey={onAppHotkey}
-                  />
+                    <Suspense
+                      fallback={
+                        <div
+                          className="absolute inset-0 flex items-center justify-center bg-canvas text-sm text-secondary"
+                          role="status"
+                          aria-live="polite"
+                        >
+                          {t("files.loading")}
+                        </div>
+                      }
+                    >
+                      <Session
+                        params={session.params}
+                        embedded
+                        onScreen={onScreen}
+                        focused={focused}
+                        frame={{
+                          x: area.originX + rect.x,
+                          y: area.originY + rect.y + headerPx,
+                          width: rect.width,
+                          height: Math.max(0, rect.height - headerPx),
+                        }}
+                        onSplit={(dir) => {
+                          // The button is on the focused pane's toolbar, but say so
+                          // outright rather than relying on it: `split` acts on
+                          // whichever pane holds the keyboard.
+                          focusPane(tab.id, pane.id);
+                          splitPane(dir);
+                        }}
+                        onClose={() => (split ? closePane(tab.id, pane.id) : close(tab.id))}
+                        onDesktopName={(name) => setTitle(session.id, name)}
+                        onState={(state) => setState(session.id, state)}
+                        onAppHotkey={onAppHotkey}
+                      />
+                    </Suspense>
                   ) : (
                     <PanePicker
                       tabId={tab.id}

@@ -319,7 +319,9 @@ textarea,
 select.field {
   appearance: none;
   -webkit-appearance: none;
-  padding-right: 26px;
+  /* Logical, because the chevron <Select> draws sits at `end-2`: in an RTL
+     window a physical right padding would leave the arrow over the text. */
+  padding-inline-end: 26px;
   cursor: default;
   text-overflow: ellipsis;
 }

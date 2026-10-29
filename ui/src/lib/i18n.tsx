@@ -45,6 +45,7 @@ const ar = {
   "registry.advanced": "إعدادات السجل المتقدمة",
   "registry.link": "نسخ رابط المساعدة",
   "device.number": "رقم هذا الجهاز — اقرأه لمن يساعدك",
+  "device.numberLabel": "رقم هذا الجهاز",
   "device.copyNumber": "نسخ الرقم",
   "device.copied": "نُسخ الرقم",
   "device.numberHint": "تسعة أرقام ثابتة لهذا الجهاز. اقرأها على الهاتف لمن يساعدك، أو انسخها.",
@@ -792,6 +793,10 @@ const ar = {
   "library.emptyTitle": "كيف تريد أن تبدأ؟",
   "library.emptyBody":
     "هل تحتاج مساعدة على هذا الجهاز، أم تساعد شخصًا آخر؟ أو ابحث عن أجهزتك على الشبكة وأضفها.",
+  "library.loadFailedTitle": "تعذّرت قراءة مكتبتك",
+  "library.loadFailedBody":
+    "لم نتمكّن من سؤال التخزين المحلي عن أجهزتك. لم يُحذف شيء؛ أعد المحاولة.",
+  "library.loadFailedRetry": "أعد المحاولة",
   "library.findOnNetwork": "ابحث عن الأجهزة على شبكتي",
   "library.addComputerManually": "أضف جهازًا يدويًا",
   "library.noMatch": "لا يوجد جهاز يطابق «{search}»",
@@ -815,11 +820,9 @@ const ar = {
   "library.hostWord": "مضيف",
 
   // المكتبة: حذف المحدَّد من الشريط الجانبي
-  "library.deleteSelected": "احذف الجهاز المحدَّد",
   "library.deleteSelectedTitle": "احذف «{name}»",
   "library.deleteSelectedTitleMany": "احذف {count} جهازًا محدَّدًا",
   "library.deleteSelectedMany": "{count} جهاز محدَّد",
-  "library.deleteNothingSelected": "حدّد جهازًا أولًا",
   "library.deleteConfirmTitle": "احذف الجهاز؟",
   "library.deleteConfirmTitleMany": "احذف {count} جهازًا؟",
   "library.deleteConfirmBody":
@@ -918,7 +921,7 @@ const ar = {
   "library.selectOneToConnect": "اختر جهازًا واحدًا للاتصال به.",
   "library.selectOneToWake": "اختر جهازًا واحدًا لإيقاظه.",
   "library.hostGone": "هذا الجهاز لم يعد في المكتبة.",
-  "library.deleted": "حُذف {name}",
+  "library.deleted": "حُذف {name}. وكلمة مروره المحفوظة لم تعد موجودة.",
   "library.groupCreated": "أُنشئت المجموعة «{name}»",
   "library.tagCreated": "أُنشئ الوسم «{name}»",
   "library.groupCreateFailed": "تعذّر إنشاء المجموعة: {reason}",
@@ -1494,6 +1497,7 @@ const en: Record<keyof typeof ar, string> = {
   "registry.advanced": "Advanced registry settings",
   "registry.link": "Copy help link",
   "device.number": "This computer's number - read it out",
+  "device.numberLabel": "This computer's number",
   "device.copyNumber": "Copy number",
   "device.copied": "Number copied",
   "device.numberHint":
@@ -2266,6 +2270,10 @@ const en: Record<keyof typeof ar, string> = {
   "library.emptyTitle": "How do you want to start?",
   "library.emptyBody":
     "Do you need help on this computer, or are you helping someone else? You can also find your computers on the network and add them.",
+  "library.loadFailedTitle": "Could not read your library",
+  "library.loadFailedBody":
+    "The app could not ask local storage for your computers. Nothing has been deleted; try again.",
+  "library.loadFailedRetry": "Try again",
   "library.findOnNetwork": "Find computers on my network",
   "library.addComputerManually": "Add a computer manually",
   "library.noMatch": "No computers match “{search}”",
@@ -2289,11 +2297,9 @@ const en: Record<keyof typeof ar, string> = {
   "library.hostWord": "host",
 
   // The library: deleting the selection from the sidebar
-  "library.deleteSelected": "Delete the selected computer",
   "library.deleteSelectedTitle": "Delete “{name}”",
   "library.deleteSelectedTitleMany": "Delete {count} selected computers",
   "library.deleteSelectedMany": "{count} selected",
-  "library.deleteNothingSelected": "Select a computer first",
   "library.deleteConfirmTitle": "Delete this computer?",
   "library.deleteConfirmTitleMany": "Delete {count} computers?",
   "library.deleteConfirmBody":
@@ -2395,7 +2401,7 @@ const en: Record<keyof typeof ar, string> = {
   "library.selectOneToConnect": "Select one machine to connect to.",
   "library.selectOneToWake": "Select one machine to wake.",
   "library.hostGone": "That machine is no longer in your library.",
-  "library.deleted": "Deleted {name}",
+  "library.deleted": "Deleted {name}. Its saved password is gone.",
   "library.groupCreated": "Created the group {name}",
   "library.tagCreated": "Created the tag {name}",
   "library.groupCreateFailed": "Could not create the group: {reason}",

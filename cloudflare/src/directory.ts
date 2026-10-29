@@ -120,18 +120,18 @@ function sanitizeTransportAddr(value: unknown): unknown | null {
     const v4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3}):(\d{1,5})$/.exec(inner);
     if (v4 !== null) {
       hostOk = v4.slice(1, 5).every((octet) => Number(octet) <= 255);
-      portText = v4[5];
+      portText = v4[5] ?? "";
     } else {
       const v6 = /^\[([0-9a-fA-F:.]+)\]:(\d{1,5})$/.exec(inner);
       if (v6 !== null) {
         try {
           // The URL parser is the authority on what a valid IPv6 literal is.
-          const parsedHost = new URL(`http://[${v6[1]}]/`).hostname;
+          const parsedHost = new URL(`http://[${v6[1] ?? ""}]/`).hostname;
           hostOk = parsedHost.startsWith("[") && parsedHost.endsWith("]");
         } catch {
           hostOk = false;
         }
-        portText = v6[2];
+        portText = v6[2] ?? "";
       }
     }
     if (!hostOk) {
