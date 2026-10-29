@@ -320,6 +320,9 @@ fn stamp_git_provenance() {
     stamp("DESKVNC_BUILD_PROFILE", std::env::var("PROFILE").ok());
 }
 
+// The sidecar is staged before the app is compiled (see scripts/stage-sidecar.mjs):
+// the app embeds it, so a sidecar staged afterwards is a sidecar that is
+// too late.
 fn main() {
     println!("cargo:rerun-if-env-changed=DESKVNC_REQUIRE_CLEAN");
     // The clean-tree requirement is checked FIRST, before this build writes
