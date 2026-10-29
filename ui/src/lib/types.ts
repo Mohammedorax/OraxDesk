@@ -700,3 +700,56 @@ export interface ScanProgress {
   done: number;
   total: number;
 }
+
+/**
+ * What the registry last said about a number in the support inbox.
+ *
+ * `unknown` is the honest default and it means NOTHING HAS BEEN ASKED YET. It
+ * is not "offline": the registry publishes an address, it does not report
+ * presence, and this app has no signal that a machine it has never spoken to
+ * is awake. `no-address` means the device is registered but has published
+ * nothing, and the fix for that is on that machine rather than here.
+ */
+export type InboxState = "unknown" | "reachable" | "no-address" | "revoked" | "error";
+
+/**
+ * Is this a state this build knows?
+ *
+ * A row written by a newer build can carry a sixth state, and it has to stay
+ * identifiable rather than being quietly read as one of ours. Same rule as
+ * {@link isProtocolKind}.
+ */
+export function isInboxState(value: unknown): value is InboxState {
+  return (
+    value === "unknown" ||
+    value === "reachable" ||
+    value === "no-address" ||
+    value === "revoked" ||
+    value === "error"
+  );
+}
+
+/**
+ * One row of the support inbox, mirroring `vnc_store::InboxEntry`.
+ *
+ * The number and the note are the operator's own: the number is something a
+ * client read out to them and the note is their own words, and neither ever
+ * leaves this machine. The only thing that goes out is a lookup of the number
+ * in the registry.
+ */
+export interface InboxEntry {
+  id: string;
+  /** The nine digits, as the person read them out. */
+  number: string;
+  /** Whatever the operator wrote about this person. Local only. */
+  note: string | null;
+  /** The device the registry resolved the number to, when it resolved. */
+  deviceId: string | null;
+  state: InboxState;
+  /** One line saying why, in the shell's own words. */
+  detail: string | null;
+  /** When the state was last refreshed, unix seconds. */
+  lastCheckedAt: number | null;
+  /** Unix seconds. */
+  createdAt: number;
+}

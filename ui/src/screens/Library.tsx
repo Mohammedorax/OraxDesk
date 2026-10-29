@@ -58,6 +58,7 @@ import { loadRdpDefaults } from "../lib/rdpDefaults";
 import { QuickConnect } from "../components/QuickConnect";
 import { GetHelp } from "../components/GetHelp";
 import { BoundaryConnect } from "../components/BoundaryConnect";
+import { InboxDialog } from "../components/InboxDialog";
 import { mustInvoke } from "../lib/tauri";
 import { DeviceIdentityChip } from "../components/DeviceIdentityChip";
 import { Wordmark } from "../components/Wordmark";
@@ -1743,6 +1744,7 @@ export function Library({
             <div className="flex flex-col gap-2">
               <GetHelp />
               <BoundaryConnect />
+              <InboxDialog />
             </div>
           }
         />

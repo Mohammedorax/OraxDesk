@@ -25,6 +25,18 @@ use crate::state::AppState;
 use tauri::State;
 use vnc_store::InboxEntry;
 
+
+/// Whether the registry said "no such number" rather than "I could not
+/// answer".
+fn is_not_registered(error: &orax_registry::Error) -> bool {
+    match error {
+        orax_registry::Error::Api { status, code, .. } => {
+            *status == 404 || code.eq_ignore_ascii_case("not_found")
+        }
+        _ => false,
+    }
+}
+
 /// The digits of a nine-digit number, or a message saying what is wrong.
 fn normalize_number(text: &str) -> Result<String, String> {
     let digits: String = text
@@ -130,11 +142,26 @@ pub async fn inbox_refresh(state: State<'_, AppState>) -> Result<Vec<InboxEntry>
                     }
                 }
             }
-            Err(error) => (
-                None,
-                "error",
-                Some(format!("The registry could not be asked: {error}")),
-            ),
+            Err(error) => {
+                // "This number is not registered here" is not "the registry
+                // could not be asked". The Worker answers an unknown number
+                // with 404 and a `not_found` code, and conflating the two
+                // tells the operator their registry is broken when it is
+                // working perfectly and the number is simply wrong.
+                if is_not_registered(&error) {
+                    (
+                        None,
+                        "unknown",
+                        Some("This number is not registered in this registry".to_string()),
+                    )
+                } else {
+                    (
+                        None,
+                        "error",
+                        Some(format!("The registry could not be asked: {error}")),
+                    )
+                }
+            }
         };
         let store = state.store.clone();
         let id = row.id.clone();

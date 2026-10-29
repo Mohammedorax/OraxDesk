@@ -5,7 +5,7 @@
  */
 import { invoke, isTauri as tauriDetect } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import type { ProtocolKind } from "./types";
+import type { InboxEntry, ProtocolKind } from "./types";
 
 export function inTauri(): boolean {
   try {
@@ -962,4 +962,48 @@ export function base64ToBytes(b64: string): Uint8Array {
   const out = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i += 1) out[i] = binary.charCodeAt(i);
   return out;
+}
+
+// ---------------------------------------------------------------------------
+// The support inbox
+// ---------------------------------------------------------------------------
+
+/**
+ * Every number in the local inbox, newest first.
+ *
+ * `mustInvoke` rather than `safeInvoke`: an empty list and a list that could
+ * not be read look exactly the same on the screen, and "there is nothing
+ * here" is a claim about the operator's own work that the backend knows and
+ * the UI does not. A failure has to be said out loud.
+ */
+export function inboxList(): Promise<InboxEntry[]> {
+  return mustInvoke<InboxEntry[]>("inbox_list", undefined);
+}
+
+/**
+ * Add a number, with the operator's own note.
+ *
+ * The same number twice is one row: the backend returns the row that already
+ * holds it rather than making a second one, and it does not overwrite that
+ * row's note. The caller shows what came back, so the operator sees the note
+ * that is really stored rather than the one they have just typed.
+ */
+export function inboxAdd(number: string, note?: string | null): Promise<InboxEntry> {
+  return mustInvoke<InboxEntry>("inbox_add", { number, note: note ?? null });
+}
+
+/** Forget a row. The machine it names is untouched. */
+export function inboxRemove(id: string): Promise<void> {
+  return mustInvoke<null>("inbox_remove", { id }).then(() => undefined);
+}
+
+/**
+ * Ask the registry about every row, once, now, and record what it said.
+ *
+ * Never polled: the Worker's free plan has a daily request budget and the
+ * lookup is rate limited per address, so a list that refreshed itself would
+ * spend that budget on a screen nobody is looking at.
+ */
+export function inboxRefresh(): Promise<InboxEntry[]> {
+  return mustInvoke<InboxEntry[]>("inbox_refresh", undefined);
 }
