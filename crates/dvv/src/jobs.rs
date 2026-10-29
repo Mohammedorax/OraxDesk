@@ -15,14 +15,15 @@
 use std::collections::HashMap;
 use std::sync::{LazyLock, Mutex};
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
 
 /// Which shell the far side gives a command.
 ///
 /// The wrapper has to match it: the transports hand the string to `cmd.exe` on
 /// Windows and `/bin/sh` elsewhere, and a detachment trick for one is a syntax
 /// error in the other.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Platform {
     Windows,
@@ -42,7 +43,7 @@ impl Platform {
 }
 
 /// One started job.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Job {
     pub id: String,
     pub platform: Platform,
@@ -63,7 +64,65 @@ pub struct Job {
 /// A plane is one process living as long as the app, which is the lifetime a
 /// job's files have anyway. Nothing is persisted: a restart loses the handles,
 /// and the job's own log is still on the far side under the path it reported.
-static JOBS: LazyLock<Mutex<HashMap<String, Job>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
+static JOBS: LazyLock<Mutex<HashMap<String, Job>>> =
+    LazyLock::new(|| Mutex::new(load_from_disk()));
+
+/// How many jobs one plane keeps a handle for.
+///
+/// The files stay on the far side either way; this bounds the table an agent
+/// can make the process hold. The oldest handle goes first.
+const MAX_JOBS: usize = 64;
+
+/// How long a job keeps its handle. A week is longer than any support install
+/// and short enough that the table does not become a log of the machine.
+const KEEP_JOB_SECONDS: u64 = 7 * 24 * 60 * 60;
+
+/// Where the table is kept between runs.
+///
+/// The job itself lives on the far side; this file only remembers the handle,
+/// so losing it costs a `list`, never the work.
+fn store_path() -> Option<PathBuf> {
+    let base = std::env::var_os("LOCALAPPDATA")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("XDG_DATA_HOME").map(PathBuf::from))
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share")))?;
+    Some(base.join("OraxDesk").join("jobs.json"))
+}
+
+fn load_from_disk() -> HashMap<String, Job> {
+    let Some(path) = store_path() else {
+        return HashMap::new();
+    };
+    let Ok(raw) = std::fs::read_to_string(&path) else {
+        return HashMap::new();
+    };
+    let Ok(mut table) = serde_json::from_str::<HashMap<String, Job>>(&raw) else {
+        // A corrupt file is not a reason to lose this run's jobs: start empty
+        // and let the next mutation rewrite it.
+        tracing::warn!("the job table is unreadable; starting a fresh one");
+        return HashMap::new();
+    };
+    let cutoff = unix_now().saturating_sub(KEEP_JOB_SECONDS);
+    table.retain(|_, job| job.started_at >= cutoff);
+    table
+}
+
+fn save(table: &HashMap<String, Job>) {
+    let Some(path) = store_path() else {
+        return;
+    };
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    match serde_json::to_string(table) {
+        Ok(json) => {
+            if let Err(error) = std::fs::write(&path, json) {
+                tracing::warn!("could not write the job table: {error}");
+            }
+        }
+        Err(error) => tracing::warn!("could not serialize the job table: {error}"),
+    }
+}
 
 /// A short id that is safe in a file name and unmistakable in a log.
 pub fn new_id() -> String {
@@ -204,7 +263,21 @@ pub fn start(
         }
     };
     let _ = limb;
-    JOBS.lock().map_err(|_| "job table poisoned")?.insert(id, job.clone());
+    let mut table = JOBS.lock().map_err(|_| "job table poisoned")?;
+    // A plane holds a bounded number of handles. The oldest goes first, and
+    // its files stay where they are: dropping a handle never deletes evidence.
+    while table.len() >= MAX_JOBS {
+        let Some(oldest) = table
+            .values()
+            .min_by_key(|job| job.started_at)
+            .map(|job| job.id.clone())
+        else {
+            break;
+        };
+        table.remove(&oldest);
+    }
+    table.insert(id, job.clone());
+    save(&table);
     Ok((job, start))
 }
 

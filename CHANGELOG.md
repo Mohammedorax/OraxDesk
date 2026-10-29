@@ -80,6 +80,9 @@ to stored data and to the IPC contract between the Rust core and the frontend.
   status in files on the remote machine, then polled with `status`, `log`,
   `cancel` and `list`. An install that runs for forty minutes no longer has to
   fit inside one `dvv_run` deadline.
+* Job handles survive a restart (bounded to 64, dropped after a week without
+  deleting the files), `cancel` re-reads the job's own status instead of
+  inferring it, and the CLI gained `dvv job`.
 
 ### Security
 

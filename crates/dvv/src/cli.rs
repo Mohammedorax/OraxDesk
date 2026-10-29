@@ -364,6 +364,45 @@ fn tool_call(args: &Args) -> Result<(String, Value), ToolError> {
             }
             ("dvv_screen".to_string(), with_limb(object, 0))
         }
+        "job" => {
+            let action = args.at(0).ok_or_else(|| {
+                ToolError::bad_request(
+                    "dvv job needs start, status, log, cancel or list",
+                )
+            })?;
+            let mut object = json!({ "action": action });
+            let map = object.as_object_mut().expect("an object");
+            match action {
+                "start" => {
+                    let command = args.positional.get(1..).map(|rest| rest.join(" ")).unwrap_or_default();
+                    if command.trim().is_empty() {
+                        return Err(ToolError::bad_request(
+                            "dvv job start needs a command after --",
+                        ));
+                    }
+                    map.insert("command".to_string(), json!(command));
+                    if let Some(platform) = args.flag("platform") {
+                        map.insert("platform".to_string(), json!(platform));
+                    }
+                }
+                "status" | "log" | "cancel" => {
+                    let id = args.at(1).ok_or_else(|| {
+                        ToolError::bad_request("this job action needs a job id")
+                    })?;
+                    map.insert("jobId".to_string(), json!(id));
+                    if let Some(lines) = args.flag("lines").and_then(|l| l.parse::<u64>().ok()) {
+                        map.insert("lines".to_string(), json!(lines));
+                    }
+                }
+                "list" => {}
+                other => {
+                    return Err(ToolError::bad_request(format!(
+                        "unknown job action {other:?}; use start, status, log, cancel or list"
+                    )))
+                }
+            }
+            ("dvv_job".to_string(), with_limb(object, 0))
+        }
         "wait" => {
             let until = args.flag("until").ok_or_else(|| {
                 ToolError::bad_request(
