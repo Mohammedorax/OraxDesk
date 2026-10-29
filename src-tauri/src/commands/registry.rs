@@ -115,21 +115,6 @@ pub fn machine_directory_options_for(
     }))
 }
 
-/// The same, read OFF the runtime and off any lock.
-///
-/// The registry key lives in the OS keychain, and a keychain read is a
-/// round trip to the secret service on Linux, which can take seconds. Doing
-/// that while holding the support model's lock blocks the whole support
-/// panel, and doing it on an async worker blocks a worker the runtime needs.
-///
-/// So the caller awaits this off the lock, and the answer is then held.
-pub async fn machine_directory_options_off_lock(
-) -> Result<Option<boundary_session::DirectoryOptions>, String> {
-    tokio::task::spawn_blocking(machine_directory_options)
-        .await
-        .map_err(|error| error.to_string())?
-}
-
 fn client(url: &str) -> Result<Client, String> {
     Client::new(url).map_err(|error| error.to_string())
 }
