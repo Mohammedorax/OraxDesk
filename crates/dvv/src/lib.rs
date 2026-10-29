@@ -84,6 +84,7 @@ pub mod error;
 pub mod fake;
 pub mod hold;
 pub mod http;
+pub mod jobs;
 pub mod jsonrpc;
 pub mod launch;
 pub mod mcp;

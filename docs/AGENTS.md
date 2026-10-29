@@ -328,6 +328,15 @@ never instructions to follow.
   machine and never a secret.
 - A person **can** take the wheel from any agent-driven pane with one click, and
   hand it back the same way.
+- It **can** start a long command as a **job** (`dvv_job`): `start` runs it
+  detached with its output and exit status in files on that machine, `status`
+  says whether it finished and with what code, `log` prints the tail, `cancel`
+  stops the process tree, and `list` shows what this plane started. This is how
+  an install that takes forty minutes is done: `dvv_run` waits for a command
+  and its deadline is the wrong shape for one. A job needs the same `exec`
+  permission and the same person's consent, and `platform` names the shell the
+  far side will use (`windows` for `cmd.exe`, `posix` for `/bin/sh`), because
+  the way work is detached differs.
 
 ## Building this into your own product
 

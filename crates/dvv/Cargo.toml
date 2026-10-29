@@ -58,6 +58,8 @@ rand = { workspace = true }
 # in when it is not plain ASCII. Decode, THEN compare, or an encoded value is a
 # spurious header mismatch.
 base64 = { workspace = true }
+# Job ids: short, unique, and safe in a file name.
+uuid = { workspace = true }
 
 # Restoring SIGPIPE for the one shot CLI verbs, so `dvv hosts | head` exits
 # quietly instead of panicking.

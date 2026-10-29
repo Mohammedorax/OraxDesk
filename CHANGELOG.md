@@ -76,6 +76,10 @@ to stored data and to the IPC contract between the Rust core and the frontend.
   registered machine unreachable behind a generic "cannot reach" message.
 * A device that is registered but has never published an address now says so,
   with the switch that fixes it, instead of a bare connection failure.
+* New agent tool `dvv_job`: a command started detached with its output and exit
+  status in files on the remote machine, then polled with `status`, `log`,
+  `cancel` and `list`. An install that runs for forty minutes no longer has to
+  fit inside one `dvv_run` deadline.
 
 ### Security
 
