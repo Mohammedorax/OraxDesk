@@ -67,6 +67,17 @@ pub struct Job {
 static JOBS: LazyLock<Mutex<HashMap<String, Job>>> =
     LazyLock::new(|| Mutex::new(load_from_disk()));
 
+/// Where the table lives, when a caller says so.
+///
+/// Set by the tests, and by nothing else: the application uses the platform
+/// data folder and has no reason to be told otherwise.
+static STORE_PATH: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+
+/// Point the job table at a file of the caller's choosing.
+pub fn set_store_path(path: PathBuf) {
+    let _ = STORE_PATH.set(path);
+}
+
 /// How many jobs one plane keeps a handle for.
 ///
 /// The files stay on the far side either way; this bounds the table an agent
@@ -82,6 +93,12 @@ const KEEP_JOB_SECONDS: u64 = 7 * 24 * 60 * 60;
 /// The job itself lives on the far side; this file only remembers the handle,
 /// so losing it costs a `list`, never the work.
 fn store_path() -> Option<PathBuf> {
+    // The tests point this at a file of their own, so a unit test never
+    // writes into the user's table: a test that leaves five handles behind is
+    // a test that made the application lie about its jobs.
+    if let Some(path) = STORE_PATH.get() {
+        return Some(path.clone());
+    }
     let base = std::env::var_os("LOCALAPPDATA")
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("XDG_DATA_HOME").map(PathBuf::from))
@@ -348,8 +365,19 @@ fn unix_now() -> u64 {
 mod tests {
     use super::*;
 
+    /// Point the table at a file of this test's own, once per process.
+    fn use_a_test_store() {
+        static ONCE: std::sync::Once = std::sync::Once::new();
+        ONCE.call_once(|| {
+            let path = std::env::temp_dir()
+                .join(format!("oraxdesk-jobs-test-{}.json", std::process::id()));
+            set_store_path(path);
+        });
+    }
+
     #[test]
     fn the_windows_wrapper_hides_the_command_from_two_shells() {
+        use_a_test_store();
         let (job, start) = start(Platform::Windows, "winget install --id Git.Git -e", "l").unwrap();
         assert!(start.starts_with("start \"\" /B powershell"));
         assert!(start.contains("-EncodedCommand "));
@@ -375,6 +403,7 @@ mod tests {
 
     #[test]
     fn the_posix_wrapper_quotes_a_hostile_command() {
+        use_a_test_store();
         let (job, start) = start(Platform::Posix, "echo 'x' && touch /tmp/y", "l").unwrap();
         assert!(start.contains("nohup sh -c "));
         assert!(start.contains(&job.status));
@@ -386,6 +415,7 @@ mod tests {
 
     #[test]
     fn status_and_log_reads_never_interpolate_raw_text() {
+        use_a_test_store();
         let (job, _) = start(Platform::Windows, "x", "l").unwrap();
         assert!(status_command(&job).contains(&job.status));
         assert!(log_command(&job, 50).contains(&job.log));
@@ -395,6 +425,7 @@ mod tests {
 
     #[test]
     fn jobs_are_listed_newest_first_and_only_while_known() {
+        use_a_test_store();
         let (a, _) = start(Platform::Windows, "a", "l").unwrap();
         let (b, _) = start(Platform::Posix, "b", "l").unwrap();
         let listed = list();
@@ -406,6 +437,7 @@ mod tests {
 
     #[test]
     fn an_empty_command_is_refused() {
+        use_a_test_store();
         assert!(start(Platform::Windows, "   ", "l").is_err());
     }
 
