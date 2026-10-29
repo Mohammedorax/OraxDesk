@@ -152,6 +152,21 @@ impl VeNCryptSubtype {
         format!("VeNCrypt ({self:?})")
     }
 
+    /// True for the subtypes that put credentials on the connection, and
+    /// therefore the ones a first-contact server key must be gated on before
+    /// they run. The `*None` subtypes identify the server without a credential
+    /// exchange, so their trust prompt can stay where it always was.
+    pub fn needs_credentials(self) -> bool {
+        matches!(
+            self,
+            Self::TlsVnc
+                | Self::X509Vnc
+                | Self::Plain
+                | Self::TlsPlain
+                | Self::X509Plain
+        )
+    }
+
     /// Preference rank, higher = stronger (PRD/10 §2).
     pub fn rank(self) -> u8 {
         match self {
@@ -348,43 +363,86 @@ pub(crate) async fn handshake(
         trust = Some(ServerIdentity {
             scheme: PinScheme::Tls,
             decision,
+            // Set later (below) when the credential exchange actually rode the
+            // in-handshake ask; `false` keeps the post-auth prompt for the
+            // subtypes that do not carry credentials.
+            surfaced: false,
         });
         stream = upgraded;
     }
 
     // --- inner authentication ---------------------------------------------
+    //
+    // When the transport identified a server key the user has not yet been
+    // asked about, the key travels INTO the credential ask: `obtain` refuses
+    // to resolve any credential, stored or typed, until the certificate is
+    // approved. A subtype with no credential (the `*None`s) is left alone;
+    // nothing sensitive moves before ClientInit either way.
+    let gate_identity = match &trust {
+        Some(id)
+            if matches!(
+                id.decision,
+                vnc_transport::TrustDecision::Unknown { .. }
+            ) && chosen.needs_credentials() =>
+        {
+            Some(id.clone())
+        }
+        _ => None,
+    };
     let method = chosen.method_name();
     let stream = match chosen {
         VeNCryptSubtype::TlsNone | VeNCryptSubtype::X509None => stream,
         VeNCryptSubtype::TlsVnc | VeNCryptSubtype::X509Vnc => {
-            super::vnc_auth::handshake_named(stream, opts, creds, &method)
-                .await?
-                .stream
+            let outcome = super::vnc_auth::handshake_named(
+                stream,
+                opts,
+                creds,
+                &method,
+                gate_identity.clone(),
+            )
+            .await?;
+            outcome.stream
         }
         VeNCryptSubtype::Plain | VeNCryptSubtype::TlsPlain | VeNCryptSubtype::X509Plain => {
-            plain_auth(stream, opts, creds, &method).await?
+            plain_auth(stream, opts, creds, &method, gate_identity.clone()).await?
         }
     };
+    // The gate ran this attempt only when the credential path could consult
+    // it; record that so `establish` does not ask a second time.
+    let trusted_first = gate_identity.is_some();
 
     // VeNCrypt always reports a SecurityResult, including for the *None
     // subtypes and on RFB 3.7.
     Ok(AuthOutcome {
         stream,
         result_mode: ResultMode::Always,
-        trust,
+        trust: trust.map(|mut id| {
+            id.surfaced = trusted_first;
+            id
+        }),
     })
 }
 
 /// The `Plain` inner authentication: two u32 lengths, then the two UTF-8
 /// strings back to back.
+///
+/// `identity` gates the credentials on the server-key approval; see
+/// `handshake_named`.
 async fn plain_auth(
     mut stream: BoxedStream,
     opts: &ConnectOptions,
     creds: &CredentialSource<'_>,
     method: &str,
+    identity: Option<ServerIdentity>,
 ) -> Result<BoxedStream> {
     let supplied = creds
-        .obtain(method, CredentialKind::UsernameAndPassword, false, opts)
+        .obtain(
+            method,
+            CredentialKind::UsernameAndPassword,
+            false,
+            opts,
+            identity.as_ref(),
+        )
         .await?;
     let user = supplied.username.unwrap_or_default();
     let password = supplied.password.unwrap_or_default();

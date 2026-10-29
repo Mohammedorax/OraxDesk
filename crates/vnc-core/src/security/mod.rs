@@ -196,6 +196,13 @@ pub struct ServerIdentity {
     /// Which server key `decision` describes.
     pub scheme: PinScheme,
     pub decision: TrustDecision,
+    /// True when the trust question was already put to the user **inside the
+    /// handshake** (see the credential raise in
+    /// `session::connection::serve_credential_ask`), before any credential
+    /// reached the wire. `establish` must then not ask a second time after
+    /// authentication succeeds — the classical double prompt of the first
+    /// contact, which is also the double *answer*.
+    pub surfaced: bool,
 }
 
 pub(crate) struct AuthOutcome {

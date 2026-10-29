@@ -88,6 +88,10 @@ to stored data and to the IPC contract between the Rust core and the frontend.
 * VNC: a stream of empty updates or bells can no longer starve commands and
   the stats tick (cancellation keeps priority), and ZRLE run lengths are
   bounded.
+* VNC: a first-contact server key now has to be approved BEFORE any credential
+  is sent to it. The approval question rides the credential exchange itself, so
+  a stored or typed password can no longer reach a server whose key the user
+  has never seen; refusing the key unwinds the attempt with nothing sent.
 * RDP: encoded bitmap dimensions are capped before allocation and a refused
   allocation is a protocol error rather than a process abort; NSCodec refuses
   planes shorter than its raw tail; ZGFX match distances are overflow-checked;

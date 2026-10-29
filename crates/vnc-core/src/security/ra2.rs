@@ -526,7 +526,18 @@ pub(crate) async fn handshake(
     // exactly what the server wants, not before.
     let kind = credential_kind_for_subtype(subtype)
         .ok_or_else(|| VncError::Protocol(format!("unknown RA2 credential subtype {subtype}")))?;
-    let supplied = creds.obtain(METHOD, kind, false, opts).await?;
+    // The gate: the RSA key was decided way back in step 1a, so the credential
+    // ask can carry it and the user approves the key BEFORE this password is
+    // encrypted to it. First contact with a server that wants credentials is
+    // the exact case the gate exists for.
+    let gated = matches!(trust, vnc_transport::TrustDecision::Unknown { .. }).then(|| {
+        ServerIdentity {
+            scheme: PinScheme::Ra2,
+            decision: trust.clone(),
+            surfaced: false,
+        }
+    });
+    let supplied = creds.obtain(METHOD, kind, false, opts, gated.as_ref()).await?;
     let password = supplied.password.unwrap_or_default();
     let username = match kind {
         CredentialKind::UsernameAndPassword => {
@@ -562,6 +573,9 @@ pub(crate) async fn handshake(
     outcome.trust = Some(ServerIdentity {
         scheme: PinScheme::Ra2,
         decision: trust,
+        // The credential step asked the user about this key when it was still
+        // first contact — the ask carried it. Do not ask twice.
+        surfaced: gated.is_some(),
     });
     Ok(outcome)
 }
@@ -794,6 +808,7 @@ mod tests {
     use super::*;
     use crate::types::CertPins;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::sync::mpsc;
 
     #[test]
     fn variant_mapping() {
@@ -1092,9 +1107,33 @@ mod tests {
             // describes an X.509 certificate, not this RSA key.
             o.cert_pins.tls = Some("ff".repeat(32));
             let s: BoxedStream = Box::pin(client_side);
-            let outcome = handshake(s, security_type, &o, &CredentialSource::none())
-                .await
-                .unwrap();
+            // First contact (no stored pin) must NOT hand the stored password
+            // to a server whose key nobody approved: the ask carries the key
+            // and the answer is the approval. A pinned server never asks.
+            let pinned = stored_pin.is_some();
+            let (ask_tx, mut ask_rx) = mpsc::channel::<crate::security::prompt::CredentialAsk>(1);
+            let approvals = tokio::spawn(async move {
+                while let Some(ask) = ask_rx.recv().await {
+                    assert!(
+                        ask.identity.is_some(),
+                        "first contact must gate the credential ask"
+                    );
+                    assert!(
+                        ask.provisional.is_some(),
+                        "the stored credential rides the approval question"
+                    );
+                    let _ = ask.reply.send(ask.provisional);
+                }
+            });
+            let outcome = if pinned {
+                handshake(s, security_type, &o, &CredentialSource::none()).await
+            } else {
+                handshake(s, security_type, &o, &CredentialSource::interactive(&ask_tx, 1, None, None)).await
+            }
+            .unwrap();
+            if pinned {
+                approvals.abort();
+            }
 
             // The identity check must not disturb the handshake, and must
             // report what the session layer needs to prompt with, including
@@ -1104,6 +1143,10 @@ mod tests {
                 .as_ref()
                 .unwrap_or_else(|| panic!("RA2 must report an identity for {security_type:?}"));
             assert_eq!(identity.scheme, PinScheme::Ra2, "{security_type:?}");
+            // On first contact the user approved the key WITH the credential
+            // step, so the identity arrives already surfaced: the post-auth
+            // prompt would be the same question twice.
+            assert_eq!(identity.surfaced, !pinned, "{security_type:?}");
             match (&identity.decision, &stored_pin) {
                 (TrustDecision::Unknown { fingerprint, .. }, None) => {
                     assert_eq!(*fingerprint, expected_fingerprint, "{security_type:?}");

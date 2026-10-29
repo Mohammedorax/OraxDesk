@@ -50,7 +50,7 @@ pub(crate) async fn handshake(
     // MS-Logon authenticates a Windows account, and DES truncates the password
     // to 8 characters just as classic VNC auth does.
     let supplied = creds
-        .obtain(METHOD, CredentialKind::UsernameAndPassword, true, opts)
+        .obtain(METHOD, CredentialKind::UsernameAndPassword, true, opts, None)
         .await?;
     let username = supplied.username.unwrap_or_default();
     let password = supplied.password.unwrap_or_default();

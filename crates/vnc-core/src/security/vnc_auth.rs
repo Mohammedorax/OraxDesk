@@ -23,7 +23,7 @@ use zeroize::Zeroize;
 use vnc_transport::BoxedStream;
 
 use super::prompt::CredentialSource;
-use super::{read_bytes, write_all, AuthOutcome};
+use super::{read_bytes, write_all, AuthOutcome, ServerIdentity};
 use crate::error::Result;
 use crate::types::{ConnectOptions, CredentialKind};
 
@@ -82,7 +82,7 @@ pub(crate) async fn handshake(
     opts: &ConnectOptions,
     creds: &CredentialSource<'_>,
 ) -> Result<AuthOutcome> {
-    handshake_named(stream, opts, creds, METHOD).await
+    handshake_named(stream, opts, creds, METHOD, None).await
 }
 
 /// As [`handshake`], but with the method name the dialog should show.
@@ -91,15 +91,21 @@ pub(crate) async fn handshake(
 /// inside their own negotiation, and the user is better served by
 /// "TightVNC (VNC Authentication)" than by a bare "VNC Authentication" that
 /// does not match the security type they picked.
+///
+/// `identity` is the server key the exchange is about to put the password on,
+/// when the transport identified one and the user has not yet been asked
+/// about it (first contact). `None` for the classic types, which identify no
+/// server key at all.
 pub(crate) async fn handshake_named(
     mut stream: BoxedStream,
     opts: &ConnectOptions,
     creds: &CredentialSource<'_>,
     method: &str,
+    identity: Option<ServerIdentity>,
 ) -> Result<AuthOutcome> {
     // DES truncates to 8 characters, silently, the dialog must say so.
     let supplied = creds
-        .obtain(method, CredentialKind::PasswordOnly, true, opts)
+        .obtain(method, CredentialKind::PasswordOnly, true, opts, identity.as_ref())
         .await?;
     let mut password = supplied.password.unwrap_or_default();
     if password.len() > MAX_PASSWORD_BYTES {

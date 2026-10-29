@@ -63,7 +63,7 @@ pub(crate) async fn handshake(
     // non-empty user name for `UsernameAndPassword` (falling back to the OS
     // account name as the dialog's prefill).
     let supplied = creds
-        .obtain(METHOD, CredentialKind::UsernameAndPassword, false, opts)
+        .obtain(METHOD, CredentialKind::UsernameAndPassword, false, opts, None)
         .await?;
     let username = supplied.username.unwrap_or_default();
     let password = supplied.password.unwrap_or_default();

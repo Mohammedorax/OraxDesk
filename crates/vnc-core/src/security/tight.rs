@@ -178,7 +178,12 @@ pub(crate) async fn handshake(
 
     let outcome = match chosen {
         auth_code::NONE => super::none::handshake(stream, opts).await?,
-        auth_code::VNC => super::vnc_auth::handshake_named(stream, opts, creds, VNC_METHOD).await?,
+        // Tight (16) identifies no server key of its own, so this delegate
+        // raises no trust gate: the inner exchange is the same DES challenge
+        // a bare VncAuth server would run, in the clear, by design.
+        auth_code::VNC => {
+            super::vnc_auth::handshake_named(stream, opts, creds, VNC_METHOD, None).await?
+        }
         other => {
             return Err(VncError::Protocol(format!(
                 "Tight authentication type {other} is not implemented"

@@ -37,6 +37,20 @@ use crate::types::{ConnectOptions, CredentialKind, CredentialRequest, Credential
 #[derive(Debug)]
 pub struct CredentialAsk {
     pub request: CredentialRequest,
+    /// First-contact server key that must be **approved before anything is
+    /// sent**, when the handshake reached an untrusted key and what follows
+    /// puts credentials on it.
+    ///
+    /// `None` on every ordinary ask. With `Some`, the session shows the
+    /// certificate prompt FIRST and only then the credential dialog (or, when
+    /// [`provisional`](Self::provisional) says the stored credential is
+    /// enough, nothing else): a password typed for a server whose key the
+    /// user has never seen is a secret disclosed to whoever holds that key.
+    pub identity: Option<super::ServerIdentity>,
+    /// The credential `opts` already carries, when that would satisfy the
+    /// method. The trust round trip answers with it after approval, so a
+    /// stored password never needs the dialog underneath the certificate one.
+    pub provisional: Option<Credentials>,
     pub reply: oneshot::Sender<Option<Credentials>>,
 }
 
@@ -185,6 +199,7 @@ impl<'a> CredentialSource<'a> {
         kind: CredentialKind,
         truncates_password: bool,
         opts: &ConnectOptions,
+        identity: Option<&super::ServerIdentity>,
     ) -> Result<Credentials> {
         let stored_user = non_empty(opts.credentials.username.clone());
         let stored_pass = opts.credentials.password.clone();
@@ -193,17 +208,22 @@ impl<'a> CredentialSource<'a> {
             CredentialKind::PasswordOnly => stored_pass.is_some(),
             CredentialKind::UsernameAndPassword => stored_pass.is_some() && stored_user.is_some(),
         };
-        if satisfied {
-            return Ok(Credentials {
-                username: stored_user,
-                password: stored_pass,
-                domain: None,
-            });
-        }
 
-        let Some(prompt) = self.prompt else {
-            return Err(VncError::CredentialsRequired(missing_message(method, kind)));
-        };
+        // First contact with a server key whose approval was never asked, and
+        // the method is about to put credentials on it. The gate runs BEFORE
+        // the credential question — and before the short circuit below, which
+        // would otherwise hand a stored password straight to an unverified
+        // server. A caller with no prompt channel is refused, never delayed
+        // and never degraded: sending credentials to an unidentified server
+        // is not a fallback any config may choose.
+        let gate = identity
+            .filter(|id| {
+                matches!(
+                    id.decision,
+                    vnc_transport::TrustDecision::Unknown { .. }
+                )
+            })
+            .cloned();
 
         let request = CredentialRequest {
             method: method.to_string(),
@@ -223,9 +243,64 @@ impl<'a> CredentialSource<'a> {
         };
 
         let (reply, answer) = oneshot::channel();
-        if prompt.send(CredentialAsk { request, reply }).await.is_err() {
-            // Nobody is listening, behave as if there were no prompt at all.
-            return Err(VncError::CredentialsRequired(missing_message(method, kind)));
+        if let Some(id) = &gate {
+            let Some(prompt) = self.prompt else {
+                return Err(VncError::CredentialsRequired(format!(
+                    "{method}: the server key needs approval before credentials are sent"
+                )));
+            };
+            // The stored credential, if it would already satisfy the method,
+            // rides WITH the approval question: approving the key is then the
+            // only thing the user has to do, no second dialog underneath. The
+            // credential itself never reaches the webview; only the session's
+            // in-process question carries it.
+            let provisional = if satisfied {
+                Some(Credentials {
+                    username: stored_user.clone(),
+                    password: stored_pass.clone(),
+                    domain: None,
+                })
+            } else {
+                None
+            };
+            if prompt
+                .send(CredentialAsk {
+                    request,
+                    identity: Some(id.clone()),
+                    provisional,
+                    reply,
+                })
+                .await
+                .is_err()
+            {
+                return Err(VncError::CredentialsRequired(format!(
+                    "{method}: the server key needs approval before credentials are sent"
+                )));
+            }
+        } else {
+            if satisfied {
+                return Ok(Credentials {
+                    username: stored_user,
+                    password: stored_pass,
+                    domain: None,
+                });
+            }
+            let Some(prompt) = self.prompt else {
+                return Err(VncError::CredentialsRequired(missing_message(method, kind)));
+            };
+            if prompt
+                .send(CredentialAsk {
+                    request,
+                    identity: None,
+                    provisional: None,
+                    reply,
+                })
+                .await
+                .is_err()
+            {
+                // Nobody is listening, behave as if there were no prompt at all.
+                return Err(VncError::CredentialsRequired(missing_message(method, kind)));
+            }
         }
 
         // `Err` here means the session dropped the reply channel: it is tearing
@@ -233,7 +308,13 @@ impl<'a> CredentialSource<'a> {
         let Ok(Some(supplied)) = answer.await else {
             return Err(VncError::Cancelled);
         };
-        self.used.store(true, Ordering::Relaxed);
+        // A trust approval with a stored credential is not a credential the
+        // user typed: if the server then rejects it, the attempt must FAIL
+        // once and stop, exactly like every other stored-credential rejection,
+        // not re-open the dialog the user never typed into.
+        if gate.is_none() || !satisfied {
+            self.used.store(true, Ordering::Relaxed);
+        }
 
         let mut username = non_empty(supplied.username).or(stored_user);
         let password = supplied.password.or(stored_pass);
@@ -301,7 +382,7 @@ mod tests {
         o.credentials = Credentials::password("swordfish");
         let src = CredentialSource::interactive(&tx, 1, None, None);
         let got = src
-            .obtain("VNC Authentication", CredentialKind::PasswordOnly, true, &o)
+            .obtain("VNC Authentication", CredentialKind::PasswordOnly, true, &o, None)
             .await
             .unwrap();
         assert_eq!(got.password.as_deref(), Some("swordfish"));
@@ -317,7 +398,8 @@ mod tests {
                 "VNC Authentication",
                 CredentialKind::PasswordOnly,
                 true,
-                &opts()
+                &opts(),
+                None
             )
             .await,
             Err(VncError::CredentialsRequired(_))
@@ -344,6 +426,7 @@ mod tests {
                 CredentialKind::PasswordOnly,
                 true,
                 &opts(),
+                None,
             )
             .await
             .unwrap();
@@ -365,7 +448,8 @@ mod tests {
                 "VNC Authentication",
                 CredentialKind::PasswordOnly,
                 true,
-                &opts()
+                &opts(),
+                None
             )
             .await,
             Err(VncError::Cancelled)
@@ -386,7 +470,8 @@ mod tests {
                 "Apple Remote Desktop",
                 CredentialKind::UsernameAndPassword,
                 false,
-                &opts()
+                &opts(),
+                None
             )
             .await,
             Err(VncError::Cancelled)
@@ -413,6 +498,7 @@ mod tests {
                 CredentialKind::UsernameAndPassword,
                 false,
                 &o,
+                None,
             )
             .await
             .unwrap();
@@ -435,6 +521,7 @@ mod tests {
                 CredentialKind::UsernameAndPassword,
                 false,
                 &o,
+                None,
             )
             .await
             .unwrap();
@@ -475,6 +562,7 @@ mod tests {
                 CredentialKind::UsernameAndPassword,
                 false,
                 &o,
+                None,
             )
             .await
             .unwrap();
@@ -503,6 +591,7 @@ mod tests {
                 CredentialKind::UsernameAndPassword,
                 false,
                 &opts(),
+                None,
             )
             .await
             .unwrap();
@@ -516,5 +605,124 @@ mod tests {
         let c = Credentials::user_pass("alice", "hunter2");
         let shown = format!("{c:?}");
         assert!(!shown.contains("hunter2") && !shown.contains("alice"));
+    }
+
+    /// The trust gate: an unknown server key turns the ask into an approval
+    /// question that carries the stored credential, and the stored credential
+    /// path does NOT count as typed (a rejection by the server must fail once).
+    #[tokio::test]
+    async fn an_unknown_server_key_gates_a_stored_credential() {
+        use vnc_transport::TrustDecision;
+
+        let (tx, mut rx) = mpsc::channel(1);
+        let mut o = opts();
+        o.credentials = Credentials::password("swordfish");
+        let src = CredentialSource::interactive(&tx, 1, None, None);
+        let identity = super::super::ServerIdentity {
+            scheme: crate::types::PinScheme::Tls,
+            decision: TrustDecision::Unknown {
+                fingerprint: "AA:BB:CC".into(),
+                subject: "CN=host".into(),
+            },
+            surfaced: false,
+        };
+        let answerer = tokio::spawn(async move {
+            let ask = rx.recv().await.unwrap();
+            let id = ask.identity.as_ref().expect("the gate must ride with the ask");
+            let fingerprint = match &id.decision {
+                TrustDecision::Unknown { fingerprint, .. } => fingerprint.clone(),
+                other => panic!("expected Unknown, got {other:?}"),
+            };
+            assert_eq!(fingerprint, "AA:BB:CC");
+            // The stored password travels with the approval question so
+            // approving the key is the only gesture needed.
+            let provisional = ask
+                .provisional
+                .as_ref()
+                .expect("stored credential rides along")
+                .clone();
+            assert_eq!(provisional.password.as_deref(), Some("swordfish"));
+            // Serve approved it: the stored credential is the answer.
+            ask.reply
+                .send(Some(Credentials::password("swordfish")))
+                .unwrap();
+        });
+        let got = src
+            .obtain(
+                "VeNCrypt (X509Vnc)",
+                CredentialKind::PasswordOnly,
+                true,
+                &o,
+                Some(&identity),
+            )
+            .await
+            .unwrap();
+        answerer.await.unwrap();
+        assert_eq!(got.password.as_deref(), Some("swordfish"));
+        // Approving a key is not typing a password: a later server rejection
+        // must fail once and stop, not reopen the dialog.
+        assert!(
+            !src.prompted(),
+            "an approval is not a typed credential"
+        );
+    }
+
+    /// Without a prompt channel there is nowhere to ask for approval, so the
+    /// attempt is refused rather than sending the password to an unverified
+    /// server. Never a silent degradation.
+    #[tokio::test]
+    async fn an_unknown_server_key_needs_an_interactive_prompt() {
+        use vnc_transport::TrustDecision;
+
+        let src = CredentialSource::none();
+        let mut o = opts();
+        o.credentials = Credentials::password("swordfish");
+        let identity = super::super::ServerIdentity {
+            scheme: crate::types::PinScheme::Ra2,
+            decision: TrustDecision::Unknown {
+                fingerprint: "AA:BB:CC".into(),
+                subject: "CN=host".into(),
+            },
+            surfaced: false,
+        };
+        let result = src
+            .obtain(
+                "RA2",
+                CredentialKind::PasswordOnly,
+                false,
+                &o,
+                Some(&identity),
+            )
+            .await;
+        assert!(matches!(result, Err(VncError::CredentialsRequired(_))));
+    }
+
+    /// A pinned or CA-verified key changes nothing: the short circuit behaves
+    /// exactly as before the gate existed.
+    #[tokio::test]
+    async fn a_pinned_key_keeps_the_stored_credential_short_circuit() {
+        use vnc_transport::TrustDecision;
+
+        let (tx, mut rx) = mpsc::channel(1);
+        let mut o = opts();
+        o.credentials = Credentials::password("swordfish");
+        let src = CredentialSource::interactive(&tx, 1, None, None);
+        let identity = super::super::ServerIdentity {
+            scheme: crate::types::PinScheme::Tls,
+            decision: TrustDecision::PinnedMatch,
+            surfaced: false,
+        };
+        let got = src
+            .obtain(
+                "VeNCrypt (X509Vnc)",
+                CredentialKind::PasswordOnly,
+                true,
+                &o,
+                Some(&identity),
+            )
+            .await
+            .unwrap();
+        assert_eq!(got.password.as_deref(), Some("swordfish"));
+        assert!(rx.try_recv().is_err());
     }
 }

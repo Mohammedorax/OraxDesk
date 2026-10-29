@@ -31,11 +31,6 @@
 // Tauri looks for the sidecar at `src-tauri/binaries/dvv-<target-triple>`.
 // A local build is always for the host, and the host triple is what `rustc`
 // reports.
-//
-// A file that is ALREADY there is left alone. The release workflow stages
-// the sidecar itself, for a target that is not always the host -- a macOS
-// universal binary, for one -- and that deliberate staging must not be
-// overwritten by a host build.
 
 import { execFileSync } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync } from "node:fs";
@@ -61,34 +56,31 @@ const extension = triple.includes("windows") ? ".exe" : "";
 // platform's executable extension.
 const staged = join(root, "src-tauri", "binaries", `dvv-${triple}${extension}`);
 
-// A sidecar that is ALREADY staged is left alone. The release workflow
-// stages the sidecar itself, for a target that is not always the host: a
-// macOS UNIVERSAL binary, for one, which Tauri looks for under
-// `dvv-universal-apple-darwin`. That deliberate staging must not be
-// overwritten by a host build.
-const alreadyStaged = [staged];
-if (triple.includes("apple-darwin")) {
-  alreadyStaged.push(join(root, "src-tauri", "binaries", "dvv-universal-apple-darwin"));
-}
-if (alreadyStaged.some((path) => existsSync(path))) {
-  console.log(`the sidecar is already staged for ${triple}; leaving it alone`);
+// A macOS UNIVERSAL sidecar, staged by the release workflow, must survive a
+// host build: Tauri looks for it under `dvv-universal-apple-darwin`, and it is
+// not something this script can produce.
+const universal = join(root, "src-tauri", "binaries", "dvv-universal-apple-darwin");
+if (triple.includes("apple-darwin") && existsSync(universal)) {
+  console.log("a universal sidecar is staged; leaving it alone");
   process.exit(0);
 }
 
+// The host sidecar is ALWAYS refreshed. A sidecar that was already staged used
+// to be left alone, and that shipped a stale binary: the file stayed from the
+// previous release while `target/release/dvv` was rebuilt, so the installer
+// carried last version's sidecar next to this version's app. The build is
+// incremental, so refreshing costs nothing when the sidecar is already current.
 const source = join(root, "target", "release", `dvv${extension}`);
-if (!existsSync(source)) {
-  execFileSync("cargo", ["build", "--release", "-p", "dvv"], {
-    cwd: root,
-    stdio: "inherit",
-  });
-}
+execFileSync("cargo", ["build", "--release", "-p", "dvv"], {
+  cwd: root,
+  stdio: "inherit",
+});
 if (!existsSync(source)) {
   throw new Error(
     `the sidecar was not built: ${source} does not exist.\n` +
       `Run "cargo build --release -p dvv" and try again.`,
   );
 }
-
 mkdirSync(dirname(staged), { recursive: true });
 copyFileSync(source, staged);
 console.log(`staged the sidecar for ${triple}: ${staged}`);

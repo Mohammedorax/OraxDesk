@@ -246,6 +246,10 @@ async fn establish(
     // trust-on-first-use prompt (PRD/10 §4). The scheme travels with it: the
     // answer has to be stored against the key the user was actually shown,
     // not against whichever one the endpoint happened to pin first.
+    //
+    // Skip the handshake that ALREADY asked: a key the credentials were gated
+    // on was approved before anything was sent, and asking for it again here
+    // would be the same dialog twice for one connection.
     if let Some(crate::security::ServerIdentity {
         scheme,
         decision:
@@ -253,6 +257,7 @@ async fn establish(
                 fingerprint,
                 subject,
             },
+        surfaced: false,
     }) = trust
     {
         emit(
@@ -307,6 +312,15 @@ async fn establish(
 // Interactive credentials (PRD/10 §3.4)
 // ---------------------------------------------------------------------------
 
+/// Server keys the person approved over THIS connect's lifetime, as
+/// `(scheme, normalised fingerprint)`. Re-asking after a rejected password
+/// would put the certificate dialog below the credential one for a key they
+/// already answered for, so the set short circuits the gate the second time.
+/// It lives with one `establish_interactive`, so it cannot outlive the
+/// connection it was answered under.
+type ApprovedKeys = std::sync::Arc<
+    parking_lot::Mutex<std::collections::HashSet<(crate::types::PinScheme, String)>>,
+>;
 /// Answer one [`CredentialAsk`] by asking the user.
 ///
 /// Emits [`SessionEvent::CredentialsRequired`] and then pumps `commands`, the
@@ -314,13 +328,110 @@ async fn establish(
 /// handshake, until the answer (or a teardown) arrives. Cancellation,
 /// `Disconnect` and a closed command channel all resolve the ask as "cancelled"
 /// so the handshake unwinds instead of hanging.
+///
+/// When the ask carries a first-contact [`ServerIdentity`], the trust question
+/// comes FIRST and is answered with [`ClientCommand::TrustCertificate`]: the
+/// certificate the user must approve is the one the credentials would be sent
+/// to, so approval precedes every byte of the auth exchange. Refusing (or
+/// closing the dialog) resolves the ask as cancelled — nothing sensitive has
+/// been sent, and the attempt unwinds. This is the same shape the RDP stack
+/// uses for its TLS prompt (`rdp-core/src/connection/trust.rs`).
 async fn serve_credential_ask(
     ask: CredentialAsk,
     events: &mpsc::Sender<SessionEvent>,
     commands: &mut mpsc::Receiver<ClientCommand>,
     cancel: &CancellationToken,
+    approved: &ApprovedKeys,
 ) -> Result<()> {
-    let CredentialAsk { request, reply } = ask;
+    let CredentialAsk {
+        request,
+        identity,
+        provisional,
+        reply,
+    } = ask;
+
+    // --- the trust gate ----------------------------------------------------
+    if let Some(crate::security::ServerIdentity {
+        scheme,
+        decision:
+            vnc_transport::TrustDecision::Unknown {
+                fingerprint, subject,
+            },
+        ..
+    }) = &identity
+    {
+        let key = (*scheme, vnc_transport::normalize_fingerprint(fingerprint));
+        if approved.lock().contains(&key) {
+            // Already answered within this connect (a rejected password asked
+            // again): the stored credential rides out without a second prompt.
+            if let Some(creds) = provisional {
+                let _ = reply.send(Some(creds));
+                return Ok(());
+            }
+        } else {
+            tracing::warn!(%fingerprint, "asking the user to approve the server key");
+            emit(
+                events,
+                SessionEvent::CertificatePrompt {
+                    fingerprint: fingerprint.clone(),
+                    subject: subject.clone(),
+                    is_change: false,
+                    scheme: *scheme,
+                },
+            )
+            .await?;
+
+            let approved_ok = loop {
+                let cmd = tokio::select! {
+                    biased;
+                    _ = cancel.cancelled() => None,
+                    cmd = commands.recv() => cmd,
+                };
+                match cmd {
+                    // The shell is gone, the dialog was closed, or the user
+                    // disconnected: no approval, nothing moves.
+                    None
+                    | Some(ClientCommand::CancelCredentials)
+                    | Some(ClientCommand::Disconnect) => break false,
+                    Some(ClientCommand::TrustCertificate {
+                        fingerprint: answered,
+                        permanent,
+                        scheme: answered_scheme,
+                    }) => {
+                        // The answer must name the key question and the scheme
+                        // asked under. A stale approval from an earlier dialog,
+                        // or one for the other protocol's key, approves nothing.
+                        let same = answered_scheme == *scheme
+                            && vnc_transport::normalize_fingerprint(&answered)
+                                == vnc_transport::normalize_fingerprint(fingerprint);
+                        if same {
+                            tracing::info!(permanent, %fingerprint, "the user approved the server key");
+                            approved.lock().insert(key);
+                            break true;
+                        }
+                        tracing::warn!(
+                            "an approval arrived for a different key or scheme; refusing it"
+                        );
+                        break false;
+                    }
+                    // Input, clipboard and quality commands are meaningless
+                    // mid-handshake, drop them and keep waiting.
+                    Some(_) => continue,
+                }
+            };
+            if !approved_ok {
+                let _ = reply.send(None);
+                return Ok(());
+            }
+            if let Some(creds) = provisional {
+                let _ = reply.send(Some(creds));
+                return Ok(());
+            }
+            // No stored credential: fall through, the credential dialog is
+            // next and only the approved connection's channel will carry it.
+        }
+    }
+
     tracing::info!(
         method = %request.method,
         attempt = request.attempt,
@@ -380,6 +491,10 @@ async fn establish_interactive(
         .username
         .clone()
         .filter(|u| !u.is_empty());
+    // Server keys approved during this connect survive the auth-rejection
+    // retry, so the certificate dialog does not reopen below the credential
+    // one for a key the person already answered for.
+    let approved: ApprovedKeys = Default::default();
 
     loop {
         // One in-flight question at a time; the handshake is linear.
@@ -416,7 +531,7 @@ async fn establish_interactive(
                     // so not polling `attempt_fut` here costs nothing.
                     Some(ask) = ask_rx.recv() => {
                         let asked = tokio::time::Instant::now();
-                        serve_credential_ask(ask, events, commands, cancel).await?;
+                        serve_credential_ask(ask, events, commands, cancel, &approved).await?;
                         deadline += tokio::time::Instant::now() - asked;
                     }
                     _ = tokio::time::sleep_until(deadline) => {
