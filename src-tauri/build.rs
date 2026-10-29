@@ -343,6 +343,11 @@ fn main() {
             "save_host",
             "delete_host",
             "touch_connected",
+            // support inbox
+            "inbox_add",
+            "inbox_list",
+            "inbox_remove",
+            "inbox_refresh",
             "list_groups",
             "save_group",
             "delete_group",

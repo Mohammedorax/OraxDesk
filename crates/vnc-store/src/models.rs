@@ -738,3 +738,29 @@ mod tests {
         assert!(p.rdp_settings.is_none());
     }
 }
+
+/// One row of the support inbox: a nine-digit number somebody sent, and what
+/// the registry last said about it.
+///
+/// The number is the person's handle for a machine; the state is what the
+/// registry answered the last time this row was checked. `unknown` is the
+/// honest default: nothing has been asked yet.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InboxEntry {
+    /// Row id.
+    pub id: String,
+    /// The nine-digit number, as the person typed it (digits only).
+    pub number: String,
+    /// Whatever the operator wrote about this person. Local only.
+    pub note: Option<String>,
+    /// The device id the registry resolved the number to, when it resolved.
+    pub device_id: Option<String>,
+    /// `unknown` | `reachable` | `no-address` | `revoked` | `error`.
+    pub state: String,
+    /// One line saying why, in the app's own words.
+    pub detail: Option<String>,
+    /// When the state was last refreshed.
+    pub last_checked_at: Option<i64>,
+    pub created_at: i64,
+}

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-inbox-add"
+description = "Enables the inbox_add command without any pre-configured scope."
+commands.allow = ["inbox_add"]
+
+[[permission]]
+identifier = "deny-inbox-add"
+description = "Denies the inbox_add command without any pre-configured scope."
+commands.deny = ["inbox_add"]

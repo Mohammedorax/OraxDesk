@@ -409,6 +409,10 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             take_pending_help_code,
             // hosts / library
+            commands::inbox::inbox_add,
+            commands::inbox::inbox_list,
+            commands::inbox::inbox_remove,
+            commands::inbox::inbox_refresh,
             commands::hosts::list_hosts,
             commands::hosts::get_host,
             commands::hosts::save_host,

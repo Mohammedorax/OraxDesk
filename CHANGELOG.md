@@ -83,6 +83,11 @@ to stored data and to the IPC contract between the Rust core and the frontend.
 * Job handles survive a restart (bounded to 64, dropped after a week without
   deleting the files), `cancel` re-reads the job's own status instead of
   inferring it, and the CLI gained `dvv job`.
+* The support inbox: the nine-digit numbers people send are kept in a local list
+  with the operator's own note, and the registry is asked about each of them on
+  demand. The state a row carries is what the registry answered (published, no
+  address published, revoked, unknown), and it never claims a machine is
+  'offline', which this build cannot know.
 
 ### Security
 

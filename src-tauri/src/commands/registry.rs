@@ -184,6 +184,14 @@ async fn stored_origin(state: &AppState) -> Result<Option<String>, String> {
     Ok(stored.or_else(|| Some(DEFAULT_REGISTRY_URL.to_string())))
 }
 
+/// The origin this computer talks to, for a caller that only needs the URL.
+///
+/// The stored one, or the default, or the environment's — the same choice
+/// every other registry call makes, so nothing asks a second registry.
+pub(crate) async fn effective_origin(state: &AppState) -> Option<String> {
+    stored_origin(state).await.ok().flatten()
+}
+
 /// The directory a helper looks a saved machine up in.
 ///
 /// The same origin the device NUMBER was resolved against, and no signing

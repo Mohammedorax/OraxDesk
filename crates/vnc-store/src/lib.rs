@@ -34,7 +34,9 @@ mod thumbs;
 
 pub use creds::{CredentialBackend, CredentialStore, KEYRING_SERVICE, MAX_CREDENTIAL_BLOB};
 pub use error::{Error, Result};
-pub use models::{CertPin, Group, HistoryEntry, HostProfile, StoredCredentials, Tag};
+pub use models::{
+    CertPin, Group, HistoryEntry, HostProfile, InboxEntry, StoredCredentials, Tag,
+};
 pub use rdp::RdpSettings;
 pub use rdpfile::{parse_rdp_file, RdpImport, MAX_RDP_FILE_BYTES, MAX_RDP_SETTINGS_BYTES};
 pub use ssh::SshSettings;

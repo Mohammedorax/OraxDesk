@@ -7,7 +7,9 @@ use rusqlite::{params, Connection, OptionalExtension, Row};
 
 use remote_core::ProtocolKind;
 
-use crate::{now_ts, CertPin, Error, Group, HistoryEntry, HostProfile, Result, Tag};
+use crate::{
+    now_ts, CertPin, Error, Group, HistoryEntry, HostProfile, InboxEntry, Result, Tag,
+};
 
 /// Numbered migrations, applied in order. `PRAGMA user_version` records how
 /// many have run; future schema changes append a new entry here.
@@ -132,6 +134,22 @@ const MIGRATIONS: &[&str] = &[
     // newer build listable and deletable rather than stranded.
     r#"
     ALTER TABLE hosts ADD COLUMN ssh_settings TEXT;
+    "#,
+    // The support inbox: the numbers people send, and what the registry last
+    // said about each of them. It is a local list, not a queue: nothing here
+    // is sent to the Worker, and the note column never leaves this machine.
+    r#"
+    CREATE TABLE support_inbox (
+      id              TEXT PRIMARY KEY,
+      number          TEXT NOT NULL,           -- nine digits, as sent
+      note            TEXT,                    -- local only
+      device_id       TEXT,                    -- what the registry resolved it to
+      state           TEXT NOT NULL DEFAULT 'unknown',
+      detail          TEXT,
+      last_checked_at INTEGER,
+      created_at      INTEGER NOT NULL
+    );
+    CREATE INDEX inbox_number ON support_inbox(number);
     "#,
 ];
 
@@ -986,6 +1004,54 @@ mod tests {
         (dir, store)
     }
 
+    /// The inbox is a list of MACHINES: the same number twice is one row,
+    /// because a person who sends the same number twice means the same
+    /// machine and a second row would make the operator connect twice.
+    #[test]
+    fn the_inbox_is_a_list_of_machines() {
+        let (_dir, store) = temp_store();
+        let first = store.inbox_add("250739098", Some("a client")).unwrap();
+        let second = store.inbox_add("250739098", Some("the same client")).unwrap();
+        assert_eq!(first.id, second.id, "one number is one row");
+        let rows = store.inbox_list().unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].number, "250739098");
+        assert_eq!(rows[0].state, "unknown", "nothing has been asked yet");
+    }
+
+    /// A state is what the registry answered, and it is stored with the time
+    /// it was answered, so the UI can say "as of" rather than "now".
+    #[test]
+    fn a_state_is_recorded_with_its_time() {
+        let (_dir, store) = temp_store();
+        let row = store.inbox_add("250739098", None).unwrap();
+        store
+            .inbox_set_state(
+                &row.id,
+                Some("abc123"),
+                "no-address",
+                Some("it published no address"),
+                1234,
+            )
+            .unwrap();
+        let rows = store.inbox_list().unwrap();
+        assert_eq!(rows[0].state, "no-address");
+        assert_eq!(rows[0].device_id.as_deref(), Some("abc123"));
+        assert_eq!(rows[0].last_checked_at, Some(1234));
+    }
+
+    /// Removing a row forgets the LIST, not the machine: nothing here
+    /// touches a device, and the operator can add the number again.
+    #[test]
+    fn removing_a_row_forgets_only_the_row() {
+        let (_dir, store) = temp_store();
+        let row = store.inbox_add("250739098", None).unwrap();
+        store.inbox_remove(&row.id).unwrap();
+        assert!(store.inbox_list().unwrap().is_empty());
+        let again = store.inbox_add("250739098", None).unwrap();
+        assert_eq!(again.number, "250739098");
+    }
+
     fn sample_host(name: &str, address: &str) -> HostProfile {
         HostProfile {
             friendly_name: name.to_string(),
@@ -1830,7 +1896,7 @@ mod tests {
         );
         // Bump deliberately when a migration is added, so that adding one
         // is a decision recorded here rather than a silent schema drift.
-        assert_eq!(MIGRATIONS.len(), 4);
+        assert_eq!(MIGRATIONS.len(), 5);
 
         let got = store
             .get_host("host-uuid-1")
@@ -1970,4 +2036,92 @@ mod tests {
             .any(|w| w == b"CORP.EXAMPLE"));
         let _ = secret;
     }
+}
+
+
+impl Store {
+    // ---- support inbox ----------------------------------------------------
+
+    /// Add a number to the inbox, or return the row that already holds it.
+    ///
+    /// The same number twice is one row: the inbox is a list of machines, and
+    /// a person who sends the same number twice means the same machine.
+    pub fn inbox_add(&self, number: &str, note: Option<&str>) -> Result<InboxEntry> {
+        let number = number.trim().to_string();
+        let conn = self.conn.lock();
+        if let Some(existing) = conn
+            .query_row(
+                "SELECT * FROM support_inbox WHERE number = ?1",
+                [&number],
+                inbox_from_row,
+            )
+            .optional()?
+        {
+            return Ok(existing);
+        }
+        let id = uuid::Uuid::new_v4().to_string();
+        let now = now_ts();
+        conn.execute(
+            "INSERT INTO support_inbox (id, number, note, state, created_at) VALUES (?1, ?2, ?3, 'unknown', ?4)",
+            rusqlite::params![id, number, note, now],
+        )?;
+        Ok(conn.query_row(
+            "SELECT * FROM support_inbox WHERE id = ?1",
+            [&id],
+            inbox_from_row,
+        )?)
+    }
+
+    /// Every inbox row, newest first.
+    pub fn inbox_list(&self) -> Result<Vec<InboxEntry>> {
+        let conn = self.conn.lock();
+        let mut stmt =
+            conn.prepare("SELECT * FROM support_inbox ORDER BY created_at DESC, number")?;
+        let rows = stmt
+            .query_map([], inbox_from_row)?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    /// Forget one row. The machine it names is not touched: this is a list,
+    /// not a record of what was done to a device.
+    pub fn inbox_remove(&self, id: &str) -> Result<()> {
+        let conn = self.conn.lock();
+        conn.execute("DELETE FROM support_inbox WHERE id = ?1", [id])?;
+        Ok(())
+    }
+
+    /// Record what the registry answered about one row.
+    pub fn inbox_set_state(
+        &self,
+        id: &str,
+        device_id: Option<&str>,
+        state: &str,
+        detail: Option<&str>,
+        checked_at: i64,
+    ) -> Result<()> {
+        let conn = self.conn.lock();
+        conn.execute(
+            "UPDATE support_inbox SET device_id = ?2, state = ?3, detail = ?4, last_checked_at = ?5 WHERE id = ?1",
+            rusqlite::params![id, device_id, state, detail, checked_at],
+        )?;
+        Ok(())
+    }
+
+}
+
+/// One inbox row, read by name rather than by position: the table grows.
+fn inbox_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<InboxEntry> {
+    Ok(InboxEntry {
+        id: row.get("id")?,
+        number: row.get("number")?,
+        note: row.get("note")?,
+        device_id: row.get("device_id")?,
+        state: row.get("state")?,
+        detail: row.get("detail")?,
+        last_checked_at: row.get("last_checked_at")?,
+        created_at: row.get("created_at")?,
+    })
+
+
 }
