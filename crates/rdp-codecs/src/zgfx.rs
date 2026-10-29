@@ -449,7 +449,18 @@ impl Rdp8Decompressor {
                 continue;
             }
 
-            let distance = t.value_base + bits.bits(u32::from(t.value_bits))?;
+            // Checked: the last match row carries a 32-bit base and a 32-bit
+            // suffix, so the sum can exceed `u32::MAX`. Release builds wrap
+            // silently, and a wrapped value can land on 0, which is the
+            // unencoded-run escape and therefore a different construct from
+            // the one the server encoded.
+            let distance = t
+                .value_base
+                .checked_add(bits.bits(u32::from(t.value_bits))?)
+                .ok_or(DecodeError::Range {
+                    what: "zgfx match distance",
+                    got: u32::MAX,
+                })?;
             if distance == 0 {
                 // The unencoded run escape.
                 let count = bits.bits(15)? as usize;

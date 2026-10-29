@@ -373,6 +373,8 @@ export async function revokeDevice(
   if (auth.id !== id) {
     throw new ApiError(403, "forbidden", "A device can only revoke itself");
   }
+  // The row is the tombstone: cleanup keeps revoked rows forever, so a
+  // revoked machine cannot re-register.
   const now = nowSeconds();
   await env.DB.prepare(
     "UPDATE devices SET revoked_at = ?, updated_at = ? WHERE id = ? AND revoked_at IS NULL",
@@ -382,6 +384,74 @@ export async function revokeDevice(
   // Pending codes for a revoked device must not outlive the revocation.
   await env.DB.prepare("DELETE FROM signal_codes WHERE host_id = ?").bind(id).run();
   await audit(env, "device.revoked", id);
+  return emptyResponse(204);
+}
+
+/**
+ * Constant-time string comparison, used for the operator key.
+ *
+ * `a === b` returns as soon as two bytes differ, so the time it takes leaks
+ * how much of the guess was right. This walks both strings to the longer
+ * length and folds every difference into one accumulator, with the length
+ * folded in too rather than short-circuited.
+ */
+function sameSecret(left: string, right: string): boolean {
+  const a = new TextEncoder().encode(left);
+  const b = new TextEncoder().encode(right);
+  const length = Math.max(a.length, b.length);
+  let diff = a.length ^ b.length;
+  for (let i = 0; i < length; i += 1) {
+    diff |= (a[i] ?? 0) ^ (b[i] ?? 0);
+  }
+  return diff === 0;
+}
+
+/**
+ * Operator revocation: turn a device off from the server side.
+ *
+ * A device can only revoke itself with its own key, and that is the wrong tool
+ * when the machine is stolen or the key is believed compromised: the holder of
+ * the key will not do it. This is the one server-side act, gated on a secret
+ * that exists only in the deployment (`wrangler secret put OPERATOR_TOKEN`),
+ * and it is deliberately a full stop rather than a "lock": the tombstone stays,
+ * the device cannot re-register, and its pending codes are dropped. Lifting a
+ * revocation is a database decision, not an API one.
+ *
+ * With no token configured the endpoint does not exist (404), so a deployment
+ * that never intended to have an operator has no remote administration surface
+ * at all.
+ */
+export async function revokeDeviceAsOperator(
+  env: Env,
+  request: Request,
+  id: string,
+  body: Record<string, unknown>,
+): Promise<Response> {
+  const operator = env.OPERATOR_TOKEN;
+  if (operator === undefined || operator === "") {
+    throw new ApiError(404, "not_found", "No such endpoint");
+  }
+  const supplied = request.headers.get("x-orax-operator") ?? "";
+  if (!sameSecret(supplied, operator)) {
+    // Missing and wrong answer the same thing: a different 401 for "no token"
+    // would tell a prober whether this deployment has an operator at all.
+    throw new ApiError(401, "unauthorized", "Invalid operator token");
+  }
+  if (!isEndpointId(id)) throw new ApiError(400, "bad_request", "Invalid device id");
+  rejectUnknownKeys(body, ["reason"]);
+  const reason = optionalString(body.reason, "reason", 120);
+
+  const now = nowSeconds();
+  const revoked = await env.DB.prepare(
+    "UPDATE devices SET revoked_at = COALESCE(revoked_at, ?), registry_key = NULL, updated_at = ? WHERE id = ?",
+  )
+    .bind(now, now, id)
+    .run();
+  if (revoked.meta.changes === 0) {
+    throw new ApiError(404, "not_found", "No such device");
+  }
+  await env.DB.prepare("DELETE FROM signal_codes WHERE host_id = ?").bind(id).run();
+  await audit(env, "device.revoked", id, reason ?? "operator revocation");
   return emptyResponse(204);
 }
 

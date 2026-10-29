@@ -111,6 +111,9 @@ credentials.enc
 # Agent and assistant tooling: session records, transcripts, absolute paths.
 .omc/
 .claude/
+.opencode/
+# The brand pack is committed unpacked; its archive is a local download.
+/OraxDesk_Brand_Concept_Pack.zip
 # direnv
 .envrc
 .direnv/

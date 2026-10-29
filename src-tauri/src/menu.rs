@@ -18,15 +18,17 @@ use std::collections::HashMap;
 use parking_lot::Mutex;
 use serde::Deserialize;
 use tauri::menu::{
-    CheckMenuItem, MenuBuilder, MenuItem, MenuItemBuilder, PredefinedMenuItem, Submenu,
+    CheckMenuItem, Menu, MenuBuilder, MenuItem, MenuItemBuilder, PredefinedMenuItem, Submenu,
     SubmenuBuilder,
 };
 use tauri::{AppHandle, Emitter, Manager, WebviewWindow, Wry};
 
-/// Kept in step with `ui/src/screens/About.tsx`, which shows the same details
-/// in the in-app dialog used on every platform.
-const CONTACT_URL: &str = "https://github.com/psmux";
-const PROJECT_URL: &str = "https://github.com/Mohammedorax/OraxDesk";
+/// Kept in step with `ui/src/lib/tauri.ts` (`PROJECT_URL`/`CONTACT_URL`),
+/// which shows the same two links in the in-app dialog used on every
+/// platform. The webview never names a URL: `open_about_link` takes a target
+/// and these constants decide where it points.
+pub(crate) const CONTACT_URL: &str = "https://github.com/psmux";
+pub(crate) const PROJECT_URL: &str = "https://github.com/Mohammedorax/OraxDesk";
 
 /// The one check item that means something with no session in front: it is a
 /// preference, not a property of a connection, and Preferences is reachable
@@ -51,11 +53,343 @@ const RESOLUTIONS: &[&str] = &[
     "3840x2160",
 ];
 
+/// The languages the SHELL's own menus are built in.
+///
+/// The webview's catalogue lives in `ui/src/lib/i18n.tsx`; the menu bar is
+/// built in Rust before any window exists, so it cannot read that file. The
+/// two are kept in step by hand, and the choice is stored in the same settings
+/// table the rest of the shell reads (`app_language`), written by the
+/// `set_ui_language` command when the person switches language.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Lang {
+    Ar,
+    En,
+}
+
+impl Lang {
+    pub fn parse(value: &str) -> Lang {
+        if value.trim().eq_ignore_ascii_case("en") {
+            Lang::En
+        } else {
+            Lang::Ar
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Lang::Ar => "ar",
+            Lang::En => "en",
+        }
+    }
+}
+
+/// The settings key the chosen language is stored under.
+pub(crate) const LANGUAGE_KEY: &str = "app_language";
+
+/// Every label the shell's menus put on screen.
+///
+/// A struct rather than a key/value lookup: a missing label is a compile
+/// error, which is the only way a menu this size stays translated when an item
+/// is added.
+struct Text {
+    app_about: &'static str,
+    /// macOS only: the application menu's Settings item. Everywhere else the
+    /// same action is a webview button, so this label is built but unused.
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    settings: &'static str,
+    file: &'static str,
+    new_host: &'static str,
+    quick_connect: &'static str,
+    edit: &'static str,
+    connection: &'static str,
+    connect: &'static str,
+    disconnect: &'static str,
+    reconnect: &'static str,
+    wake: &'static str,
+    displays: &'static str,
+    no_session: &'static str,
+    all_displays: &'static str,
+    detect_displays: &'static str,
+    resolution: &'static str,
+    res_connect: &'static str,
+    res_follow: &'static str,
+    pointers: &'static str,
+    remote_cursor: &'static str,
+    cursor_standard: &'static str,
+    cursor_dot: &'static str,
+    cursor_off: &'static str,
+    toggle_toolbar: &'static str,
+    hide_toolbar: &'static str,
+    view: &'static str,
+    fullscreen: &'static str,
+    scale_fit: &'static str,
+    scale_aspect: &'static str,
+    scale_actual: &'static str,
+    scale_remote: &'static str,
+    zoom_in: &'static str,
+    zoom_out: &'static str,
+    zoom_reset: &'static str,
+    lock_zoom: &'static str,
+    edge_pan: &'static str,
+    gray: &'static str,
+    gray_256: &'static str,
+    gray_16: &'static str,
+    gray_8: &'static str,
+    gray_4: &'static str,
+    gray_2: &'static str,
+    gray_1: &'static str,
+    quality: &'static str,
+    q_auto: &'static str,
+    q_high: &'static str,
+    q_medium: &'static str,
+    q_low: &'static str,
+    q_bw: &'static str,
+    always_refresh: &'static str,
+    keyboard: &'static str,
+    passthrough: &'static str,
+    send_cad: &'static str,
+    send_cmd_tab: &'static str,
+    send_win: &'static str,
+    send_alt_f4: &'static str,
+    send_escape: &'static str,
+    release_keys: &'static str,
+    files: &'static str,
+    session: &'static str,
+    connection_info: &'static str,
+    view_only: &'static str,
+    refresh: &'static str,
+    clipboard_send: &'static str,
+    screenshot: &'static str,
+    window: &'static str,
+    show_library: &'static str,
+    next_tab: &'static str,
+    prev_tab: &'static str,
+    close_tab: &'static str,
+    split_right: &'static str,
+    split_down: &'static str,
+    next_pane: &'static str,
+    prev_pane: &'static str,
+    zoom_pane: &'static str,
+    even_panes: &'static str,
+    arrange: &'static str,
+    /// The noun a count is put in front of: "`action!("menu:pane:grid:3", format!("{{}} {{}}", 3, t.panes))`" / "3 أجزاء".
+    panes: &'static str,
+    close_pane: &'static str,
+    help: &'static str,
+    help_about: &'static str,
+    project: &'static str,
+    contact: &'static str,
+    tray_open: &'static str,
+    tray_quit: &'static str,
+}
+
+const TEXT_AR: Text = Text {
+    app_about: "عن OraxDesk",
+    settings: "الإعدادات…",
+    file: "ملف",
+    new_host: "جهاز جديد…",
+    quick_connect: "اتصال بـ…",
+    edit: "تحرير",
+    connection: "الاتصال",
+    connect: "اتصال",
+    disconnect: "قطع الاتصال",
+    reconnect: "إعادة الاتصال الآن",
+    wake: "إيقاظ عبر Wake-on-LAN",
+    displays: "الشاشات",
+    no_session: "لا جلسة",
+    all_displays: "كل الشاشات",
+    detect_displays: "اكتشاف الشاشات مجددًا",
+    resolution: "الدقة",
+    res_connect: "طابِق هذه النافذة عند الاتصال",
+    res_follow: "طابِق هذه النافذة واستمر بالمطابقة",
+    pointers: "المؤشرات",
+    remote_cursor: "إظهار مؤشر الجهاز البعيد",
+    cursor_standard: "مؤشري: سهم عادي",
+    cursor_dot: "مؤشري: نقطة",
+    cursor_off: "مؤشري: مخفي",
+    toggle_toolbar: "إظهار/إخفاء الشريط",
+    hide_toolbar: "إخفاء الشريط العائم",
+    view: "عرض",
+    fullscreen: "تبديل ملء الشاشة",
+    scale_fit: "ملاءمة النافذة",
+    scale_aspect: "ملاءمة بنسبة الأبعاد",
+    scale_actual: "الحجم الفعلي",
+    scale_remote: "تحجيم بعيد (مطابقة النافذة)",
+    zoom_in: "تكبير",
+    zoom_out: "تصغير",
+    zoom_reset: "إعادة التكبير إلى 100%",
+    lock_zoom: "تثبيت التكبير (تجاهل القرص)",
+    edge_pan: "التحريك عند حواف النافذة",
+    gray: "مستويات التدرج الرمادي",
+    gray_256: "256 مستوى",
+    gray_16: "16 مستوى",
+    gray_8: "8 مستويات",
+    gray_4: "4 مستويات",
+    gray_2: "مستويان",
+    gray_1: "بت واحد (مُتشابك)",
+    quality: "الجودة",
+    q_auto: "تلقائي (حاد عند السكون، أسرع تحت الحمل)",
+    q_high: "حاد (أفضل صورة، دون تكيّف)",
+    q_medium: "متوازن",
+    q_low: "سريع الاستجابة (صورة أنعم، أقل تأخير)",
+    q_bw: "أبيض وأسود",
+    always_refresh: "اطلب إطارات جديدة دائمًا",
+    keyboard: "لوحة المفاتيح",
+    passthrough: "تمرير اختصارات النظام إلى البعيد",
+    send_cad: "أرسل Ctrl+Alt+Del",
+    send_cmd_tab: "أرسل Cmd/Alt+Tab",
+    send_win: "أرسل مفتاح Windows/Super",
+    send_alt_f4: "أرسل Alt+F4",
+    send_escape: "أرسل Escape",
+    release_keys: "أفلت كل المفاتيح",
+    files: "نقل الملفات…",
+    session: "الجلسة",
+    connection_info: "معلومات الاتصال…",
+    view_only: "عرض فقط",
+    refresh: "تحديث الشاشة",
+    clipboard_send: "أرسل الحافظة إلى البعيد",
+    screenshot: "احفظ لقطة شاشة",
+    window: "نافذة",
+    show_library: "إظهار المكتبة",
+    next_tab: "التبويب التالي",
+    prev_tab: "التبويب السابق",
+    close_tab: "إغلاق التبويب",
+    split_right: "تقسيم إلى اليمين",
+    split_down: "تقسيم إلى الأسفل",
+    next_pane: "الجزء التالي",
+    prev_pane: "الجزء السابق",
+    zoom_pane: "تكبير الجزء",
+    even_panes: "تسوية الأجزاء",
+    arrange: "ترتيب",
+    panes: "أجزاء",
+    close_pane: "إغلاق الجزء",
+    help: "مساعدة",
+    help_about: "مساعدة OraxDesk",
+    project: "صفحة المشروع",
+    contact: "تواصل مع المطوّر…",
+    tray_open: "افتح OraxDesk",
+    tray_quit: "إنهاء OraxDesk",
+};
+
+const TEXT_EN: Text = Text {
+    app_about: "About OraxDesk",
+    settings: "Settings…",
+    file: "File",
+    new_host: "New Host…",
+    quick_connect: "Connect to…",
+    edit: "Edit",
+    connection: "Connection",
+    connect: "Connect",
+    disconnect: "Disconnect",
+    reconnect: "Reconnect Now",
+    wake: "Wake with Wake-on-LAN",
+    displays: "Displays",
+    no_session: "No session",
+    all_displays: "All Displays",
+    detect_displays: "Detect Displays Again",
+    resolution: "Resolution",
+    res_connect: "Match This Window When Connecting",
+    res_follow: "Match This Window, and Keep Matching",
+    pointers: "Pointers",
+    remote_cursor: "Show the Remote Pointer",
+    cursor_standard: "My Pointer: Standard Arrow",
+    cursor_dot: "My Pointer: Dot",
+    cursor_off: "My Pointer: Hidden",
+    toggle_toolbar: "Show/Hide Toolbar",
+    hide_toolbar: "Hide the Floating Toolbar",
+    view: "View",
+    fullscreen: "Toggle Fullscreen",
+    scale_fit: "Fit to Window",
+    scale_aspect: "Aspect Fit",
+    scale_actual: "Actual Size",
+    scale_remote: "Remote Resize (Match Window)",
+    zoom_in: "Zoom In",
+    zoom_out: "Zoom Out",
+    zoom_reset: "Zoom to 100%",
+    lock_zoom: "Lock Zoom (Ignore Pinch)",
+    edge_pan: "Pan by Moving to Edges",
+    gray: "Gray Levels",
+    gray_256: "256 Levels",
+    gray_16: "16 Levels",
+    gray_8: "8 Levels",
+    gray_4: "4 Levels",
+    gray_2: "2 Levels",
+    gray_1: "1-bit (Dithered)",
+    quality: "Quality",
+    q_auto: "Auto (sharp when idle, faster under load)",
+    q_high: "Sharp (best picture, never adapts)",
+    q_medium: "Balanced",
+    q_low: "Responsive (softer picture, lowest lag)",
+    q_bw: "Black & White",
+    always_refresh: "Always Request Fresh Frames",
+    keyboard: "Keyboard",
+    passthrough: "Pass System Shortcuts to Remote",
+    send_cad: "Send Ctrl+Alt+Del",
+    send_cmd_tab: "Send Cmd/Alt+Tab",
+    send_win: "Send Windows/Super Key",
+    send_alt_f4: "Send Alt+F4",
+    send_escape: "Send Escape",
+    release_keys: "Release All Keys",
+    files: "File Transfer…",
+    session: "Session",
+    connection_info: "Connection Info…",
+    view_only: "View Only",
+    refresh: "Refresh Screen",
+    clipboard_send: "Send Clipboard to Remote",
+    screenshot: "Save Screenshot",
+    window: "Window",
+    show_library: "Show Library",
+    next_tab: "Next Tab",
+    prev_tab: "Previous Tab",
+    close_tab: "Close Tab",
+    split_right: "Split Right",
+    split_down: "Split Down",
+    next_pane: "Next Pane",
+    prev_pane: "Previous Pane",
+    zoom_pane: "Maximise Pane",
+    even_panes: "Even Out Panes",
+    arrange: "Arrange",
+    panes: "Panes",
+    close_pane: "Close Pane",
+    help: "Help",
+    help_about: "OraxDesk Help",
+    project: "Project Page",
+    contact: "Contact Developer…",
+    tray_open: "Open OraxDesk",
+    tray_quit: "Quit OraxDesk",
+};
+
+fn text(lang: Lang) -> &'static Text {
+    match lang {
+        Lang::Ar => &TEXT_AR,
+        Lang::En => &TEXT_EN,
+    }
+}
+
+/// The two labels the tray menu owns ("Open OraxDesk", "Quit OraxDesk").
+pub(crate) fn tray_labels(lang: Lang) -> (&'static str, &'static str) {
+    let t = text(lang);
+    (t.tray_open, t.tray_quit)
+}
+
+/// The language the shell's menus are built in, from the settings table.
+pub(crate) fn stored_language(app: &AppHandle) -> Lang {
+    app.try_state::<crate::state::AppState>()
+        .and_then(|state| state.store.get_setting(LANGUAGE_KEY).ok().flatten())
+        .map(|value| Lang::parse(&value))
+        .unwrap_or(Lang::Ar)
+}
+
+
 /// Live handles into the parts of the menu that mirror a session.
 ///
 /// Everything here is `Send + Sync` (tauri's menu wrappers hop to the main
 /// thread internally), so it can sit behind a plain mutex in managed state.
 pub struct SessionMenu {
+    /// The language the labels were built in. The dynamic parts (the Displays
+    /// submenu, which is refilled as the session reports monitors) read it so
+    /// they are rebuilt in the same language as the rest of the menu.
+    lang: Lang,
     /// Rebuilt from the webview's monitor list; see [`rebuild_displays`].
     displays: Submenu<Wry>,
     /// Disabled unless the session is one whose desktop size can be chosen.
@@ -161,7 +495,47 @@ pub struct MenuSync {
     session: Option<SessionMenuState>,
 }
 
+/// Build and install the menu in the language stored in the settings table.
+///
+/// Called once at startup. [`apply`] does the same work again when the person
+/// switches language, and is where the labels actually come from.
 pub fn install(app: &AppHandle) -> tauri::Result<()> {
+    let lang = stored_language(app);
+    apply(app, lang)?;
+    // Registered once, outside `build`: `on_menu_event` would otherwise add a
+    // second handler on every language change, and each menu item would then
+    // be handled twice.
+    app.on_menu_event(|app, event| {
+        handle_menu_event(app, event.id().as_ref());
+    });
+    Ok(())
+}
+
+/// (Re)build the menu in `lang` and install it.
+///
+/// Safe to call again. The managed [`SessionMenu`] is REPLACED through its
+/// existing cell rather than managed a second time: `app.manage` panics on a
+/// key that is already managed, so a language switch that built a new menu
+/// would take the whole application down on the first click.
+pub fn apply(app: &AppHandle, lang: Lang) -> tauri::Result<()> {
+    let (menu, session) = build(app, lang)?;
+    app.set_menu(menu)?;
+    match app.try_state::<Mutex<SessionMenu>>() {
+        Some(cell) => *cell.lock() = session,
+        None => {
+            app.manage(Mutex::new(session));
+        }
+    }
+    // A rebuilt menu starts with every session item disabled (nothing is
+    // known to be live). The window in front re-pushes its snapshot on this
+    // event, the same way it does when it takes the focus, so switching
+    // language does not leave Disconnect greyed out until the next click.
+    let _ = app.emit("menu://relabel", ());
+    Ok(())
+}
+
+fn build(app: &AppHandle, lang: Lang) -> tauri::Result<(Menu<Wry>, SessionMenu)> {
+    let t = text(lang);
     let builder = MenuBuilder::new(app);
     let mut checks: HashMap<&'static str, CheckMenuItem<Wry>> = HashMap::new();
     let mut gated_items: Vec<MenuItem<Wry>> = Vec::new();
@@ -198,10 +572,10 @@ pub fn install(app: &AppHandle) -> tauri::Result<()> {
         // dialog carries the build fingerprint and the copy-a-report button
         // that bug reports need.
         let app_menu = SubmenuBuilder::new(app, "OraxDesk")
-            .item(&MenuItemBuilder::with_id("menu:about", "About OraxDesk").build(app)?)
+            .item(&MenuItemBuilder::with_id("menu:about", t.app_about).build(app)?)
             .separator()
             .item(
-                &MenuItemBuilder::with_id("menu:settings", "Settings…")
+                &MenuItemBuilder::with_id("menu:settings", t.settings)
                     .accelerator("Cmd+,")
                     .build(app)?,
             )
@@ -217,14 +591,14 @@ pub fn install(app: &AppHandle) -> tauri::Result<()> {
         builder = builder.item(&app_menu);
     }
 
-    let file = SubmenuBuilder::new(app, "File")
+    let file = SubmenuBuilder::new(app, t.file)
         .item(
-            &MenuItemBuilder::with_id("menu:new-host", "New Host…")
+            &MenuItemBuilder::with_id("menu:new-host", t.new_host)
                 .accelerator("CmdOrCtrl+N")
                 .build(app)?,
         )
         .item(
-            &MenuItemBuilder::with_id("menu:quick-connect", "Connect to…")
+            &MenuItemBuilder::with_id("menu:quick-connect", t.quick_connect)
                 .accelerator("CmdOrCtrl+T")
                 .build(app)?,
         )
@@ -244,7 +618,7 @@ pub fn install(app: &AppHandle) -> tauri::Result<()> {
     // its keyboard hook calls preventDefault on the chord it forwards, and a
     // handled key equivalent never reaches the menu, so under pass-through the
     // remote still gets the paste and the local field does not.
-    let edit = SubmenuBuilder::new(app, "Edit")
+    let edit = SubmenuBuilder::new(app, t.edit)
         .undo()
         .redo()
         .separator()
@@ -254,24 +628,36 @@ pub fn install(app: &AppHandle) -> tauri::Result<()> {
         .select_all()
         .build()?;
 
-    let connection = SubmenuBuilder::new(app, "Connection")
-        .item(&MenuItemBuilder::with_id("menu:connect", "Connect").build(app)?)
-        .item(
-            &MenuItemBuilder::with_id("menu:disconnect", "Disconnect")
+    let connection = SubmenuBuilder::new(app, t.connection)
+        .item(&MenuItemBuilder::with_id("menu:connect", t.connect).build(app)?)
+        .item(&{
+            // Gated like the rest of the session half: with the library in
+            // front there is no session to disconnect from, and an item that
+            // does nothing when clicked is worse than a greyed one.
+            let item = MenuItemBuilder::with_id("menu:disconnect", t.disconnect)
                 .accelerator("CmdOrCtrl+Shift+D")
-                .build(app)?,
-        )
-        .item(&MenuItemBuilder::with_id("menu:reconnect", "Reconnect Now").build(app)?)
+                .enabled(false)
+                .build(app)?;
+            gated_items.push(item.clone());
+            item
+        })
+        .item(&{
+            let item = MenuItemBuilder::with_id("menu:reconnect", t.reconnect)
+                .enabled(false)
+                .build(app)?;
+            gated_items.push(item.clone());
+            item
+        })
         .separator()
-        .item(&MenuItemBuilder::with_id("menu:wake", "Wake with Wake-on-LAN").build(app)?)
+        .item(&MenuItemBuilder::with_id("menu:wake", t.wake).build(app)?)
         .build()?;
 
     // The monitor list is filled in by the first `sync_session_menu`; until
     // then the submenu says what an empty one means rather than sitting there
     // blank.
-    let displays = SubmenuBuilder::new(app, "Displays")
+    let displays = SubmenuBuilder::new(app, t.displays)
         .item(
-            &MenuItemBuilder::with_id("menu:displays-none", "No session")
+            &MenuItemBuilder::with_id("menu:displays-none", t.no_session)
                 .enabled(false)
                 .build(app)?,
         )
@@ -282,14 +668,14 @@ pub fn install(app: &AppHandle) -> tauri::Result<()> {
     // arrives. Remote Desktop only: RFB has no equivalent that a user chooses,
     // so the submenu is disabled for a VNC session rather than offering
     // choices that would do nothing.
-    let resolution = SubmenuBuilder::new(app, "Resolution")
+    let resolution = SubmenuBuilder::new(app, t.resolution)
         .item(&check!(
             "menu:res:connect",
-            "Match This Window When Connecting"
+            t.res_connect
         ))
         .item(&check!(
             "menu:res:follow",
-            "Match This Window, and Keep Matching"
+            t.res_follow
         ))
         .separator()
         .item(&check!("menu:res:1280x720", "1280 x 720"))
@@ -302,19 +688,19 @@ pub fn install(app: &AppHandle) -> tauri::Result<()> {
         .build()?;
     gated_menus.push(resolution.clone());
 
-    let pointers = SubmenuBuilder::new(app, "Pointers")
-        .item(&check!("menu:remote-cursor", "Show the Remote Pointer"))
+    let pointers = SubmenuBuilder::new(app, t.pointers)
+        .item(&check!("menu:remote-cursor", t.remote_cursor))
         .separator()
         .item(&check!(
             "menu:cursor:standard",
-            "My Pointer: Standard Arrow"
+            t.cursor_standard
         ))
-        .item(&check!("menu:cursor:dot", "My Pointer: Dot"))
-        .item(&check!("menu:cursor:off", "My Pointer: Hidden"))
+        .item(&check!("menu:cursor:dot", t.cursor_dot))
+        .item(&check!("menu:cursor:off", t.cursor_off))
         .build()?;
     gated_menus.push(pointers.clone());
 
-    let toggle_toolbar = MenuItemBuilder::with_id("menu:toggle-toolbar", "Show/Hide Toolbar")
+    let toggle_toolbar = MenuItemBuilder::with_id("menu:toggle-toolbar", t.toggle_toolbar)
         .accelerator("CmdOrCtrl+Shift+M")
         .enabled(false)
         .build(app)?;
@@ -324,7 +710,7 @@ pub fn install(app: &AppHandle) -> tauri::Result<()> {
     // Cmd/Ctrl+- here would be stolen from every remote application for the
     // life of the app, which is the mistake the fullscreen chord below was
     // already fixed for once.
-    let view = SubmenuBuilder::new(app, "View")
+    let view = SubmenuBuilder::new(app, t.view)
         .item(
             // F11 on Windows/Linux, the convention there, and the chord this
             // used to carry ("CmdOrCtrl+Ctrl+F") collapsed to a plain Ctrl+F
@@ -332,7 +718,7 @@ pub fn install(app: &AppHandle) -> tauri::Result<()> {
             // Find, quietly stolen from the desktop being viewed. macOS keeps
             // Cmd+Ctrl+F, which is its own fullscreen convention and is not
             // in the way of anything.
-            &MenuItemBuilder::with_id("menu:toggle-fullscreen", "Toggle Fullscreen")
+            &MenuItemBuilder::with_id("menu:toggle-fullscreen", t.fullscreen)
                 .accelerator(if cfg!(target_os = "macos") {
                     "CmdOrCtrl+Ctrl+F"
                 } else {
@@ -341,32 +727,32 @@ pub fn install(app: &AppHandle) -> tauri::Result<()> {
                 .build(app)?,
         )
         .separator()
-        .item(&check!("menu:scale-fit", "Fit to Window"))
-        .item(&check!("menu:scale-aspect", "Aspect Fit"))
-        .item(&check!("menu:scale-actual", "Actual Size"))
-        .item(&check!("menu:scale-remote", "Remote Resize (Match Window)"))
+        .item(&check!("menu:scale-fit", t.scale_fit))
+        .item(&check!("menu:scale-aspect", t.scale_aspect))
+        .item(&check!("menu:scale-actual", t.scale_actual))
+        .item(&check!("menu:scale-remote", t.scale_remote))
         .separator()
-        .item(&action!("menu:zoom-in", "Zoom In"))
-        .item(&action!("menu:zoom-out", "Zoom Out"))
-        .item(&action!("menu:zoom-reset", "Zoom to 100%"))
-        .item(&check!("menu:lock-zoom", "Lock Zoom (Ignore Pinch)"))
-        .item(&check!("menu:edge-pan", "Pan by Moving to Edges"))
+        .item(&action!("menu:zoom-in", t.zoom_in))
+        .item(&action!("menu:zoom-out", t.zoom_out))
+        .item(&action!("menu:zoom-reset", t.zoom_reset))
+        .item(&check!("menu:lock-zoom", t.lock_zoom))
+        .item(&check!("menu:edge-pan", t.edge_pan))
         .separator()
         .item(&displays)
         .item(&resolution)
         .item(&pointers)
         .separator()
         .item(&toggle_toolbar)
-        .item(&check!(HIDE_TOOLBAR, "Hide the Floating Toolbar"))
+        .item(&check!(HIDE_TOOLBAR, t.hide_toolbar))
         .build()?;
 
-    let gray = SubmenuBuilder::new(app, "Gray Levels")
-        .item(&check!("menu:gray:256", "256 Levels"))
-        .item(&check!("menu:gray:16", "16 Levels"))
-        .item(&check!("menu:gray:8", "8 Levels"))
-        .item(&check!("menu:gray:4", "4 Levels"))
-        .item(&check!("menu:gray:2", "2 Levels"))
-        .item(&check!("menu:gray:1", "1-bit (Dithered)"))
+    let gray = SubmenuBuilder::new(app, t.gray)
+        .item(&check!("menu:gray:256", t.gray_256))
+        .item(&check!("menu:gray:16", t.gray_16))
+        .item(&check!("menu:gray:8", t.gray_8))
+        .item(&check!("menu:gray:4", t.gray_4))
+        .item(&check!("menu:gray:2", t.gray_2))
+        .item(&check!("menu:gray:1", t.gray_1))
         .build()?;
 
     // Named for the trade the person is making, picture sharpness against how
@@ -376,65 +762,65 @@ pub fn install(app: &AppHandle) -> tauri::Result<()> {
     // afford it and steps down while the client is saturated, which is what a
     // video playing on the remote needs (measured: a right-click menu went
     // from 2208 ms to 346 ms once Auto dropped the quality by itself).
-    let quality = SubmenuBuilder::new(app, "Quality")
+    let quality = SubmenuBuilder::new(app, t.quality)
         .item(&check!(
             "menu:quality:auto",
-            "Auto (sharp when idle, faster under load)"
+            t.q_auto
         ))
         .item(&check!(
             "menu:quality:high",
-            "Sharp (best picture, never adapts)"
+            t.q_high
         ))
-        .item(&check!("menu:quality:medium", "Balanced"))
+        .item(&check!("menu:quality:medium", t.q_medium))
         .item(&check!(
             "menu:quality:low",
-            "Responsive (softer picture, lowest lag)"
+            t.q_low
         ))
-        .item(&check!("menu:quality:bw", "Black & White"))
+        .item(&check!("menu:quality:bw", t.q_bw))
         .separator()
         .item(&gray)
         .separator()
         .item(&check!(
             "menu:always-refresh",
-            "Always Request Fresh Frames"
+            t.always_refresh
         ))
         .build()?;
     gated_menus.push(quality.clone());
 
-    let keyboard = SubmenuBuilder::new(app, "Keyboard")
+    let keyboard = SubmenuBuilder::new(app, t.keyboard)
         .item(&check!(
             "menu:passthrough",
-            "Pass System Shortcuts to Remote"
+            t.passthrough
         ))
         .separator()
-        .item(&action!("menu:send-cad", "Send Ctrl+Alt+Del"))
-        .item(&action!("menu:send-cmd-tab", "Send Cmd/Alt+Tab"))
-        .item(&action!("menu:send-win", "Send Windows/Super Key"))
-        .item(&action!("menu:send-alt-f4", "Send Alt+F4"))
-        .item(&action!("menu:send-escape", "Send Escape"))
+        .item(&action!("menu:send-cad", t.send_cad))
+        .item(&action!("menu:send-cmd-tab", t.send_cmd_tab))
+        .item(&action!("menu:send-win", t.send_win))
+        .item(&action!("menu:send-alt-f4", t.send_alt_f4))
+        .item(&action!("menu:send-escape", t.send_escape))
         .separator()
-        .item(&action!("menu:release-keys", "Release All Keys"))
+        .item(&action!("menu:release-keys", t.release_keys))
         .build()?;
     gated_menus.push(keyboard.clone());
 
     // Gated on the SSH probe as well as on a session, so it is held out of
     // `gated_items` and enabled by hand in `SessionMenu::set_live`.
-    let files = MenuItemBuilder::with_id("menu:files", "File Transfer…")
+    let files = MenuItemBuilder::with_id("menu:files", t.files)
         .enabled(false)
         .build(app)?;
 
-    let session = SubmenuBuilder::new(app, "Session")
-        .item(&action!("menu:connection-info", "Connection Info…"))
+    let session = SubmenuBuilder::new(app, t.session)
+        .item(&action!("menu:connection-info", t.connection_info))
         .separator()
         .item(&quality)
-        .item(&check!("menu:view-only", "View Only"))
-        .item(&action!("menu:refresh", "Refresh Screen"))
+        .item(&check!("menu:view-only", t.view_only))
+        .item(&action!("menu:refresh", t.refresh))
         .separator()
         .item(&keyboard)
         .separator()
-        .item(&action!("menu:clipboard-send", "Send Clipboard to Remote"))
+        .item(&action!("menu:clipboard-send", t.clipboard_send))
         .item(&files)
-        .item(&action!("menu:screenshot", "Save Screenshot"))
+        .item(&action!("menu:screenshot", t.screenshot))
         .build()?;
 
     // Tab navigation lives on the native menu rather than in the webview
@@ -447,24 +833,24 @@ pub fn install(app: &AppHandle) -> tauri::Result<()> {
     // `CmdOrCtrl+Shift+W` for Close Tab, not the more usual `CmdOrCtrl+W`:
     // that one belongs to the predefined Close Window item below, and two
     // items cannot share an accelerator.
-    let window_menu = SubmenuBuilder::new(app, "Window")
+    let window_menu = SubmenuBuilder::new(app, t.window)
         .item(
-            &MenuItemBuilder::with_id("menu:tab:library", "Show Library")
+            &MenuItemBuilder::with_id("menu:tab:library", t.show_library)
                 .accelerator("CmdOrCtrl+Shift+L")
                 .build(app)?,
         )
         .item(
-            &MenuItemBuilder::with_id("menu:tab:next", "Next Tab")
+            &MenuItemBuilder::with_id("menu:tab:next", t.next_tab)
                 .accelerator("Ctrl+Tab")
                 .build(app)?,
         )
         .item(
-            &MenuItemBuilder::with_id("menu:tab:prev", "Previous Tab")
+            &MenuItemBuilder::with_id("menu:tab:prev", t.prev_tab)
                 .accelerator("Ctrl+Shift+Tab")
                 .build(app)?,
         )
         .item(
-            &MenuItemBuilder::with_id("menu:tab:close", "Close Tab")
+            &MenuItemBuilder::with_id("menu:tab:close", t.close_tab)
                 .accelerator("CmdOrCtrl+Shift+W")
                 .build(app)?,
         )
@@ -479,32 +865,32 @@ pub fn install(app: &AppHandle) -> tauri::Result<()> {
         // and a chord that closed a pane when the user meant the tab is the
         // kind of near miss that costs a connection.
         .item(
-            &MenuItemBuilder::with_id("menu:pane:split-right", "Split Right")
+            &MenuItemBuilder::with_id("menu:pane:split-right", t.split_right)
                 .accelerator("CmdOrCtrl+Alt+D")
                 .build(app)?,
         )
         .item(
-            &MenuItemBuilder::with_id("menu:pane:split-down", "Split Down")
+            &MenuItemBuilder::with_id("menu:pane:split-down", t.split_down)
                 .accelerator("CmdOrCtrl+Alt+Shift+D")
                 .build(app)?,
         )
         .item(
-            &MenuItemBuilder::with_id("menu:pane:next", "Next Pane")
+            &MenuItemBuilder::with_id("menu:pane:next", t.next_pane)
                 .accelerator("CmdOrCtrl+Alt+]")
                 .build(app)?,
         )
         .item(
-            &MenuItemBuilder::with_id("menu:pane:prev", "Previous Pane")
+            &MenuItemBuilder::with_id("menu:pane:prev", t.prev_pane)
                 .accelerator("CmdOrCtrl+Alt+[")
                 .build(app)?,
         )
         .item(
-            &MenuItemBuilder::with_id("menu:pane:zoom", "Maximise Pane")
+            &MenuItemBuilder::with_id("menu:pane:zoom", t.zoom_pane)
                 .accelerator("CmdOrCtrl+Alt+Z")
                 .build(app)?,
         )
         .item(
-            &MenuItemBuilder::with_id("menu:pane:even", "Even Out Panes")
+            &MenuItemBuilder::with_id("menu:pane:even", t.even_panes)
                 .accelerator("CmdOrCtrl+Alt+=")
                 .build(app)?,
         )
@@ -514,18 +900,18 @@ pub fn install(app: &AppHandle) -> tauri::Result<()> {
         // menu item. Whatever is already connected in the tab is kept and
         // re-placed, and the rest of the panes come up empty.
         .item(
-            &SubmenuBuilder::new(app, "Arrange")
-                .item(&action!("menu:pane:grid:2", "2 Panes"))
-                .item(&action!("menu:pane:grid:3", "3 Panes"))
-                .item(&action!("menu:pane:grid:4", "4 Panes"))
-                .item(&action!("menu:pane:grid:6", "6 Panes"))
-                .item(&action!("menu:pane:grid:8", "8 Panes"))
-                .item(&action!("menu:pane:grid:9", "9 Panes"))
-                .item(&action!("menu:pane:grid:12", "12 Panes"))
+            &SubmenuBuilder::new(app, t.arrange)
+                .item(&action!("menu:pane:grid:2", format!("{} {}", 2, t.panes)))
+                .item(&action!("menu:pane:grid:3", format!("{} {}", 3, t.panes)))
+                .item(&action!("menu:pane:grid:4", format!("{} {}", 4, t.panes)))
+                .item(&action!("menu:pane:grid:6", format!("{} {}", 6, t.panes)))
+                .item(&action!("menu:pane:grid:8", format!("{} {}", 8, t.panes)))
+                .item(&action!("menu:pane:grid:9", format!("{} {}", 9, t.panes)))
+                .item(&action!("menu:pane:grid:12", format!("{} {}", 12, t.panes)))
                 .build()?,
         )
         .item(
-            &MenuItemBuilder::with_id("menu:pane:close", "Close Pane")
+            &MenuItemBuilder::with_id("menu:pane:close", t.close_pane)
                 .accelerator("CmdOrCtrl+Alt+W")
                 .build(app)?,
         )
@@ -540,18 +926,18 @@ pub fn install(app: &AppHandle) -> tauri::Result<()> {
     // URL, so it still works with no network. "Project page" is the one that
     // deliberately leaves the app.
     #[allow(unused_mut)] // only reassigned in the non-macOS branch below
-    let mut help_builder = SubmenuBuilder::new(app, "Help")
-        .item(&MenuItemBuilder::with_id("menu:about", "OraxDesk Help").build(app)?)
+    let mut help_builder = SubmenuBuilder::new(app, t.help)
+        .item(&MenuItemBuilder::with_id("menu:about", t.help_about).build(app)?)
         .separator()
-        .item(&MenuItemBuilder::with_id("menu:project", "Project Page").build(app)?)
-        .item(&MenuItemBuilder::with_id("menu:contact", "Contact Developer…").build(app)?);
+        .item(&MenuItemBuilder::with_id("menu:project", t.project).build(app)?)
+        .item(&MenuItemBuilder::with_id("menu:contact", t.contact).build(app)?);
     // macOS already carries About in the application menu; everywhere else it
     // belongs under Help.
     #[cfg(not(target_os = "macos"))]
     {
         help_builder = help_builder
             .separator()
-            .item(&MenuItemBuilder::with_id("menu:about", "About OraxDesk").build(app)?);
+            .item(&MenuItemBuilder::with_id("menu:about", t.app_about).build(app)?);
     }
     let help = help_builder.build()?;
 
@@ -566,23 +952,21 @@ pub fn install(app: &AppHandle) -> tauri::Result<()> {
             &help,
         ])
         .build()?;
-    app.set_menu(menu)?;
 
-    app.manage(Mutex::new(SessionMenu {
-        displays,
-        resolution,
-        checks,
-        gated_items,
-        gated_menus,
-        files,
-        toggle_toolbar,
-        displays_sig: String::new(),
-    }));
-
-    app.on_menu_event(|app, event| {
-        handle_menu_event(app, event.id().as_ref());
-    });
-    Ok(())
+    Ok((
+        menu,
+        SessionMenu {
+            lang,
+            displays,
+            resolution,
+            checks,
+            gated_items,
+            gated_menus,
+            files,
+            toggle_toolbar,
+            displays_sig: String::new(),
+        },
+    ))
 }
 
 /// Apply the state the webview just reported (the `sync_session_menu` command).
@@ -656,7 +1040,7 @@ pub fn sync(app: &AppHandle, update: MenuSync) {
             .join(","),
     );
     if sig != menu.displays_sig {
-        match rebuild_displays(app, &menu.displays, &s) {
+        match rebuild_displays(app, &menu.displays, &s, menu.lang) {
             Ok(()) => menu.displays_sig = sig,
             Err(e) => tracing::warn!("could not rebuild the Displays menu: {e}"),
         }
@@ -673,13 +1057,15 @@ fn rebuild_displays(
     app: &AppHandle,
     displays: &Submenu<Wry>,
     state: &SessionMenuState,
+    lang: Lang,
 ) -> tauri::Result<()> {
+    let t = text(lang);
     while displays.remove_at(0)?.is_some() {}
 
     displays.append(&CheckMenuItem::with_id(
         app,
         "menu:display:all",
-        "All Displays",
+        t.all_displays,
         true,
         state.display_id.is_none(),
         None::<&str>,
@@ -704,7 +1090,7 @@ fn rebuild_displays(
     if !state.layout_known {
         displays.append(&PredefinedMenuItem::separator(app)?)?;
         displays.append(
-            &MenuItemBuilder::with_id("menu:detect-displays", "Detect Displays Again")
+            &MenuItemBuilder::with_id("menu:detect-displays", t.detect_displays)
                 .build(app)?,
         )?;
     }
@@ -772,11 +1158,17 @@ fn handle_menu_event(app: &AppHandle, id: &str) {
             let payload = serde_json::json!({ "id": id });
             let _ = app.emit_to("main", "menu://action", payload);
         }
-        "menu:new-host" | "menu:quick-connect" => {
+        "menu:new-host" | "menu:quick-connect" | "menu:connect" | "menu:wake" => {
             // Library concerns, not session ones. Sent to the library window
             // wherever the focus happens to be, because the alternative is
             // that Cmd+T does nothing at all whenever a session is in front,
             // which is exactly when reaching for another machine is likeliest.
+            //
+            // `menu:connect` and `menu:wake` act on the host SELECTED in the
+            // library, which is why they are routed here too: a session window
+            // has no selection to act on. The library comes forward so the
+            // person can see which machine the command will use; with nothing
+            // selected, it says so instead of guessing.
             let payload = serde_json::json!({ "id": id });
             match app.get_webview_window("main") {
                 Some(main) => {

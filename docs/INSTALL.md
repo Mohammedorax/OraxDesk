@@ -113,5 +113,29 @@ is corrupt or has been tampered with; do not run it.
 ## Building from source
 
 If you would rather not trust a prebuilt binary, the README has the full build
-instructions. You need Rust 1.82 or newer, Node 22 or newer, and the Tauri 2
-system dependencies for your platform.
+instructions. You need Rust 1.95 or newer (the workspace's `rust-version`),
+Node 22 or newer, and the Tauri 2 system dependencies for your platform.
+
+### When a build fails before it compiles anything
+
+Two failures are environment problems rather than code problems, and both are
+worth knowing because the error names a file rather than the thing that is
+missing:
+
+- **`LINK : fatal error LNK1104: cannot open file 'msvcrt.lib'`** (or
+  `oldnames.lib`, `legacy_stdio_definitions.lib`). The Visual Studio install is
+  missing the C runtime import libraries, which means the "Desktop development
+  with C++" workload is incomplete. Open the Visual Studio Installer, choose
+  Modify, and make sure that workload (and a Windows 10/11 SDK) is ticked and
+  installed. A `cargo clean` is not needed; the libraries are picked up on the
+  next build.
+- **`failed to build archive … There is not enough space`**. `target/` grows past
+  20 GB for this workspace with both debug and release artifacts. `cargo clean`
+  reclaims it and costs one full rebuild; `cargo clean -p <crate>` or deleting
+  `target/debug/incremental` is cheaper when only one profile is in the way.
+
+On Windows, run the build from a **Developer PowerShell for VS** (or set the
+`LIB`/`INCLUDE` variables) if the toolchain is installed but not on the default
+PATH. On macOS and Linux the Tauri prerequisites are the system libraries listed
+on the Tauri 2 prerequisites page, not Rust crates.
+

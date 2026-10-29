@@ -1,13 +1,13 @@
 /** About & Help: identity, build fingerprint, and reference material worth having offline. */
 import { useEffect, useState, type ReactNode } from "react";
 import { Dialog } from "../components/primitives";
+import { Wordmark } from "../components/Wordmark";
 import { useT, type MessageKey } from "../lib/i18n";
-import { openExternal, safeInvoke, writeClipboard } from "../lib/tauri";
+import { openAboutLink, safeInvoke, writeClipboard } from "../lib/tauri";
 import { classNames, fullscreenHint, modKeyLabel } from "../lib/util";
+import { useToasts } from "../state/ToastContext";
 
 export const AUTHOR_NAME = "psmux";
-export const CONTACT_URL = "https://github.com/psmux";
-export const PROJECT_URL = "https://github.com/Mohammedorax/OraxDesk";
 
 type Tab = "About" | "Help";
 
@@ -109,9 +109,23 @@ const TROUBLESHOOTING: Array<[MessageKey, MessageKey]> = [
 
 export function About({ onClose }: { onClose: () => void }): ReactNode {
   const t = useT();
+  const { push } = useToasts();
   const [tab, setTab] = useState<Tab>("About");
   const info = useAboutInfo();
   const [copied, setCopied] = useState(false);
+
+  /**
+   * Open one of the two links, and say so when it does not open.
+   *
+   * `openAboutLink` propagates its failure (the shell really can refuse: no
+   * browser, a blocked handler), and a button that silently does nothing is
+   * the bug this replaces.
+   */
+  const openLink = (target: "project" | "contact"): void => {
+    void openAboutLink(target).catch(() =>
+      push("danger", t("about.openFailed")),
+    );
+  };
 
   const copyReport = (): void => {
     if (!info) return;
@@ -145,8 +159,19 @@ export function About({ onClose }: { onClose: () => void }): ReactNode {
       {tab === "About" ? (
         <div className="space-y-4">
           <div>
-            <h3 className="text-lg font-semibold text-primary">OraxDesk</h3>
-            <p className="text-sm text-secondary">{t("about.tagline")}</p>
+            <div className="flex items-center gap-3">
+              <img
+                src="/brand/icon-256.png"
+                alt=""
+                aria-hidden="true"
+                className="size-11 rounded-lg"
+              />
+              <div>
+                <h3 className="text-lg text-primary"><Wordmark /></h3>
+                <p className="text-sm font-medium text-secondary">{t("brand.tagline")}</p>
+              </div>
+            </div>
+            <p className="mt-2 text-sm text-tertiary">{t("about.tagline")}</p>
             <p className="mt-1 text-sm text-tertiary">
               {t("about.version", { version: info ? `${info.appVersion} (${info.gitDescribe})` : "-" })}
             </p>
@@ -215,7 +240,7 @@ export function About({ onClose }: { onClose: () => void }): ReactNode {
                 <button
                   type="button"
                   className="text-accent hover:underline"
-                  onClick={() => void openExternal(CONTACT_URL)}
+                  onClick={() => openLink("contact")}
                 >
                   {AUTHOR_NAME}
                 </button>
@@ -235,14 +260,14 @@ export function About({ onClose }: { onClose: () => void }): ReactNode {
             <button
               type="button"
               className="btn-secondary"
-              onClick={() => void openExternal(PROJECT_URL)}
+              onClick={() => openLink("project")}
             >
               {t("about.projectPage")}
             </button>
             <button
               type="button"
               className="btn-secondary"
-              onClick={() => void openExternal(CONTACT_URL)}
+              onClick={() => openLink("contact")}
             >
               {t("about.contactDeveloper")}
             </button>
@@ -298,7 +323,7 @@ export function About({ onClose }: { onClose: () => void }): ReactNode {
             <button
               type="button"
               className="btn-secondary"
-              onClick={() => void openExternal(PROJECT_URL)}
+              onClick={() => openLink("project")}
             >
               {t("about.documentation")}
             </button>

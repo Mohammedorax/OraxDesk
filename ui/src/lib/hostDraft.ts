@@ -17,6 +17,24 @@ import {
 } from "./types";
 
 /**
+ * A name that is safe everywhere a profile name is drawn.
+ *
+ * A name reaches a native window title, a menu row, a tray row and a tile. A
+ * discovery reply is untrusted text (mDNS and NetBIOS are whatever the other
+ * machine says they are), and a control character in it is not a name, it is
+ * a rendering bug with no upside. Control runs become one space, runs of
+ * whitespace collapse, and an empty result falls back to the address, which
+ * is what the editor does with an empty name too.
+ */
+export function cleanDisplayName(raw: string, fallback: string): string {
+  const cleaned = raw
+    .replace(/[\u0000-\u001f\u007f]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return cleaned === "" ? fallback : cleaned;
+}
+
+/**
  * What the port becomes when the user switches protocol.
  *
  * > Switching protocol changes the port only when the port is still the

@@ -32,8 +32,19 @@ pub fn install(app: &AppHandle, data_dir: &std::path::Path) {
         }));
 }
 
+/// Paired-computer saves run one at a time.
+///
+/// `save_paired` is a find-then-insert: it looks for a profile with the same
+/// machine and creates one when there is none. Two `on_paired` calls for the
+/// same machine at once (a reconnect during pairing is ordinary) would both
+/// find nothing and both insert, leaving the Library with two rows and two
+/// ids for one computer. Nothing below is hot, so a plain mutex is the whole
+/// fix rather than a database constraint the store cannot express.
+static PAIR_SAVE: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 /// Put a paired computer in the Library, or rename it if it is there already.
 async fn save_paired(app: &AppHandle, machine: String, name: String) -> Result<(), String> {
+    let _one_at_a_time = PAIR_SAVE.lock().await;
     let state = app.state::<AppState>();
     let store = state.store.clone();
     let profile = super::blocking(move || {

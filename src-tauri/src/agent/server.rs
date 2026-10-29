@@ -636,15 +636,29 @@ fn machine_from(ctx: &Ctx, params: &Value) -> Result<(MachineKey, String), RpcEr
                 "protocol is required with address, and a value this build does not know is a hard error rather than a fallback to VNC",
             )
         })?;
-    let port = params
-        .get("port")
-        .and_then(Value::as_u64)
-        .map(|p| p as u16)
-        .unwrap_or_else(|| protocol.default_port());
+    let port = param_port(params, protocol)?;
     Ok((
         MachineKey::new(protocol, None, address, port),
         vnc_store::normalize_address(address),
     ))
+}
+
+/// The `port` an agent named, or the protocol's default.
+///
+/// A number outside 1..=65535 is refused rather than truncated. `65536 as u16`
+/// is 0 and `66048` is 512, so a typo used to dial a port nobody named on a
+/// machine that is probably right: a silent wrong connection is worse than an
+/// error the agent can correct.
+fn param_port(params: &Value, protocol: ProtocolKind) -> Result<u16, RpcError> {
+    match params.get("port") {
+        None | Some(Value::Null) => Ok(protocol.default_port()),
+        Some(value) => match value.as_u64() {
+            Some(port) if (1..=u64::from(u16::MAX)).contains(&port) => Ok(port as u16),
+            _ => Err(RpcError::bad_params(
+                "port must be an integer from 1 to 65535",
+            )),
+        },
+    }
 }
 
 /// Bring one live session under an attachment.
@@ -1916,11 +1930,7 @@ async fn permitted_endpoint(
                     "protocol is required with address, and a value this build does not know is a hard error rather than a fallback to VNC",
                 )
             })?;
-        let port = params
-            .get("port")
-            .and_then(Value::as_u64)
-            .map(|p| p as u16)
-            .unwrap_or_else(|| protocol.default_port());
+        let port = param_port(params, protocol)?;
         return Ok((port, protocol.as_str().to_string()));
     }
     Err(RpcError::tagged(

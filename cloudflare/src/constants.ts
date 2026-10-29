@@ -32,15 +32,26 @@ export const NONCE_TTL_SECONDS = 300;
  * is a window with no end, and the whole point of the window is that it can
  * be closed.
  *
- * Set it to a past timestamp to close the window at once. The default is
- * generous, because a device that has not been updated in six months is a
- * device nobody has, and the log line on every acceptance is how an
- * operator knows when it is safe to close it early.
+ * A FIXED epoch, not `Date.now() + 180 days`: the expression used to be
+ * evaluated at module load in every isolate, so each cold start pushed the
+ * deadline another six months into the future and the check could never fire.
+ * The window is now a date an operator can point at: 2027-06-01T00:00:00Z.
+ * Set it to a past timestamp to close the window at once.
  */
-export const LEGACY_AUTH_ACCEPT_UNTIL = Date.now() / 1000 + 180 * 24 * 3600;
+export const LEGACY_AUTH_ACCEPT_UNTIL = 1_811_808_000;
 export const MAX_LABEL_CHARS = 64;
 export const MAX_CLIENT_VERSION_CHARS = 32;
 export const MAX_CODES_PER_HOUR = 20;
 export const CODE_DIGITS = 12;
 export const REVOKE_TOKEN_BYTES = 32;
 export const AES_KEY_BYTES = 32;
+
+/**
+ * How long a published address stays true.
+ *
+ * One constant for the writer (`directory.ts`, which answers "no such device"
+ * after this age) and the sweeper (`cleanup.ts`, which clears the column after
+ * it). Two copies of the number is how a reader and a sweeper end up
+ * disagreeing about when an address expired.
+ */
+export const ADDRESS_TTL_SECONDS = 60 * 60;

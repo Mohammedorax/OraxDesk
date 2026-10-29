@@ -416,6 +416,34 @@ export async function openExternal(url: string): Promise<void> {
   await safeInvoke("plugin:opener|open_url", { url }, null);
 }
 
+/**
+ * The two links the About dialog shows.
+ *
+ * Kept beside `openAboutLink` rather than in the screen so the browser-dev
+ * fallback and the packaged path name the same place. The Rust side has the
+ * same two constants (`menu.rs`), which is what the command opens: the
+ * webview names a target, never a URL.
+ */
+export const CONTACT_URL = "https://github.com/psmux";
+export const PROJECT_URL = "https://github.com/Mohammedorax/OraxDesk";
+
+/**
+ * Open one of the About dialog's two links in the OS browser.
+ *
+ * The opener plugin is scoped (in the capabilities) to the macOS settings
+ * pane, so `openExternal` cannot open an https URL from inside the packaged
+ * app, which is why the About buttons used to do nothing at all. The shell
+ * owns the two URLs and the caller names which one, so this adds no
+ * "open anything" surface.
+ */
+export function openAboutLink(target: "project" | "contact"): Promise<void> {
+  if (!inTauri()) {
+    window.open(target === "project" ? PROJECT_URL : CONTACT_URL, "_blank", "noopener");
+    return Promise.resolve();
+  }
+  return mustInvoke<null>("open_about_link", { target }).then(() => undefined);
+}
+
 // ---------------------------------------------------------------------------
 // File transfer, SFTP sidecar (PRD/08)
 // ---------------------------------------------------------------------------
@@ -635,23 +663,28 @@ async function nativeOpen(options: Record<string, unknown>): Promise<string[]> {
   return list.map(one).filter((p): p is string => p !== null);
 }
 
-/** Pick files to upload. */
-export function pickLocalFiles(title = "Choose files to send"): Promise<string[]> {
-  return nativeOpen({ multiple: true, directory: false, title });
+/**
+ * Pick files to send.
+ *
+ * Picked in the NATIVE dialog through the backend, not through the dialog
+ * plugin: the folder the user chooses is also the grant that `files_upload`
+ * accepts a source from, and a grant the webview could hand itself is not a
+ * grant. One dialog either way.
+ */
+export function pickLocalFiles(): Promise<string[]> {
+  if (!inTauri()) return Promise.resolve([]);
+  return mustInvoke<string[]>("files_pick_upload", undefined);
 }
 
-/** Pick the directory downloads land in. */
-export async function pickLocalDirectory(
-  title = "Choose a destination folder",
-  defaultPath?: string,
-): Promise<string | null> {
-  const picked = await nativeOpen({
-    multiple: false,
-    directory: true,
-    title,
-    defaultPath,
-  });
-  return picked[0] ?? null;
+/**
+ * Pick the directory downloads land in.
+ *
+ * Same reasoning as {@link pickLocalFiles}: the backend opens the dialog and
+ * grants the folder it returns for writing.
+ */
+export async function pickLocalDirectory(): Promise<string | null> {
+  if (!inTauri()) return null;
+  return mustInvoke<string | null>("files_pick_download_dir", undefined);
 }
 
 /**
@@ -663,7 +696,10 @@ export async function pickLocalDirectory(
  * user means "stop trusting this machine", so no scheme is left behind.
  */
 export async function forgetCertificate(host: string, port: number): Promise<void> {
-  await safeInvoke<null>("forget_certificate", { host, port }, null);
+  // `mustInvoke`, not `safeInvoke`: this is a deliberate "stop trusting this
+  // machine" decision, and a failure is a machine that stays unreachable while
+  // the caller claims it was fixed.
+  await mustInvoke<null>("forget_certificate", { host, port });
 }
 
 // ---------------------------------------------------------------------------
@@ -679,7 +715,7 @@ export async function forgetCertificate(host: string, port: number): Promise<voi
  * daemon on the remote machine and survives the drop, so reattaching puts you
  * back in front of the same work.
  */
-export type MultiplexerKind = "none" | "tmux" | "screen" | "zellij" | "custom";
+export type MultiplexerKind = "auto" | "none" | "psmux" | "tmux" | "screen" | "zellij" | "custom";
 
 export interface MultiplexerConfig {
   kind?: MultiplexerKind;
@@ -805,6 +841,19 @@ export function savedUserNames(hostId: string): Promise<SavedUserNames | null> {
 /** Whether the keychain holds a credential this protocol could use. */
 export function hasSavedPassword(hostId: string, protocol: ProtocolKind): Promise<boolean | null> {
   return safeInvoke<boolean | null>("has_password", { hostId, protocol }, null);
+}
+
+/**
+ * Record whether the keychain holds a password for this host.
+ *
+ * The flag is the key icon and the editor's "a password is saved" line; it is
+ * not a secret and never gates anything. Undo after a delete is the caller:
+ * the keychain entry may have survived (a locked vault refuses the delete), so
+ * the answer is read with `hasSavedPassword` and recorded here rather than
+ * guessed from the profile that was deleted.
+ */
+export function setHasPassword(hostId: string, saved: boolean): Promise<void> {
+  return mustInvoke<null>("set_has_password", { hostId, saved }).then(() => undefined);
 }
 
 export function sshListLocalKeys(): Promise<LocalKeys> {

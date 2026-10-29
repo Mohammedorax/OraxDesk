@@ -309,19 +309,8 @@ fn write_credentials(
     }
     // Mirror the flag the library uses to draw the key icon. A failure
     // here is cosmetic, the secret itself is already stored.
-    match store.get_host(profile_id) {
-        Ok(Some(mut profile)) => {
-            if !profile.has_password {
-                profile.has_password = true;
-                if let Err(e) = store.save_host(&profile) {
-                    tracing::warn!(profile = %profile_id, "failed to set has_password: {e}");
-                }
-            }
-        }
-        Ok(None) => {
-            tracing::warn!(profile = %profile_id, "profile vanished before has_password update")
-        }
-        Err(e) => tracing::warn!(profile = %profile_id, "could not load profile: {e}"),
+    if let Err(e) = store.set_has_password(profile_id, true) {
+        tracing::warn!(profile = %profile_id, "failed to set has_password: {e}");
     }
     tracing::info!(profile = %profile_id, "saved credentials after a successful connect");
 }
@@ -1670,17 +1659,36 @@ async fn reap_existing_session(state: &AppState, id: &str) -> Result<(), String>
 }
 
 /// Ask a session to close cleanly (RFB-level close, then task shutdown).
+///
+/// `try_send` first, and a forced shutdown after a short grace: a command
+/// channel that is FULL (input queued faster than the loop drains it, or a
+/// loop parked in a blocking call) would otherwise hold this command open
+/// indefinitely, and the caller — a tab closing, a window going away — has
+/// nothing else to clean up with. Disconnect is the one command with a
+/// fallback, so waiting for a slot is never the right trade.
 #[tauri::command]
 pub async fn disconnect_session(
     state: State<'_, AppState>,
     session_id: String,
 ) -> Result<(), String> {
     let sender = state.command_sender(&session_id)?;
-    if sender.send(ClientCommand::Disconnect).await.is_err() {
-        // Command loop already gone, force-cancel so the entry gets reaped.
-        if let Some(entry) = state.sessions.lock().get(&session_id) {
-            entry.handle.shutdown();
+    match sender.try_send(ClientCommand::Disconnect) {
+        Ok(()) => return Ok(()),
+        Err(tokio::sync::mpsc::error::TrySendError::Full(command)) => {
+            // Full, not gone. Give the loop a moment to make room, then stop
+            // waiting on it: the entry is reaped either way.
+            match tokio::time::timeout(std::time::Duration::from_millis(250), sender.send(command))
+                .await
+            {
+                Ok(Ok(())) => return Ok(()),
+                _ => {}
+            }
         }
+        // Closed: the command loop is already gone, force-cancel below.
+        Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {}
+    }
+    if let Some(entry) = state.sessions.lock().get(&session_id) {
+        entry.handle.shutdown();
     }
     Ok(())
 }

@@ -443,6 +443,27 @@ impl DvcMux {
                 "the server opened dynamic channel {channel_id} twice (MS-RDPEDYC 2.2.2.1)"
             )));
         }
+        // Each graphics channel carries megabytes of codec state (ZGFX
+        // history, VBar tables, scratch), so an unbounded number of Create
+        // Requests is a memory-exhaustion vector from a few kilobytes of
+        // wire. Real hosts open a handful; sixteen is more than any of them.
+        const MAX_DYNAMIC_CHANNELS: usize = 16;
+        if self.open.len() >= MAX_DYNAMIC_CHANNELS {
+            tracing::warn!(
+                channel_id,
+                open = self.open.len(),
+                "refusing a dynamic channel past the per-session ceiling"
+            );
+            return self.write_dvc(
+                &DvcPdu::CreateResponse {
+                    channel_id,
+                    creation_status: creation_status::NOT_FOUND,
+                },
+                static_id,
+                ctx,
+                out,
+            );
+        }
 
         #[cfg(feature = "audio")]
         if name == AUDIO_CHANNEL_NAME {

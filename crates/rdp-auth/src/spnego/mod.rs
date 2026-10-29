@@ -213,6 +213,15 @@ impl SpnegoClient {
     /// was used, and refusing would break against servers that do.
     fn check_incoming_mic(&mut self, resp: &NegTokenResp) -> Result<(), AuthError> {
         let Some(mic) = resp.mech_list_mic.clone() else {
+            if self.mic_required {
+                // `select` sets this when the acceptor chose a mechanism other
+                // than the first one offered. RFC 4178 §5 requires the MIC in
+                // that case, and accepting its absence would let an
+                // intermediary suppress the mechanism-downgrade signal.
+                return Err(AuthError::MalformedMessage(
+                    "the acceptor omitted the required mechListMIC",
+                ));
+            }
             tracing::debug!("the acceptor sent no mechListMIC");
             return Ok(());
         };

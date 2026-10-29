@@ -1159,7 +1159,13 @@ function SessionView({
   useEffect(() => {
     const text = session.remoteClipboard;
     if (text === null) return;
+    // The incoming direction honours the same preference as the outgoing one:
+    // with clipboard sync off, a server must not be able to replace what the
+    // person has on their local clipboard (the classic "swap the crypto
+    // address" trick). The echo is still told about the text so a later local
+    // copy of the same string is not pushed straight back.
     clipboardEcho.moved(text);
+    if (!readBoolPref(PREF_CLIPBOARD_AUTO, true)) return;
     void writeClipboard(text);
   }, [session.remoteClipboard, clipboardEcho]);
 
@@ -1943,6 +1949,19 @@ function SessionView({
     return () => window.removeEventListener("focus", push);
   }, [owns, hideToolbar, menuState, menuNonce]);
 
+  // The shell rebuilt the native menu (a language switch), so its tick marks
+  // and enabled state are back at their defaults. Push this session's snapshot
+  // again; without it Disconnect stays greyed out until the window is focused
+  // once more.
+  useEffect(() => {
+    if (!owns) return;
+    let unlisten: (() => void) | undefined;
+    void safeListen<null>("menu://relabel", () => pushMenuRef.current()).then((fn) => {
+      unlisten = fn;
+    });
+    return () => unlisten?.();
+  }, [owns]);
+
   // ------------------------------------------------------------- render
 
   const st = session.state;
@@ -1980,7 +1999,7 @@ function SessionView({
           settings.localCursor === "off" && "local-cursor-hidden",
         )}
         tabIndex={0}
-        aria-label={`Remote desktop: ${session.desktopName}`}
+        aria-label={t("session.remoteDesktopAria", { name: session.desktopName })}
       />
 
       {/* Preferences ▸ Session can take the bar away; the View and Session
@@ -2061,7 +2080,7 @@ function SessionView({
                 className="btn-primary"
                 onClick={() => setConnectionInfoOpen(false)}
               >
-                Done
+                {t("common.done")}
               </button>
             </div>
           </div>

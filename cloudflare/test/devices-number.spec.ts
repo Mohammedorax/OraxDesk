@@ -14,18 +14,22 @@ describe("device numbers", () => {
     expect((await jsonBody<{ number: string }>(again)).number).toBe(body.number);
 
     const byNumber = await SELF.fetch(
-      `https://registry.test/v1/devices/by-number/${body.number}`,
+      new Request(`https://registry.test/v1/devices/by-number/${body.number}`, {
+        headers: { "cf-connecting-ip": "203.0.113.8" },
+      }),
     );
     expect(byNumber.status).toBe(200);
     expect((await jsonBody(byNumber)).id).toBe(device.id);
 
     // A revoked device keeps its number but the record says so.
     await SELF.fetch(`https://registry.test/v1/devices/${device.id}`);
-    expect(
-      (await SELF.fetch("https://registry.test/v1/devices/by-number/12345")).status,
-    ).toBe(400);
-    expect(
-      (await SELF.fetch("https://registry.test/v1/devices/by-number/999999999")).status,
-    ).toBe(404);
+    const lookup = (number: string) =>
+      SELF.fetch(
+        new Request(`https://registry.test/v1/devices/by-number/${number}`, {
+          headers: { "cf-connecting-ip": "203.0.113.8" },
+        }),
+      );
+    expect((await lookup("12345")).status).toBe(400);
+    expect((await lookup("999999999")).status).toBe(404);
   });
 });

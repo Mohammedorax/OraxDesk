@@ -38,7 +38,6 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { classNames } from "../lib/util";
 import { safeInvoke, writeClipboard } from "../lib/tauri";
-import { AGENT_HTTP_TOKEN_COMMAND } from "../lib/agentActivity";
 import {
   AGENT_BOUNDARY_WHY,
   AGENT_CAN,
@@ -163,60 +162,12 @@ function CopyLine({
 }
 
 /**
- * Put the bearer token on the clipboard without anybody seeing it.
- *
- * The token is fetched when the button is pressed and dropped the moment it is
- * written, so it is never in state, never in the DOM and never in a re-render.
- * A shell that has no such command answers nothing, which is not an error and
- * is not treated as one: the line underneath says where to get it by hand.
+ * Placeholder-free: the HTTP half of the plane does not hand the webview a
+ * bearer token. There used to be a "copy token" button here that invoked a
+ * command no build has ever registered (`agent_http_token`), so it could only
+ * ever answer "unavailable". The HTTP URL and the `claude mcp add` line below
+ * are the supported way in; a token that is never shown is not lost.
  */
-function CopyToken(): ReactNode {
-  const t = useT();
-  const [said, setSaid] = useState<"copied" | "unavailable" | null>(null);
-  const timer = useRef<number | null>(null);
-  useEffect(() => () => {
-    if (timer.current !== null) window.clearTimeout(timer.current);
-  }, []);
-
-  const grab = useCallback((): void => {
-    void safeInvoke<string | null>(AGENT_HTTP_TOKEN_COMMAND, undefined, null).then(
-      async (token) => {
-        const ok = typeof token === "string" && token.length > 0
-          ? await writeClipboard(token)
-          : false;
-        setSaid(ok ? "copied" : "unavailable");
-        if (timer.current !== null) window.clearTimeout(timer.current);
-        timer.current = window.setTimeout(() => setSaid(null), COPIED_MS * 2);
-      },
-    );
-  }, []);
-
-  return (
-    <div className="flex items-center gap-2">
-      <button
-        type="button"
-        onClick={grab}
-        className="btn-secondary text-2xs"
-        title={t("agent.tokenTitle")}
-      >
-        {t("agent.copyToken")}
-      </button>
-      <span
-        className={classNames(
-          "text-2xs",
-          said === "unavailable" ? "text-warning" : "text-tertiary",
-        )}
-        aria-live="polite"
-      >
-        {said === "copied"
-          ? t("agent.tokenCopied")
-          : said === "unavailable"
-            ? t("agent.tokenUnavailable")
-            : t("agent.tokenNeverShown")}
-      </span>
-    </div>
-  );
-}
 
 function Step({
   n,
@@ -515,7 +466,6 @@ function ManualSetup({
               copied={copied}
               onCopy={onCopy}
             />
-            <CopyToken />
           </Step>
 
           <Step n={3} title={t("agent.stepCheck")}>

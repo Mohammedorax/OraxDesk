@@ -6,6 +6,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { safeInvoke } from "./tauri";
 
 /**
  * العربية هي اللغة الافتراضية، والإنجليزية بديل كامل البنية. كل نص واجهة يمرّ
@@ -45,6 +46,7 @@ const ar = {
   "registry.link": "نسخ رابط المساعدة",
   "device.number": "رقم هذا الجهاز — اقرأه لمن يساعدك",
   "device.copyNumber": "نسخ الرقم",
+  "device.copied": "نُسخ الرقم",
   "device.numberHint": "تسعة أرقام ثابتة لهذا الجهاز. اقرأها على الهاتف لمن يساعدك، أو انسخها.",
   "device.registering": "جارٍ تسجيل رقم هذا الجهاز…",
   "device.registered": "الرقم مسجل وجاهز للبحث.",
@@ -74,6 +76,14 @@ const ar = {
   "onboarding.findComputers": "ابحث عن أجهزتك",
   "onboarding.saveFirst": "احفظ جهازك الأول",
   "onboarding.save": "احفظ.",
+  "onboarding.scanHint":
+    "يستمع OraxDesk إلى الأجهزة التي تعلن مشاركة الشاشة على شبكتك المحلية. قد يطلب نظامك إذن الوصول إلى الشبكة المحلية، وهذا هو سبب الطلب.",
+  "onboarding.saveHint":
+    "أعطه اسمًا مألوفًا، وإذا حفظت كلمة مرور فستُخزَّن في سلسلة مفاتيح نظامك، لا في ملف.",
+  "onboarding.skip": "تخطّي",
+  "onboarding.back": "رجوع",
+  "onboarding.continue": "متابعة",
+  "onboarding.openLibrary": "افتح مكتبتي",
   "onboarding.stepAria": "الخطوة {step} من {total}",
   "session.captureUnsupported": "تمرير الاختصارات غير متاح هنا",
   "session.captureUnsupportedBody":
@@ -333,6 +343,7 @@ const ar = {
     "اتركه فارغًا لاستخدام خدمة Boundary المشتركة. أما البنية التحتية الخاصة فتحتاج خدمتها هنا.",
 
   // شاشة «عن»
+  "brand.tagline": "اتصال وتحكم على الأجهزة عن بعد",
   "about.title": "عن OraxDesk",
   "about.sectionsLabel": "أقسام «عن»",
   "about.tabAbout": "عن",
@@ -343,6 +354,7 @@ const ar = {
   "about.build": "البناء",
   "about.copied": "تم النسخ",
   "about.copyReport": "انسخ التقرير لتذكرة عطل",
+  "about.openFailed": "تعذّر فتح الرابط في المتصفح.",
   "about.commit": "الالتزام",
   "about.locallyModified": "مُعدَّل محليًا",
   "about.branch": "الفرع",
@@ -594,11 +606,6 @@ const ar = {
   "agent.copied": "تم النسخ",
   "agent.blocked": "ممنوع",
   "agent.copyLine": "نسخ هذا السطر",
-  "agent.copyToken": "نسخ الرمز",
-  "agent.tokenTitle": "يذهب الرمز إلى الحافظة مباشرة، ولا يظهر هنا أبدًا.",
-  "agent.tokenCopied": "في الحافظة. الصقه في الموضع أعلاه.",
-  "agent.tokenUnavailable": "لن تعطي هذه النسخة الرمز. اقرأه من dvv doctor بدلًا من ذلك.",
-  "agent.tokenNeverShown": "لا يظهر هنا أبدًا، بل يُنسخ فقط.",
   "agent.connectClaude": "اربط Claude Code",
   "agent.registerNote": "يسجّل هذا الخادم نيابةً عنك. بلا طرفية، وبلا شيء تنسخه.",
   "agent.connecting": "جارٍ الربط…",
@@ -835,12 +842,19 @@ const ar = {
   "library.wakeFailed": "تعذّر إيقاظ {name}: {reason}",
   "library.forgotKey":
     "نُسي المفتاح المحفوظ لـ {name}. وسيُطلب منك التحقق منه عند الاتصال التالي.",
+  "library.forgetKeyFailed": "تعذّر نسيان المفتاح المحفوظ لـ {name}: {reason}",
+  "library.alreadyInLibrary": "هذا الجهاز محفوظ بالفعل باسم {name}.",
+  "library.selectOneToConnect": "اختر جهازًا واحدًا للاتصال به.",
+  "library.selectOneToWake": "اختر جهازًا واحدًا لإيقاظه.",
+  "library.hostGone": "هذا الجهاز لم يعد في المكتبة.",
   "library.deleted": "حُذف {name}",
   "library.groupCreated": "أُنشئت المجموعة «{name}»",
   "library.tagCreated": "أُنشئ الوسم «{name}»",
   "library.groupCreateFailed": "تعذّر إنشاء المجموعة: {reason}",
   "library.tagCreateFailed": "تعذّر إنشاء الوسم: {reason}",
   "library.undo": "تراجع",
+  "library.add": "إضافة",
+  "library.edit": "تعديل",
 
   "files.allowFolder": "اسمح بمجلد",
   "files.title": "الملفات، {host}",
@@ -1370,6 +1384,13 @@ const ar = {
   "session.problemTitle": "واجهت هذه الجلسة مشكلة",
   "session.problemBody": "أُغلق الاتصال. لم يُحفظ شيء من هذه الجلسة.",
   "session.closeTab": "إغلاق التبويب",
+  "session.remoteDesktopAria": "سطح المكتب البعيد: {name}",
+  "session.closeTabAria": "إغلاق {title}",
+  "ssh.disconnect": "افصل",
+  "tabs.newPane": "جزء جديد",
+  "pane.session": "جلسة",
+  "pane.noSession": "لا جلسة",
+  "pane.empty": "جزء فارغ",
   "session.closeWindow": "إغلاق النافذة",
   "ssh.authenticating": "جارٍ المصادقة ({method})",
 
@@ -1401,8 +1422,9 @@ const en: Record<keyof typeof ar, string> = {
   "registry.readOut": "Send this code to the person helping you. Do not share it with anyone else.",
   "registry.advanced": "Advanced registry settings",
   "registry.link": "Copy help link",
-  "device.number": "This computer's number — read it out",
+  "device.number": "This computer's number - read it out",
   "device.copyNumber": "Copy number",
+  "device.copied": "Number copied",
   "device.numberHint":
     "Nine digits that never change for this computer. Read them down the phone to whoever is helping you, or copy them.",
   "device.registering": "Registering this computer's number…",
@@ -1434,6 +1456,14 @@ const en: Record<keyof typeof ar, string> = {
   "onboarding.findComputers": "Find your computers",
   "onboarding.saveFirst": "Save your first computer",
   "onboarding.save": "Save.",
+  "onboarding.scanHint":
+    "OraxDesk listens for computers advertising screen sharing on your local network. Your OS may ask permission to access the local network, that's this feature.",
+  "onboarding.saveHint":
+    "Give it a friendly name and, if you save a password, it's stored in your system keychain, never in a file.",
+  "onboarding.skip": "Skip",
+  "onboarding.back": "Back",
+  "onboarding.continue": "Continue",
+  "onboarding.openLibrary": "Open my library",
   "onboarding.stepAria": "Step {step} of {total}",
   "session.shortcutsDialogTitle": "Let this app capture system shortcuts",
   "session.shortcutsIntro":
@@ -1707,6 +1737,7 @@ const en: Record<keyof typeof ar, string> = {
     "Leave empty for the shared Boundary service. Private infrastructure needs its own service here.",
 
   // The About screen
+  "brand.tagline": "Connect. Control. Support.",
   "about.title": "About OraxDesk",
   "about.sectionsLabel": "About sections",
   "about.tabAbout": "About",
@@ -1717,6 +1748,7 @@ const en: Record<keyof typeof ar, string> = {
   "about.build": "Build",
   "about.copied": "Copied",
   "about.copyReport": "Copy report for a bug ticket",
+  "about.openFailed": "Could not open the link in your browser.",
   "about.commit": "Commit",
   "about.locallyModified": "locally modified",
   "about.branch": "Branch",
@@ -1974,12 +2006,6 @@ const en: Record<keyof typeof ar, string> = {
   "agent.copied": "Copied",
   "agent.blocked": "Blocked",
   "agent.copyLine": "Copy this line",
-  "agent.copyToken": "Copy the token",
-  "agent.tokenTitle": "The token goes straight to the clipboard. It is never shown here.",
-  "agent.tokenCopied": "On the clipboard. Paste it into the prompt above.",
-  "agent.tokenUnavailable":
-    "This build will not hand it over. Read it from dvv doctor instead.",
-  "agent.tokenNeverShown": "It is never shown here, only copied.",
   "agent.connectClaude": "Connect Claude Code",
   "agent.registerNote": "This registers the server for you. No terminal, nothing to copy.",
   "agent.connecting": "Connecting…",
@@ -2222,12 +2248,19 @@ const en: Record<keyof typeof ar, string> = {
   "library.wakeFailed": "Could not wake {name}: {reason}",
   "library.forgotKey":
     "Forgot the saved key for {name}. You will be asked to verify it on the next connection.",
+  "library.forgetKeyFailed": "Could not forget the saved key for {name}: {reason}",
+  "library.alreadyInLibrary": "This machine is already saved as {name}.",
+  "library.selectOneToConnect": "Select one machine to connect to.",
+  "library.selectOneToWake": "Select one machine to wake.",
+  "library.hostGone": "That machine is no longer in your library.",
   "library.deleted": "Deleted {name}",
   "library.groupCreated": "Created the group {name}",
   "library.tagCreated": "Created the tag {name}",
   "library.groupCreateFailed": "Could not create the group: {reason}",
   "library.tagCreateFailed": "Could not create the tag: {reason}",
   "library.undo": "Undo",
+  "library.add": "Add",
+  "library.edit": "Edit",
 
   "files.allowFolder": "Allow a folder",
   "files.title": "Files, {host}",
@@ -2763,6 +2796,13 @@ const en: Record<keyof typeof ar, string> = {
   "session.problemTitle": "This session ran into a problem",
   "session.problemBody": "The connection has been closed. Nothing was saved from this session.",
   "session.closeTab": "Close tab",
+  "session.remoteDesktopAria": "Remote desktop: {name}",
+  "session.closeTabAria": "Close {title}",
+  "ssh.disconnect": "Disconnect",
+  "tabs.newPane": "New pane",
+  "pane.session": "Session",
+  "pane.noSession": "No session",
+  "pane.empty": "Empty pane",
   "session.closeWindow": "Close window",
   "ssh.authenticating": "Authenticating ({method})",
 
@@ -2852,6 +2892,12 @@ export function I18nProvider({ children }: { children: ReactNode }) {
     const root = document.documentElement;
     root.lang = lang;
     root.dir = lang === "ar" ? "rtl" : "ltr";
+    // The shell's own menu bar and tray are built in Rust before this window
+    // exists, so they learn the language from here: the settings table keeps
+    // it for the next launch, and both menus are rebuilt for this one. The
+    // command is idempotent — sending the language that is already stored is
+    // free, which matters because this also runs on every mount.
+    void safeInvoke("set_ui_language", { lang }, null);
   }, [lang]);
 
   const value = useMemo<I18n>(() => {

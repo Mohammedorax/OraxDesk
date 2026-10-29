@@ -37,6 +37,7 @@ import {
 import type { SessionParams } from "../hooks/useSession";
 import type { SessionState } from "../lib/types";
 import { safeInvoke } from "../lib/tauri";
+import { useT } from "../lib/i18n";
 import { serializeLayout } from "../lib/groupLayout";
 import {
   closePane as closePaneIn,
@@ -191,6 +192,7 @@ const TabsContext = createContext<TabsContextValue | null>(null);
 const CONNECTING: SessionState = { state: "connecting" };
 
 export function TabsProvider({ children }: { children: ReactNode }): ReactNode {
+  const t = useT();
   const [tabs, setTabs] = useState<readonly WorkspaceTab[]>([]);
   const [sessions, setSessions] = useState<Readonly<Record<string, LiveSession>>>({});
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -693,12 +695,12 @@ export function TabsProvider({ children }: { children: ReactNode }): ReactNode {
           .filter((t): t is string => Boolean(t));
         return {
           id: tab.id,
-          title: session?.title ?? named[0] ?? "New pane",
+          title: session?.title ?? named[0] ?? t("tabs.newPane"),
           state: session?.state ?? CONNECTING,
           paneCount: list.length,
         };
       }),
-    [tabs, sessions],
+    [tabs, sessions, t],
   );
 
   const activeTab = useMemo(

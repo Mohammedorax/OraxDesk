@@ -71,6 +71,19 @@ pub struct FilesState {
     /// thing between "the user is tidying up in their documents folder" and
     /// "the system directory is gone".
     local_roots: Mutex<Vec<PathBuf>>,
+    /// The folders file TRANSFERS may read from.
+    ///
+    /// Kept apart from `local_roots` because they are a different decision:
+    /// an upload only READS, so a folder the user picked as a source must
+    /// not thereby become a folder the local pane may rename or delete
+    /// things in. Like the mutation roots, these are added only by a native
+    /// dialog the backend opened itself, never by a path the webview named.
+    ///
+    /// Without them `files_upload` read any absolute path on the machine,
+    /// which made a compromised webview a way to read a private key and send
+    /// it over the SFTP connection already open. The comment on the download
+    /// command said "the user picked this folder"; nothing enforced it.
+    transfer_read_roots: Mutex<Vec<PathBuf>>,
 }
 
 impl FilesState {
@@ -78,10 +91,29 @@ impl FilesState {
     /// credential vault use.
     pub fn new(data_dir: PathBuf) -> Self {
         let pin_path = data_dir.join(PIN_FILE);
-        let mut host_keys = std::fs::read_to_string(&pin_path)
-            .ok()
-            .and_then(|raw| serde_json::from_str::<HostKeyStore>(&raw).ok())
-            .unwrap_or_default();
+        let mut host_keys = match std::fs::read_to_string(&pin_path) {
+            Ok(raw) => match serde_json::from_str::<HostKeyStore>(&raw) {
+                Ok(store) => store,
+                Err(e) => {
+                    // A corrupt pin file must not be read as "no pins": that
+                    // silently turns a changed key back into first contact.
+                    // Keep the bad file for inspection, start empty, and say
+                    // so loudly; the next connection prompts again.
+                    let corrupt = pin_path.with_extension("json.corrupt");
+                    tracing::error!(
+                        "the SSH host-key pin store is corrupt ({e}); moving it to {} and starting over",
+                        corrupt.display()
+                    );
+                    let _ = std::fs::rename(&pin_path, &corrupt);
+                    HostKeyStore::default()
+                }
+            },
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => HostKeyStore::default(),
+            Err(e) => {
+                tracing::warn!("could not read the SSH host-key pin store: {e}");
+                HostKeyStore::default()
+            }
+        };
         // A file written before host keys were pinned on the canonical host
         // can hold one machine twice, e.g. `studio.local` and `studio.local.`.
         // Merging them here keeps one entry per machine, so removing a pin
@@ -97,7 +129,44 @@ impl FilesState {
             host_keys: Arc::new(Mutex::new(host_keys)),
             pin_path,
             local_roots: Mutex::new(Vec::new()),
+            transfer_read_roots: Mutex::new(Vec::new()),
         }
+    }
+
+    /// Add a folder file TRANSFERS may read from.
+    ///
+    /// Called from the command that opens the native picker, with the folder
+    /// the user actually chose, so the grant is a decision and not a request.
+    pub fn grant_transfer_read_root(&self, path: PathBuf) {
+        let mut roots = self.transfer_read_roots.lock();
+        if !roots.iter().any(|root| root == &path) {
+            roots.push(path);
+        }
+    }
+
+    /// The folders transfers may read from, plus the home directory, which is
+    /// always readable because that is where the local pane opens.
+    fn transfer_read_roots_with_home(&self, home: Option<PathBuf>) -> Vec<PathBuf> {
+        let mut roots = self.transfer_read_roots.lock().clone();
+        if let Some(home) = home {
+            if !roots.iter().any(|root| root == &home) {
+                roots.push(home);
+            }
+        }
+        roots
+    }
+
+    /// Is this path inside a folder the user explicitly picked for transfers?
+    ///
+    /// The distinction matters: an explicit pick is a decision (the native
+    /// dialog returned it), while home is where the pane happens to open.
+    /// Credential stores are allowed in the first case and refused in the
+    /// second.
+    fn transfer_read_root_covers(&self, path: &Path) -> bool {
+        self.transfer_read_roots
+            .lock()
+            .iter()
+            .any(|root| path.starts_with(root))
     }
 
     /// Add a folder the local pane may change things in.
@@ -144,8 +213,20 @@ impl FilesState {
                 if let Some(parent) = path.parent() {
                     let _ = std::fs::create_dir_all(parent);
                 }
-                if let Err(e) = std::fs::write(&path, json) {
-                    tracing::warn!("could not persist ssh host-key pins: {e}");
+                // Write the whole file first, then swap it in. A crash during
+                // an in-place write leaves a truncated JSON file, which is
+                // indistinguishable from "no pins" on the next read.
+                let tmp = path.with_extension("json.tmp");
+                if let Err(e) = std::fs::write(&tmp, json) {
+                    tracing::warn!("could not stage the ssh host-key pins: {e}");
+                    return;
+                }
+                if std::fs::rename(&tmp, &path).is_err() {
+                    // Windows refuses a rename over an existing file.
+                    let _ = std::fs::remove_file(&path);
+                    if let Err(e) = std::fs::rename(&tmp, &path) {
+                        tracing::warn!("could not persist ssh host-key pins: {e}");
+                    }
                 }
             }
             Err(e) => tracing::warn!("could not serialize ssh host-key pins: {e}"),
@@ -350,6 +431,8 @@ pub async fn files_connect(
         config.auth,
         config.key_path.as_deref(),
         config.profile_id.as_deref(),
+        &config.host,
+        config.port,
     )
     .await?;
     // An empty username means "same user as here", the overwhelmingly common
@@ -548,6 +631,12 @@ pub async fn files_rename(
 
 /// Queue an upload of each local path into `remoteDir`. Returns one transfer
 /// id per path; progress arrives on `files://event`.
+///
+/// Each source must be inside a folder file transfers are allowed to read:
+/// the home directory, a folder open in the local pane the user granted, or a
+/// folder the user picked in the native dialog (see [`files_pick_upload`]).
+/// The shell is the one that enforces it, because a check the webview can
+/// satisfy on its own is not a check.
 #[tauri::command]
 pub async fn files_upload(
     app: AppHandle,
@@ -560,15 +649,26 @@ pub async fn files_upload(
     if local_paths.is_empty() {
         return Ok(Vec::new());
     }
-    let mut ids = Vec::with_capacity(local_paths.len());
+    // The whole batch is checked before a single byte moves. A batch that
+    // fails on its fifth path used to leave the first four transfers running
+    // while the caller was told the upload was refused.
+    let mut sources = Vec::with_capacity(local_paths.len());
     for local in local_paths {
-        let local = PathBuf::from(&local);
-        if !local.is_absolute() {
-            return Err(format!("local path must be absolute: {}", local.display()));
-        }
+        let local = guard_transfer_source(&local, &state, &app)?;
         if !local.exists() {
             return Err(format!("no such file: {}", local.display()));
         }
+        sources.push(local);
+    }
+    // A transfer queue is a UI promise ("these are on their way"), so it is
+    // bounded: a caller naming a hundred thousand paths would otherwise hold
+    // one task and one map entry per path with only three actually running.
+    const MAX_QUEUED_TRANSFERS: usize = 512;
+    if entry.queue.live() + sources.len() > MAX_QUEUED_TRANSFERS {
+        return Err("too many transfers are already queued; wait for some to finish".into());
+    }
+    let mut ids = Vec::with_capacity(sources.len());
+    for local in sources {
         let id = uuid::Uuid::new_v4().to_string();
         spawn_transfer(
             app.clone(),
@@ -587,9 +687,11 @@ pub async fn files_upload(
 
 /// Queue a download of each remote path into `localDir`.
 ///
-/// `localDir` must be a directory the user picked (native dialog). Every
-/// destination underneath it is built with `vnc_files::path::local_destination`,
-/// so a hostile listing cannot escape it.
+/// `localDir` must be inside a folder the local pane may write: the home
+/// directory, or a folder the user granted (including the one
+/// [`files_pick_download_dir`] just returned). Every destination underneath
+/// it is built with `vnc_files::path::local_destination`, so a hostile listing
+/// cannot escape it.
 #[tauri::command]
 pub async fn files_download(
     app: AppHandle,
@@ -599,16 +701,18 @@ pub async fn files_download(
     local_dir: String,
 ) -> Result<Vec<String>, String> {
     let entry = state.entry(&session_id)?;
-    let local_dir = PathBuf::from(&local_dir);
-    if !local_dir.is_absolute() {
-        return Err("the download directory must be an absolute path".into());
-    }
+    let local_dir = guard_local_write_dir(&local_dir, &state, &app)?;
     if !local_dir.is_dir() {
         return Err(format!("not a directory: {}", local_dir.display()));
     }
     // Reject the whole batch before a single byte moves if any path is unsafe.
     let remote_paths =
         vnc_files::transfer::validate_remote_batch(&remote_paths).map_err(|e| e.to_string())?;
+
+    const MAX_QUEUED_TRANSFERS: usize = 512;
+    if entry.queue.live() + remote_paths.len() > MAX_QUEUED_TRANSFERS {
+        return Err("too many transfers are already queued; wait for some to finish".into());
+    }
 
     let mut ids = Vec::with_capacity(remote_paths.len());
     for remote in remote_paths {
@@ -681,6 +785,77 @@ pub async fn files_local_grant_root(
         .map_err(|e| format!("that folder is not a path on this machine: {e}"))?;
     state.grant_local_root(path.clone());
     Ok(path.to_string_lossy().to_string())
+}
+
+/// Pick files to send, in the NATIVE dialog, and allow their folders.
+///
+/// The dialog is opened here rather than by the webview, and that is the
+/// point: the folders it returns are folders the USER chose, so the backend
+/// can add them to the set transfers may read from without taking the
+/// webview's word for it. `files_upload` then refuses anything outside that
+/// set. The gesture stays one dialog, opened from the same button.
+#[tauri::command]
+pub async fn files_pick_upload(
+    app: AppHandle,
+    state: State<'_, FilesState>,
+) -> Result<Vec<String>, String> {
+    use tauri_plugin_dialog::DialogExt;
+    let (tx, rx) = std::sync::mpsc::channel();
+    app.dialog()
+        .file()
+        .set_title("Choose files to send")
+        .pick_files(move |chosen| {
+            let _ = tx.send(chosen);
+        });
+    let chosen = tokio::task::spawn_blocking(move || rx.recv())
+        .await
+        .map_err(|e| e.to_string())?;
+    let chosen = match chosen {
+        Ok(Some(chosen)) => chosen,
+        // Cancelled, or the dialog went away with the window: nothing to send,
+        // and nothing to report.
+        Ok(None) | Err(_) => return Ok(Vec::new()),
+    };
+    let mut paths = Vec::with_capacity(chosen.len());
+    for file in chosen {
+        let path = file
+            .into_path()
+            .map_err(|e| format!("that choice is not a path on this machine: {e}"))?;
+        if let Some(parent) = path.parent() {
+            state.grant_transfer_read_root(parent.to_path_buf());
+        }
+        paths.push(path.to_string_lossy().to_string());
+    }
+    Ok(paths)
+}
+
+/// Pick the folder a download lands in, in the NATIVE dialog, and grant it for
+/// writing. Returns `None` when the user cancels.
+#[tauri::command]
+pub async fn files_pick_download_dir(
+    app: AppHandle,
+    state: State<'_, FilesState>,
+) -> Result<Option<String>, String> {
+    use tauri_plugin_dialog::DialogExt;
+    let (tx, rx) = std::sync::mpsc::channel();
+    app.dialog()
+        .file()
+        .set_title("Choose a destination folder")
+        .pick_folder(move |chosen| {
+            let _ = tx.send(chosen);
+        });
+    let chosen = tokio::task::spawn_blocking(move || rx.recv())
+        .await
+        .map_err(|e| e.to_string())?;
+    let chosen = match chosen {
+        Ok(Some(chosen)) => chosen,
+        Ok(None) | Err(_) => return Ok(None),
+    };
+    let path = chosen
+        .into_path()
+        .map_err(|e| format!("that folder is not a path on this machine: {e}"))?;
+    state.grant_local_root(path.clone());
+    Ok(Some(path.to_string_lossy().to_string()))
 }
 
 /// List a local directory. Narrow by design: the Tauri fs plugin stays off
@@ -1060,9 +1235,16 @@ async fn agent_sidecar(app: &AppHandle, session_id: &str) -> Result<Arc<FilesEnt
         )
     };
 
-    let auth = build_auth(app, AuthKind::Stored, None, profile_id.as_deref())
-        .await
-        .map_err(FileRefusal::unavailable)?;
+    let auth = build_auth(
+        app,
+        AuthKind::Stored,
+        None,
+        profile_id.as_deref(),
+        &address,
+        port,
+    )
+    .await
+    .map_err(FileRefusal::unavailable)?;
     let cfg = FileTransferConfig {
         ssh: SshConfig {
             host: address.clone(),
@@ -1233,12 +1415,20 @@ async fn disconnect_entry(state: &FilesState, session_id: &str) {
 /// Build the auth method **in Rust**. The webview picks a kind; the secret
 /// comes from the keychain here and never travels back out. Shared with the
 /// SSH tunnel (`crate::tunnel`), which authenticates exactly like the sidecar.
+///
+/// `host`/`port` are the endpoint actually being dialled. When a `profile_id`
+/// names a saved machine, the two must agree: a webview could otherwise pair a
+/// trusted profile's saved password with an attacker's address, accept that
+/// server's host key, and hand the secret over on the retry.
 pub(crate) async fn build_auth(
     app: &AppHandle,
     auth: AuthKind,
     key_path: Option<&str>,
     profile_id: Option<&str>,
+    host: &str,
+    port: u16,
 ) -> Result<SshAuth, String> {
+    require_profile_endpoint(app, profile_id, host, port).await?;
     match auth {
         AuthKind::Agent => Ok(SshAuth::Agent),
         AuthKind::KeyFile => {
@@ -1256,6 +1446,40 @@ pub(crate) async fn build_auth(
             None => Ok(SshAuth::Agent),
         },
     }
+}
+
+/// Refuse a saved profile's secret for an endpoint that is not that profile.
+///
+/// The profile id and the endpoint are separate caller inputs, and this is the
+/// only place that knows both. An agent-driven transfer already reads the
+/// profile's own address; this closes the direct IPC path.
+async fn require_profile_endpoint(
+    app: &AppHandle,
+    profile_id: Option<&str>,
+    host: &str,
+    port: u16,
+) -> Result<(), String> {
+    let Some(profile_id) = profile_id else {
+        return Ok(());
+    };
+    let Some(state) = app.try_state::<crate::state::AppState>() else {
+        return Ok(());
+    };
+    let store = state.store.clone();
+    let id = profile_id.to_string();
+    let profile = super::blocking(move || store.get_host(&id)).await?;
+    let Some(profile) = profile else {
+        return Err("the saved profile no longer exists".into());
+    };
+    let wanted = vnc_store::normalize_address(host);
+    let saved = vnc_store::normalize_address(&profile.address);
+    if saved == wanted && profile.port == port {
+        return Ok(());
+    }
+    Err(
+        "the saved credentials belong to a different machine than the one being connected"
+            .into(),
+    )
 }
 
 /// Load the SSH passphrase saved for a host profile (blocking keychain IO on a
@@ -1354,6 +1578,99 @@ fn guard_local_mutation(
     if !inside {
         return Err(format!(
             "{} is not in a folder you have allowed changes in",
+            path.display()
+        ));
+    }
+    Ok(path)
+}
+
+/// An upload SOURCE, confined to a folder transfers may read from.
+///
+/// Reading is not changing, so this is a different set from the mutation
+/// roots: a folder the user picked as an upload source does not thereby
+/// become a folder the local pane may delete things in.
+fn guard_transfer_source(
+    path: &str,
+    state: &FilesState,
+    app: &AppHandle,
+) -> Result<PathBuf, String> {
+    let path = guard_local_path(path)?;
+    let home = app.path().home_dir().ok();
+    let roots = state.transfer_read_roots_with_home(home);
+    let inside = roots
+        .iter()
+        .any(|root| path.starts_with(root) && path.as_path() != root.as_path());
+    if !inside {
+        return Err(format!(
+            "{} is not in a folder you allowed file transfers from. Use \"Allow a folder\" in the local pane, or pick the file with the upload button",
+            path.display()
+        ));
+    }
+    // Home is a read root because the pane opens there, but a webview must not
+    // be able to send a credential store over an SFTP connection it opened to
+    // a server of its choosing: that is the exact attack the roots exist for.
+    // A file the USER picked is different; its folder is an explicit grant.
+    if !state.transfer_read_root_covers(&path) && touches_credential_store(&path) {
+        return Err(format!(
+            "{} is inside a folder of credentials and is not sent by a background request. Pick it with the upload button if you really need to send it",
+            path.display()
+        ));
+    }
+    Ok(path)
+}
+
+/// Folder and file names that hold credentials rather than work files.
+///
+/// Matched case-insensitively on any component, so a project folder named
+/// `.ssh` is treated the same as the real one. The list is deliberately about
+/// stores, not about every dotfile: `.env` files are ordinary work inputs and
+/// blocking them would make the upload button lie.
+fn touches_credential_store(path: &std::path::Path) -> bool {
+    const STORES: &[&str] = &[
+        ".ssh",
+        ".aws",
+        ".gnupg",
+        ".kube",
+        ".docker",
+        ".password-store",
+        ".config",
+        ".local",
+        ".mozilla",
+        ".thunderbird",
+        ".pki",
+        ".netrc",
+        ".git-credentials",
+        ".pgpass",
+        ".bash_history",
+        ".zsh_history",
+    ];
+    path.components().any(|component| {
+        component
+            .as_os_str()
+            .to_str()
+            .is_some_and(|name| STORES.contains(&name.to_ascii_lowercase().as_str()))
+    })
+}
+
+/// A download DESTINATION, confined to a folder the local pane may write in.
+///
+/// The folder itself is allowed (a download lands IN it), unlike a mutation,
+/// which always names something inside a grant.
+fn guard_local_write_dir(
+    path: &str,
+    state: &FilesState,
+    app: &AppHandle,
+) -> Result<PathBuf, String> {
+    let path = PathBuf::from(path);
+    if !path.is_absolute() {
+        return Err("the download directory must be an absolute path".into());
+    }
+    let home = app.path().home_dir().ok();
+    let roots = state.local_roots_with_home(home);
+    let inside = roots.iter().any(|root| path.starts_with(root));
+    if !inside {
+        return Err(format!(
+            "{} is not in a folder you allowed changes in. Use \"Allow a folder\" in the local pane, or pick the destination with the download button",
             path.display()
         ));
     }

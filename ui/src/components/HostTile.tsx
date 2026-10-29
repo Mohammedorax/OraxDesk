@@ -548,21 +548,21 @@ export function DiscoveredTile({
             className="btn-primary min-w-0 flex-1 justify-center !px-2.5 !py-1 !text-xs"
             onClick={onAdd}
           >
-            <IconPlus size={13} className="shrink-0" /> Add
+            <IconPlus size={13} className="shrink-0" /> {t("library.add")}
           </button>
           <button
             type="button"
             className="btn-secondary shrink-0 !px-2.5 !py-1 !text-xs"
             onClick={onEdit}
           >
-            <IconEdit size={13} className="shrink-0" /> Edit
+            <IconEdit size={13} className="shrink-0" /> {t("library.edit")}
           </button>
           <button
             type="button"
             className="btn-secondary shrink-0 !px-2.5 !py-1 !text-xs"
             onClick={onConnect}
           >
-            <IconZap size={13} className="shrink-0" /> Connect
+            <IconZap size={13} className="shrink-0" /> {t("quick.connect")}
           </button>
         </div>
       </div>

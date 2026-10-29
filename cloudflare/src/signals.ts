@@ -11,7 +11,7 @@ import {
   MAX_INVITATION_CHARS,
   REVOKE_TOKEN_BYTES,
 } from "./constants";
-import { b64urlDecode, currentInvitationKeyId, openInvitation, sealInvitation, selectInvitationKey } from "./crypto";
+import { b64urlDecode, currentInvitationKeyId, isDevelopmentInvitationKey, openInvitation, sealInvitation, selectInvitationKey } from "./crypto";
 import {
   hexDecode,
   hexEncode,
@@ -31,6 +31,31 @@ import {
 } from "./http";
 
 const NOT_FOUND = "This code is not valid, has expired, or was already used";
+
+/**
+ * Refuse to mint or resolve codes when the sealing key is the one this
+ * repository publishes.
+ *
+ * That key is in the source tree and in `.dev.vars`, so an invitation sealed
+ * with it is forgeable by anybody who has read the repository, and a code
+ * sealed with it is readable by them too. It is fine for a laptop running the
+ * Worker locally and wrong for anything a person relies on, which is why the
+ * refusal is here and not in a README: a deployment that copied the sample
+ * environment file looks configured until this check says otherwise.
+ *
+ * `ALLOW_TEST_KEY=1` is the explicit local-development escape.
+ */
+function ensureProductionKey(env: Env): void {
+  if (env.ALLOW_TEST_KEY === "1") return;
+  if (isDevelopmentInvitationKey(env.INVITATION_KEY)) {
+    throw new ApiError(
+      503,
+      "unavailable",
+      "This registry is using the published development invitation key. Configure INVITATION_KEY before serving codes",
+      { "retry-after": "60" },
+    );
+  }
+}
 
 function normalizeCode(value: string): string {
   const digits = value.replaceAll(" ", "");
@@ -90,6 +115,7 @@ export async function createSignal(
   body: Record<string, unknown>,
   bodyHash: string,
 ): Promise<Response> {
+  ensureProductionKey(env);
   rejectUnknownKeys(body, ["invitation", "ttl_seconds"]);
   // The auth nonce is the idempotency key here, so it is not consumed: a
   // retried create returns the existing code (UNIQUE host_id, auth_nonce).
@@ -100,7 +126,8 @@ export async function createSignal(
   const now = nowSeconds();
   validateInvitation(invitation, now);
 
-  // A retry after a lost response returns the same code instead of a second one.
+  // The retry after a lost response returns the same code instead of a second
+  // one.
   const existing = await env.DB.prepare(
     "SELECT code, expires_at FROM signal_codes WHERE host_id = ? AND auth_nonce = ?",
   )
@@ -108,17 +135,6 @@ export async function createSignal(
     .first<{ code: string; expires_at: number }>();
   if (existing !== null) {
     return jsonResponse({ code: existing.code, expires_at: existing.expires_at }, 200);
-  }
-
-  const recent = await env.DB.prepare(
-    "SELECT COUNT(*) AS n FROM signal_codes WHERE host_id = ? AND created_at > ?",
-  )
-    .bind(auth.id, now - 3600)
-    .first<{ n: number }>();
-  if ((recent?.n ?? 0) >= MAX_CODES_PER_HOUR) {
-    throw new ApiError(429, "rate_limited", "Too many codes for this device", {
-      "retry-after": "600",
-    });
   }
 
   const expiresAt = Math.min(now + ttl, now + CODE_TTL_MAX);
@@ -134,21 +150,64 @@ export async function createSignal(
       throw new ApiError(400, "bad_request", "invitation is too large");
     }
     try {
-      await env.DB.prepare(
+      // The hourly cap is enforced INSIDE the insert, not by a count read
+      // before it. The old read-then-insert let two concurrent creates both
+      // see 19 and both insert, so the cap could be overshot by a burst; a
+      // guarded SELECT is one statement and cannot race with itself.
+      const inserted = await env.DB.prepare(
         `INSERT INTO signal_codes
            (code, ciphertext, nonce, host_id, auth_nonce, created_at, expires_at, revoke_hash, key_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?
+          WHERE (SELECT COUNT(*) FROM signal_codes WHERE host_id = ? AND created_at > ?) < ?`,
       )
-        .bind(code, ciphertext, nonce, auth.id, auth.nonce, now, expiresAt, revokeHash, keyId)
+        .bind(
+          code,
+          ciphertext,
+          nonce,
+          auth.id,
+          auth.nonce,
+          now,
+          expiresAt,
+          revokeHash,
+          keyId,
+          auth.id,
+          now - 3600,
+          MAX_CODES_PER_HOUR,
+        )
         .run();
+      if (inserted.meta.changes !== 1) {
+        // The guard said no: this device already has its hourly allowance.
+        throw new ApiError(429, "rate_limited", "Too many codes for this device", {
+          "retry-after": "600",
+        });
+      }
       await audit(env, "signal.created", auth.id);
       return jsonResponse(
         { code, expires_at: expiresAt, revoke_token: hexEncode(revokeToken) },
         201,
       );
     } catch (error) {
-      // Only a code collision is retried; anything else is a real failure.
-      if (String((error as Error).message).includes("signal_codes.code")) continue;
+      const message = String((error as Error).message);
+      // A code collision is retried with a fresh code; anything else is a real
+      // failure.
+      if (message.includes("signal_codes.code")) continue;
+      // The idempotency key raced: two identical creates passed the existing
+      // row read together, or a replay arrived after the row was swept. The
+      // row exists NOW, so answer with it — the same answer a retry gets —
+      // instead of bubbling a UNIQUE violation out as a 503.
+      if (
+        message.includes("signal_codes.host_id") &&
+        message.includes("signal_codes.auth_nonce")
+      ) {
+        const again = await env.DB.prepare(
+          "SELECT code, expires_at FROM signal_codes WHERE host_id = ? AND auth_nonce = ?",
+        )
+          .bind(auth.id, auth.nonce)
+          .first<{ code: string; expires_at: number }>();
+        if (again !== null) {
+          return jsonResponse({ code: again.code, expires_at: again.expires_at }, 200);
+        }
+      }
       throw error;
     }
   }
@@ -161,6 +220,7 @@ export async function resolveSignal(
   env: Env,
   body: Record<string, unknown>,
 ): Promise<Response> {
+  ensureProductionKey(env);
   rejectUnknownKeys(body, ["code"]);
   const code = normalizeCode(requiredString(body.code, "code", 32));
   const now = nowSeconds();
@@ -192,15 +252,15 @@ export async function resolveSignal(
   if (row === null) throw new ApiError(404, "not_found", NOT_FOUND);
   if (row.expires_at <= now) throw new ApiError(404, "not_found", NOT_FOUND);
 
-  // Exactly one caller wins this. The statement is atomic on its own, so
-  // two resolves of the same code cannot both see a change of one.
-  const claimed = await env.DB.prepare(
-    "UPDATE signal_codes SET consumed_at = ? WHERE code = ? AND consumed_at IS NULL AND expires_at > ?",
-  )
-    .bind(now, code, now)
-    .run();
-  if (claimed.meta.changes !== 1) throw new ApiError(404, "not_found", NOT_FOUND);
-
+  // Pick the key and decrypt BEFORE the claim, not after it.
+  //
+  // Decryption has no side effect, and the guarded UPDATE below is still the
+  // only thing that decides who wins. Doing it in the old order meant a
+  // rotation mistake (a key id this Worker does not hold, so `selectInvitationKey`
+  // returns null) or a corrupt ciphertext consumed the row and *then* failed:
+  // the code was burned, no invitation was returned, and the same happened to
+  // every pending code until somebody noticed. A configuration error must
+  // answer 404 without destroying anything.
   const openingKey = selectInvitationKey(
     {
       current: env.INVITATION_KEY,
@@ -223,6 +283,19 @@ export async function resolveSignal(
     // Tampered or sealed under another key: fail closed, never 500.
     throw new ApiError(404, "not_found", NOT_FOUND);
   }
+
+  // Exactly one caller wins this. The statement is atomic on its own, so
+  // two resolves of the same code cannot both see a change of one. The row
+  // may have been deleted between the read and here (a revoke, a device
+  // revocation, the sweeper): then nothing is consumed and the answer is the
+  // ordinary 404.
+  const claimed = await env.DB.prepare(
+    "UPDATE signal_codes SET consumed_at = ? WHERE code = ? AND consumed_at IS NULL AND expires_at > ?",
+  )
+    .bind(now, code, now)
+    .run();
+  if (claimed.meta.changes !== 1) throw new ApiError(404, "not_found", NOT_FOUND);
+
   await audit(env, "signal.resolved", row.host_id);
   return jsonResponse({ invitation });
 }

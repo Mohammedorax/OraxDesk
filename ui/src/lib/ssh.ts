@@ -20,7 +20,7 @@ import type { ProtocolKind } from "./types";
 /** The blob version this build writes and the highest it understands. */
 export const SSH_SETTINGS_V = 1;
 
-/** `remote_core::MultiplexerKind`, serde `rename_all = "kebab-case"`, which
+/** `ssh_core::MultiplexerKind`, serde `rename_all = "kebab-case"`, which
  *  for every one of these spells it exactly as written here. */
 export type MultiplexerKind =
   | "auto"

@@ -323,7 +323,54 @@ async fn register_device_at(
     if let Some(number) = record.number.as_deref() {
         remember_registry_number(state, number).await?;
     }
+    remember_registration(state).await;
     Ok(record)
+}
+
+/// The settings key recording when this computer last registered successfully.
+const REGISTRY_LAST_OK_KEY: &str = "registry_last_registered";
+
+/// How long a successful registration counts as fresh.
+///
+/// The registry keeps a device for seven days after the last contact, so a
+/// refresh every two days leaves days of margin. Longer than that and a
+/// machine that is opened briefly would let its record lapse; shorter and a
+/// person who relaunches the app twenty times a day pays twenty registrations
+/// for nothing.
+pub(crate) const REGISTRATION_FRESH_SECONDS: u64 = 48 * 60 * 60;
+
+async fn remember_registration(state: &AppState) {
+    let store = state.store.clone();
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    // Best effort: a failure here costs one extra registration, never a
+    // failed one.
+    let _ = super::blocking(move || store.set_setting(REGISTRY_LAST_OK_KEY, &now.to_string())).await;
+}
+
+/// Is the last successful registration recent enough to skip another one?
+///
+/// This is the "smart" half of the startup loop: a machine that was registered
+/// from this same install a few hours ago does not need the registry contacted
+/// again just because the window was reopened.
+pub(crate) async fn registered_recently(state: &AppState) -> bool {
+    let store = state.store.clone();
+    let Ok(stored) = super::blocking(move || store.get_setting(REGISTRY_LAST_OK_KEY)).await else {
+        return false;
+    };
+    let Some(value) = stored else {
+        return false;
+    };
+    let Ok(then) = value.trim().parse::<u64>() else {
+        return false;
+    };
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    now.saturating_sub(then) < REGISTRATION_FRESH_SECONDS
 }
 
 /// Whether the configured registry is up and has its sealing key, so the UI can

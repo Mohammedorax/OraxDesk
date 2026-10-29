@@ -336,7 +336,7 @@ export function SplitView({
       ref={areaRef}
       id={SESSION_PANEL_ID}
       role="tabpanel"
-      aria-label={active ? "Session" : "No session"}
+      aria-label={active ? t("pane.session") : t("pane.noSession")}
       className="absolute inset-0"
       style={{ visibility: active ? "visible" : "hidden" }}
       aria-hidden={active ? undefined : true}
@@ -416,7 +416,7 @@ export function SplitView({
             >
               {showHeader ? (
                 <PaneHeader
-                  title={session ? session.title : "Empty pane"}
+                  title={session ? session.title : t("pane.empty")}
                   protocol={session ? session.params.protocol : null}
                   state={session ? session.state : null}
                   focused={focused}

@@ -11,6 +11,13 @@ export default defineConfig({
       miniflare: {
         bindings: {
           INVITATION_KEY: TEST_INVITATION_KEY,
+          // The operator endpoint is off when this is absent, which is also
+          // the production default. A fixed test value lets the two branches
+          // (configured, not configured) both be tested.
+          OPERATOR_TOKEN: "test-operator-token-0123456789",
+          // The test key is the published development key; the Worker refuses
+          // it unless this is set, exactly as a local checkout has to.
+          ALLOW_TEST_KEY: "1",
           TEST_MIGRATIONS: await readD1Migrations("./migrations"),
         },
       },

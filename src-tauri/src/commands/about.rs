@@ -54,6 +54,27 @@ pub fn about_info() -> AboutInfo {
     }
 }
 
+/// Open one of the About dialog's links in the operating system's browser.
+///
+/// Deliberately NOT a general "open this URL" command. The window capability
+/// scopes the opener plugin to the macOS Accessibility pane, and that scope is
+/// worth keeping: a webview that can ask the shell to open any URL is a hole
+/// that the ACL was written to close. The two links the dialog shows are
+/// constants on this side, and the caller names WHICH one, never where it
+/// points.
+#[tauri::command]
+pub fn open_about_link(app: tauri::AppHandle, target: String) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+    let url = match target.as_str() {
+        "project" => crate::menu::PROJECT_URL,
+        "contact" => crate::menu::CONTACT_URL,
+        other => return Err(format!("no such About link: {other}")),
+    };
+    app.opener()
+        .open_url(url, None::<&str>)
+        .map_err(|e| format!("could not open {url}: {e}"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

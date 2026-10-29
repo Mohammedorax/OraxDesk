@@ -316,7 +316,21 @@ fn local_seconds() -> i64 {
 
 /// The registry's one answer that means "your clock is wrong", not "your key
 /// is wrong". A 401 is used for both, so the body is what separates them.
+///
+/// The Worker gives the clock answer its own error code (`clock_skew`), and
+/// that is read first: deciding on English prose meant a reworded sentence
+/// silently turned the automatic correction off. The prose check stays for a
+/// registry deployed before the code existed.
 fn is_clock_rejection(bytes: &[u8]) -> bool {
+    if let Ok(value) = serde_json::from_slice::<serde_json::Value>(bytes) {
+        let code = value
+            .get("error")
+            .and_then(|error| error.get("code"))
+            .and_then(|code| code.as_str());
+        if code == Some("clock_skew") {
+            return true;
+        }
+    }
     let text = String::from_utf8_lossy(bytes).to_ascii_lowercase();
     text.contains("timestamp")
         || text.contains("outside the allowed window")
@@ -970,6 +984,17 @@ mod tests {
 
     #[test]
     fn a_clock_rejection_is_distinguished_from_a_bad_key() {
+        // The code is the contract now; the prose fallback keeps an older
+        // registry working.
+        assert!(is_clock_rejection(
+            br#"{"error":{"code":"clock_skew","message":"Request timestamp is outside the allowed window"}}"#
+        ));
+        assert!(
+            is_clock_rejection(
+                br#"{"error":{"code":"clock_skew","message":"whatever the wording becomes"}}"#
+            ),
+            "the code alone decides, not the sentence beside it"
+        );
         assert!(is_clock_rejection(
             br#"{"error":{"code":"unauthorized","message":"Request timestamp is outside the allowed window"}}"#
         ));

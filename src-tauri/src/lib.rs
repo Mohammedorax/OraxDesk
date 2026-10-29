@@ -239,19 +239,42 @@ pub fn run() {
                     fit_main_window(&window);
                 }
             });
+            // Registration is state-driven, not a heartbeat: on startup it
+            // runs once (three seconds in, so a cold launch is not competing
+            // with window creation), and then only as a keep-alive. The
+            // registry sweeps a device that has not been seen for seven days,
+            // so a refresh every two days keeps the number discoverable with
+            // days of margin, and costs a quarter of the writes the old
+            // six-hour loop did — which is the binding free-plan limit.
             let registry_app = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 let mut delay = 3u64;
                 loop {
                     tokio::time::sleep(std::time::Duration::from_secs(delay)).await;
                     let state = registry_app.state::<AppState>();
+                    // A launch is a state event, but not always a reason to
+                    // talk to the registry: a registration from this install
+                    // that is still fresh means the record is already there.
+                    // That is what keeps a person who reopens the app twenty
+                    // times a day from paying twenty registrations.
+                    if commands::registry::registered_recently(&state).await {
+                        delay = commands::registry::REGISTRATION_FRESH_SECONDS;
+                        continue;
+                    }
                     match commands::registry::register_this_device(&state).await {
                         Ok(Some(record)) => {
                             tracing::info!(number = ?record.number, "registered this computer with the registry");
-                            delay = 6 * 60 * 60;
+                            // Keep-alive, well inside the registry's seven-day
+                            // sweep. Sleep/suspend can stretch it; the next
+                            // launch registers immediately anyway.
+                            delay = commands::registry::REGISTRATION_FRESH_SECONDS;
                         }
                         Ok(None) => {
-                            delay = 6 * 60 * 60;
+                            // Auto-registration is off. No network request was
+                            // made; this only re-reads the local setting, so a
+                            // short delay is cheap and switching it on takes
+                            // effect without a restart.
+                            delay = 60 * 60;
                         }
                         Err(error) => {
                             tracing::warn!(%error, "the registry did not register this computer; retrying");
@@ -404,16 +427,19 @@ pub fn run() {
             commands::hosts::list_history,
             commands::hosts::get_thumbnail,
             commands::about::about_info,
+            commands::about::open_about_link,
             commands::hosts::get_app_setting,
             commands::hosts::set_app_setting,
             // native menu
             commands::menu::sync_session_menu,
+            commands::menu::set_ui_language,
             // .rdp file import
             commands::rdpfile::import_rdp_file,
             commands::rdpfile::import_rdp_files,
             // credentials
             commands::credentials::save_password,
             commands::credentials::has_password,
+            commands::credentials::set_has_password,
             commands::credentials::saved_user_names,
             commands::credentials::delete_password,
             commands::credentials::credential_backend,
@@ -515,6 +541,8 @@ pub fn run() {
             commands::files::files_local_home,
             commands::files::files_local_list,
             commands::files::files_local_grant_root,
+            commands::files::files_pick_upload,
+            commands::files::files_pick_download_dir,
             commands::files::files_local_mkdir,
             commands::files::files_local_rename,
             commands::files::files_local_remove,

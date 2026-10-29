@@ -519,20 +519,60 @@ describe("the device directory", () => {
     expect(JSON.stringify(parsed)).not.toContain(JSON.stringify(secret));
   });
 
-  it("refuses an address entry that is not an address", async () => {
+  it("keeps only the address entries it understands", async () => {
     const device = await newDevice();
     await register(device);
-    const response = await SELF.fetch(
+
+    // A transport kind this build does not know is SKIPPED, not refused: iroh
+    // publishes every address it discovered, dual-stack machines contribute
+    // both families, and refusing the whole publish meant the machine never
+    // appeared in the directory at all. The shape guarantee is about what is
+    // STORED, so an entry that cannot be shape-checked is dropped.
+    const mixed = await SELF.fetch(
       await signedRequest(`/v1/devices/${device.id}/address`, device, {
         body: {
           address: {
             id: device.id,
-            addrs: [{ NotAnAddress: "whatever" }],
+            addrs: [
+              { NotAnAddress: "whatever" },
+              { Ip: "192.0.2.10:41234" },
+              { Ip: "[2001:db8::1]:41234" },
+              { Relay: "https://relay.example.com/edge" },
+            ],
           },
         },
       }),
     );
-    expect(response.status).toBe(400);
+    expect(mixed.status).toBe(204);
+
+    const read = await SELF.fetch(`https://registry.test/v1/devices/${device.id}/address`);
+    const stored = await jsonBody<{ addrs: unknown[] }>(read);
+    expect(stored.addrs).toEqual([
+      { Ip: "192.0.2.10:41234" },
+      { Ip: "[2001:db8::1]:41234" },
+      { Relay: "https://relay.example.com/edge" },
+    ]);
+
+    // A KNOWN kind with a malformed value is still refused: that is a client
+    // bug, not a transport this build has not met yet.
+    const badIp = await SELF.fetch(
+      await signedRequest(`/v1/devices/${device.id}/address`, device, {
+        body: { address: { id: device.id, addrs: [{ Ip: "999.999.999.999:5900" }] } },
+      }),
+    );
+    expect(badIp.status).toBe(400);
+
+    const badRelay = await SELF.fetch(
+      await signedRequest(`/v1/devices/${device.id}/address`, device, {
+        body: {
+          address: {
+            id: device.id,
+            addrs: [{ Relay: "https://relay.example.com/?token=secret" }],
+          },
+        },
+      }),
+    );
+    expect(badRelay.status).toBe(400);
   });
 });
 

@@ -18,6 +18,7 @@
  */
 import { authenticate } from "./auth";
 import { audit } from "./audit";
+import { ADDRESS_TTL_SECONDS } from "./constants";
 import { ApiError, jsonResponse, parseObject, rejectUnknownKeys } from "./http";
 import type { Env } from "./env";
 
@@ -66,7 +67,15 @@ function sanitizeAddress(value: unknown): PublishedAddress {
   }
   const addrs: unknown[] = [];
   for (const entry of raw.addrs) {
-    addrs.push(sanitizeTransportAddr(entry));
+    const clean = sanitizeTransportAddr(entry);
+    // A transport kind this build does not understand is SKIPPED, not refused.
+    // Refusing poisoned the whole publish: iroh publishes every address it
+    // discovered, dual-stack machines contribute both families, and a `Custom`
+    // entry (or an IPv6 literal, before it was accepted) made `sanitizeAddress`
+    // throw a 400, so the machine never appeared in the directory at all. What
+    // this module guarantees is the SHAPE of what it stores, and an entry that
+    // cannot be shape-checked is not stored.
+    if (clean !== null) addrs.push(clean);
   }
   return { id, addrs };
 }
@@ -74,9 +83,9 @@ function sanitizeAddress(value: unknown): PublishedAddress {
 /**
  * One transport address: a socket address, or a relay URL.
  *
- * Nothing else is a transport address, and nothing else is kept.
+ * Returns null for a kind this build does not know, so the caller can skip it.
  */
-function sanitizeTransportAddr(value: unknown): unknown {
+function sanitizeTransportAddr(value: unknown): unknown | null {
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
     throw new ApiError(400, "bad_request", "an address entry must be an object");
   }
@@ -100,17 +109,44 @@ function sanitizeTransportAddr(value: unknown): unknown {
     // and free text is where a secret goes: the guarantee this module makes
     // is about the SHAPE of what is stored, and a shape that admits any
     // string in the host position is no guarantee at all.
-    if (!/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}:\d{1,5}$/.test(inner)) {
-      throw new ApiError(400, "bad_request", "an Ip address must be an IPv4 literal and a port");
+    //
+    // Both families are accepted. IPv4 gets its octets checked (the regex
+    // alone would take 999.999.999.999), IPv6 is parsed by the URL parser
+    // rather than by a regex that would be wrong somewhere. iroh's
+    // `SocketAddr` serializes as `Display`, so a v6 literal arrives as
+    // `[2001:db8::1]:41234`.
+    let hostOk = false;
+    let portText = "";
+    const v4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3}):(\d{1,5})$/.exec(inner);
+    if (v4 !== null) {
+      hostOk = v4.slice(1, 5).every((octet) => Number(octet) <= 255);
+      portText = v4[5];
+    } else {
+      const v6 = /^\[([0-9a-fA-F:.]+)\]:(\d{1,5})$/.exec(inner);
+      if (v6 !== null) {
+        try {
+          // The URL parser is the authority on what a valid IPv6 literal is.
+          const parsedHost = new URL(`http://[${v6[1]}]/`).hostname;
+          hostOk = parsedHost.startsWith("[") && parsedHost.endsWith("]");
+        } catch {
+          hostOk = false;
+        }
+        portText = v6[2];
+      }
     }
-    const port = Number(inner.slice(inner.lastIndexOf(":") + 1));
-    if (port < 1 || port > 65535) {
+    if (!hostOk) {
+      throw new ApiError(400, "bad_request", "an Ip address must be an IP literal and a port");
+    }
+    const port = Number(portText);
+    if (!Number.isInteger(port) || port < 1 || port > 65535) {
       throw new ApiError(400, "bad_request", "an Ip address must carry a real port");
     }
     return { Ip: inner };
   }
   if (kind === "Relay") {
-    // A relay URL: http or https, no credentials, no path.
+    // A relay URL: http or https, no credentials, no query, no fragment. A
+    // PATH is allowed: a self-hosted relay can live under one, and refusing
+    // it took the whole publish down with it.
     let parsed: URL;
     try {
       parsed = new URL(inner);
@@ -122,31 +158,16 @@ function sanitizeTransportAddr(value: unknown): unknown {
     }
     // The FRAGMENT is checked with the rest. A URL fragment is never sent to
     // the server, so it is free text that would be stored verbatim and read
-    // back to every helper that looks the address up. A relay address that
-    // carries anything but an origin is refused.
-    if (
-      parsed.username ||
-      parsed.password ||
-      parsed.pathname !== "/" ||
-      parsed.search ||
-      parsed.hash
-    ) {
-      throw new ApiError(400, "bad_request", "a relay address carries nothing but an origin");
+    // back to every helper that looks the address up. Same for a query: a
+    // relay URL with `?token=…` is a credential in a public directory.
+    if (parsed.username || parsed.password || parsed.search || parsed.hash) {
+      throw new ApiError(400, "bad_request", "a relay address carries no credentials, query or fragment");
     }
-    return { Relay: inner };
+    return { Relay: `${parsed.origin}${parsed.pathname}` };
   }
-  throw new ApiError(400, "bad_request", "an address entry is a socket address or a relay URL");
+  // Not a transport kind this build knows. Skipped by the caller.
+  return null;
 }
-
-/**
- * How long a published address stays true.
- *
- * A device that changes network publishes again, and iroh calls the
- * publisher whenever the address changes. This is the backstop for a device
- * that went away without publishing, and it is why a helper that finds a
- * stale address fails to connect rather than connecting to the wrong place.
- */
-const ADDRESS_TTL_SECONDS = 60 * 60;
 
 /**
  * Publish this device's address, so a helper can find it by id.

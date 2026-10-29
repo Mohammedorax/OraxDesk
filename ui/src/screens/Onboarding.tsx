@@ -69,8 +69,13 @@ export function Onboarding({
 
         {step === 0 ? (
           <div className="space-y-5">
-            <div className="flex justify-center text-accent">
-              <IconMonitor size={56} />
+            <div className="flex justify-center">
+              <img
+                src="/brand/icon-256.png"
+                alt=""
+                aria-hidden="true"
+                className="size-16 rounded-xl"
+              />
             </div>
             <h1 className="text-center text-xl font-semibold text-primary">{t("onboarding.welcome")}</h1>
             <p className="text-center text-sm text-secondary">{t("onboarding.tagline")}</p>
@@ -106,8 +111,7 @@ export function Onboarding({
             </div>
             <h1 className="text-center text-xl font-semibold text-primary">{t("onboarding.findComputers")}</h1>
             <p className="text-center text-sm text-secondary">
-              OraxDesk listens for computers advertising screen sharing on your local network.
-              Your OS may ask permission to access the local network, that's this feature.
+              {t("onboarding.scanHint")}
             </p>
             {!ranDiscovery ? (
               <div className="flex justify-center">
@@ -116,7 +120,7 @@ export function Onboarding({
                   className="btn-primary"
                   onClick={runScan}
                 >
-                  <IconZap size={14} /> Find computers on my network
+                  <IconZap size={14} /> {t("library.findOnNetwork")}
                 </button>
               </div>
             ) : (
@@ -169,8 +173,7 @@ export function Onboarding({
             </div>
             <h1 className="text-center text-xl font-semibold text-primary">{t("onboarding.saveFirst")}</h1>
             <p className="text-center text-sm text-secondary">
-              Give it a friendly name and, if you save a password, it's stored in your system
-              keychain, never in a file.
+              {t("onboarding.saveHint")}
             </p>
             {discovered.length > 0 ? (
               <ul className="space-y-1.5">
@@ -194,7 +197,7 @@ export function Onboarding({
               </ul>
             ) : (
               <p className="text-center text-xs text-tertiary">
-                No discovered computers to pre-fill, use “+ New Host” in the library instead.
+                {t("onboarding.noDiscovered")}
               </p>
             )}
           </div>
@@ -202,21 +205,21 @@ export function Onboarding({
 
         <div className="mt-8 flex items-center justify-between">
           <button type="button" className="text-sm text-tertiary hover:text-primary" onClick={finish}>
-            Skip
+            {t("onboarding.skip")}
           </button>
           <div className="flex gap-2.5">
             {step > 0 ? (
               <button type="button" className="btn-secondary" onClick={() => setStep((s) => s - 1)}>
-                Back
+                {t("onboarding.back")}
               </button>
             ) : null}
             {step < 2 ? (
               <button type="button" data-autofocus className="btn-primary" onClick={() => setStep((s) => s + 1)}>
-                Continue
+                {t("onboarding.continue")}
               </button>
             ) : (
               <button type="button" className="btn-primary" onClick={finish}>
-                Open my library
+                {t("onboarding.openLibrary")}
               </button>
             )}
           </div>

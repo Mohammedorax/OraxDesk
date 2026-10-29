@@ -167,6 +167,16 @@ fn decode_plane(src: &[u8], plane: &mut [u8]) -> Result<(), DecodeError> {
         return Ok(());
     }
 
+    // The raw tail below is the last four bytes, so a plane shorter than that
+    // has no raw tail to copy. `n - RAW_TAIL` used to underflow here: a 1x1
+    // ClearCodec sub-rectangle with NSCodec is enough to reach it.
+    if n < RAW_TAIL {
+        return Err(DecodeError::Range {
+            what: "nscodec plane shorter than its raw tail",
+            got: n as u32,
+        });
+    }
+
     let mut r = Reader::new(src, "nscodec plane");
     let mut at = 0usize;
 

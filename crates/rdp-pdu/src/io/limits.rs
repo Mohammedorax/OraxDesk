@@ -49,6 +49,15 @@ pub const MAX_BITMAP_RECTS: usize = 4096;
 /// One `TS_BITMAP_DATA.bitmapDataStream` (MS-RDPBCGR 2.2.9.1.1.3.1.2.2).
 pub const MAX_BITMAP_DATA: usize = 16 * 1024 * 1024;
 
+/// Pixels an encoded bitmap may claim, before any decoder touches it.
+///
+/// `width` and `height` are two `u16`s straight off the wire and were only
+/// checked against the destination rectangle in ONE direction: a 1x1
+/// destination accepted a 65535x65535 bitmap, and `rdp-core` allocated the
+/// decoded RGBA before looking at the payload. 64 M pixels covers an 8K
+/// desktop with headroom and makes that claim four bytes of nothing.
+pub const MAX_BITMAP_PIXELS: u64 = 64 * 1024 * 1024;
+
 /// MS-RDPBCGR 2.2.9.1.1.4.7 caps a large pointer at 384 by 384.
 pub const MAX_POINTER_DIM: usize = 384;
 

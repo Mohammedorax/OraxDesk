@@ -68,6 +68,15 @@ export const resolveLimiter = new FixedWindowLimiter(20, 60_000);
 export const registerLimiter = new FixedWindowLimiter(20, 60_000);
 
 /**
+ * The operator endpoint, which revokes a device from the server side.
+ *
+ * A secret gates it, so this is not an anti-guessing control; it bounds a
+ * runaway automation or a leaked-and-rotated key being used to churn rows.
+ * Operator calls are rare by nature, so ten a minute is generous.
+ */
+export const adminLimiter = new FixedWindowLimiter(10, 60_000);
+
+/**
  * The directory is public and unguessable only in the id, but the NINE DIGIT
  * number is guessable: a billion values, read one at a time, with no
  * authentication. This is the one endpoint where a flood is cheap, so it gets

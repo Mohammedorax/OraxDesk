@@ -46,6 +46,14 @@ const PROBE_TIMEOUT: Duration = Duration::from_secs(10);
 /// update streams (see `maybe_tick_mid_update`).
 const TICK_INTERVAL: Duration = Duration::from_secs(1);
 
+/// Hard ceiling on one update's decoded bytes.
+///
+/// The geometric term keeps small desktops generous, but it is clamped here so
+/// a hostile server cannot turn its own claimed geometry into a multi-gigabyte
+/// allowance. 256 MiB is several full 4K frames, far more than any legitimate
+/// repaint.
+const MAX_UPDATE_BYTES: u64 = 256 * 1024 * 1024;
+
 /// How long we wait for the server's EndOfContinuousUpdates after asking it
 /// to stop pushing, before resuming the request pipeline anyway.
 ///
@@ -827,9 +835,18 @@ impl RunLoop {
             let step = tokio::select! {
                 biased;
                 _ = cancel.cancelled() => Step::Cancelled,
-                byte = self.reader.read_u8() => Step::Message(byte),
-                cmd = commands.recv() => Step::Command(cmd),
-                _ = stats_tick.tick() => Step::Tick,
+                // Cancel keeps priority, but the other three are FAIR among
+                // themselves. With a flat `biased` select a server that keeps
+                // the buffer non-empty (a stream of 1-byte Bells or empty
+                // updates) starves commands and the stats tick forever, which
+                // makes Disconnect and input unresponsive.
+                step = async {
+                    tokio::select! {
+                        byte = self.reader.read_u8() => Step::Message(byte),
+                        cmd = commands.recv() => Step::Command(cmd),
+                        _ = stats_tick.tick() => Step::Tick,
+                    }
+                } => step,
             };
 
             match step {
@@ -1102,7 +1119,7 @@ impl RunLoop {
         // reasonable headroom.
         let budget = (self.fb_width as u64 * self.fb_height as u64 * 4)
             .saturating_mul(4)
-            .max(64 * 1024 * 1024);
+            .clamp(64 * 1024 * 1024, MAX_UPDATE_BYTES);
         let mut accumulated: u64 = 0;
         // The byte budget alone does not bound a sentinel update: zero-area
         // rects decode to zero bytes, so a hostile server sending 0x0 rect
@@ -1455,10 +1472,10 @@ impl RunLoop {
         height: u16,
         events: &mpsc::Sender<SessionEvent>,
     ) -> Result<()> {
-        if width == 0 || height == 0 {
-            return Err(VncError::Protocol(
-                "server resized framebuffer to zero".into(),
-            ));
+        if !crate::proto::handshake::framebuffer_fits(width, height) {
+            return Err(VncError::Protocol(format!(
+                "server resized the framebuffer to an implausible {width}x{height}"
+            )));
         }
         if (width, height) != (self.fb_width, self.fb_height) {
             self.fb_width = width;
@@ -2902,8 +2919,15 @@ fn median_of(mut values: Vec<f32>) -> Option<f32> {
 fn decoded_payload_len(d: &DecodedRect) -> usize {
     use crate::types::RectPayload;
     match &d.payload {
-        RectPayload::Rgba(b) | RectPayload::Jpeg(b) => b.len(),
-        RectPayload::H264 { data, .. } => data.len(),
+        // Everything except CopyRect is charged at its DECODED size: the shell
+        // turns every JPEG and H.264 rect into RGBA before handing the update
+        // on, so charging the compressed length let a few KiB of tiny flat
+        // JPEGs reserve gigabytes of decoded buffers.
+        RectPayload::Rgba(b) => b.len(),
+        RectPayload::Jpeg(_) => d.rect.area().saturating_mul(4),
+        RectPayload::H264 { data, .. } => {
+            d.rect.area().saturating_mul(4).max(data.len())
+        }
         RectPayload::CopyRect { .. } => d.rect.area().saturating_mul(4),
     }
 }
@@ -3282,6 +3306,17 @@ mod update_budget_tests {
             payload: RectPayload::CopyRect { src_x: 0, src_y: 0 },
         };
         assert_eq!(decoded_payload_len(&d), 128 * 128 * 4);
+    }
+
+    #[test]
+    fn jpeg_is_charged_at_decoded_size_not_wire_size() {
+        // A flat 64x64 JPEG compresses to a few hundred bytes but becomes
+        // 16 KiB of RGBA in the shell, so the budget must charge the pixels.
+        let d = DecodedRect {
+            rect: Rect::new(0, 0, 64, 64),
+            payload: RectPayload::Jpeg(vec![0u8; 200]),
+        };
+        assert_eq!(decoded_payload_len(&d), 64 * 64 * 4);
     }
 
     #[test]

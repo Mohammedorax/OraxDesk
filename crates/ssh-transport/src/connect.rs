@@ -206,8 +206,15 @@ async fn connect_and_authenticate_inner(
     keepalive: Keepalive,
 ) -> Result<SshHandle> {
     let mut ssh = connect_only(cfg, verifier, keepalive).await?;
-    authenticate(&mut ssh, cfg).await?;
-    Ok(ssh)
+    // The deadline covers the WHOLE connect, authentication included. A server
+    // that completes KEX and then ignores the userauth request (while happily
+    // answering keepalives) used to hang this future forever, and with it the
+    // Files panel, the terminal and the tunnel dialog.
+    match tokio::time::timeout(cfg.connect_timeout(), authenticate(&mut ssh, cfg)).await {
+        Ok(Ok(())) => Ok(ssh),
+        Ok(Err(error)) => Err(error),
+        Err(_) => Err(Error::Timeout),
+    }
 }
 
 /// The handshake half of a connect: everything up to and including the host

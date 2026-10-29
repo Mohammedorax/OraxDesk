@@ -422,6 +422,20 @@ pub const JPEG_8X8_RED_BLUE: &[u8] = &[
 /// The hot path hands [`RectPayload::Jpeg`] to the webview for GPU decode;
 /// this software path exists for the native framebuffer (thumbnails).
 pub fn decode_jpeg_to_rgba(data: &[u8]) -> Result<(u32, u32, Vec<u8>)> {
+    decode_jpeg_to_rgba_limited(data, usize::MAX)
+}
+
+/// [`decode_jpeg_to_rgba`] with a ceiling on the decoded image, in pixels.
+///
+/// The dimensions in a JPEG's SOF are attacker-controlled and the decoder
+/// allocates `width * height * 4` as soon as it has read them. A Tight rect
+/// can match a 2×2 destination and still carry a 16384×16384 header, so the
+/// caller passes the rect's own pixel count: a decode that cannot be shown
+/// anywhere is refused before the allocation rather than after it.
+pub fn decode_jpeg_to_rgba_limited(
+    data: &[u8],
+    max_pixels: usize,
+) -> Result<(u32, u32, Vec<u8>)> {
     use zune_jpeg::zune_core::bytestream::ZCursor;
     use zune_jpeg::zune_core::colorspace::ColorSpace;
     use zune_jpeg::zune_core::options::DecoderOptions;
@@ -431,14 +445,23 @@ pub fn decode_jpeg_to_rgba(data: &[u8]) -> Result<(u32, u32, Vec<u8>)> {
     // zune-jpeg 0.5 reads through `ZByteReaderTrait` rather than a bare slice,
     // so the input is wrapped in a cursor. Still zero-copy over `data`.
     let mut decoder = JpegDecoder::new_with_options(ZCursor::new(data), options);
-    let pixels = decoder
-        .decode()
-        .map_err(|e| derr("tight-jpeg", format!("jpeg decode failed: {e:?}")))?;
+    decoder
+        .decode_headers()
+        .map_err(|e| derr("tight-jpeg", format!("jpeg headers failed: {e:?}")))?;
     let info = decoder
         .info()
         .ok_or_else(|| derr("tight-jpeg", "jpeg missing image info"))?;
     let (w, h) = (info.width as u32, info.height as u32);
     let n = w as usize * h as usize;
+    if n > max_pixels {
+        return Err(derr(
+            "tight-jpeg",
+            format!("jpeg {w}x{h} exceeds the rectangle it fills"),
+        ));
+    }
+    let pixels = decoder
+        .decode()
+        .map_err(|e| derr("tight-jpeg", format!("jpeg decode failed: {e:?}")))?;
     if n == 0 {
         return Ok((0, 0, Vec::new()));
     }
@@ -520,6 +543,16 @@ mod tests {
         assert!(decode_jpeg_to_rgba(b"not a jpeg at all").is_err());
         // Valid header, truncated body: the common hostile shape.
         assert!(decode_jpeg_to_rgba(&JPEG_8X8_RED_BLUE[..20]).is_err());
+    }
+
+    #[test]
+    fn a_jpeg_larger_than_its_rectangle_is_refused_before_decoding() {
+        // The 8x8 fixture cannot be shown in a 7x9 rect (63 pixels), so the
+        // decoder must refuse it on the header alone; the same image fits its
+        // own 64-pixel rect.
+        assert!(decode_jpeg_to_rgba_limited(JPEG_8X8_RED_BLUE, 63).is_err());
+        let (w, h, _) = decode_jpeg_to_rgba_limited(JPEG_8X8_RED_BLUE, 64).expect("fits");
+        assert_eq!((w, h), (8, 8));
     }
     use super::*;
 

@@ -4,18 +4,54 @@
 //! [`install`] if we ever want live refresh); clicking one focuses the main
 //! window and emits `tray://connect` with the host id so the frontend starts
 //! the connection through its normal path.
+//!
+//! The two labels are built in the language the shell's menus use
+//! (`menu::stored_language`), and [`set_language`] rebuilds this menu when the
+//! person switches language so the tray does not stay in the old one.
 
-use tauri::menu::{MenuBuilder, MenuItemBuilder};
+use tauri::menu::{Menu, MenuBuilder, MenuItemBuilder};
 use tauri::tray::TrayIconBuilder;
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Emitter, Manager, Wry};
 
+use crate::menu::{self, Lang};
 use crate::state::AppState;
 
 const MAX_RECENT: usize = 5;
 
 pub fn install(app: &AppHandle) -> tauri::Result<()> {
+    let lang = menu::stored_language(app);
+    let menu = build_menu(app, lang)?;
+    let mut tray = TrayIconBuilder::with_id("main")
+        .menu(&menu)
+        .show_menu_on_left_click(true)
+        .tooltip("OraxDesk")
+        .on_menu_event(|app, event| handle_tray_event(app, event.id().as_ref()));
+    if let Some(icon) = app.default_window_icon() {
+        tray = tray.icon(icon.clone());
+    }
+    tray.build(app)?;
+    Ok(())
+}
+
+/// Replace the tray menu with one built in `lang`, keeping the same tray.
+pub fn set_language(app: &AppHandle, lang: Lang) {
+    let Some(tray) = app.tray_by_id("main") else {
+        return;
+    };
+    match build_menu(app, lang) {
+        Ok(menu) => {
+            if let Err(e) = tray.set_menu(Some(menu)) {
+                tracing::warn!("could not relabel the tray menu: {e}");
+            }
+        }
+        Err(e) => tracing::warn!("could not rebuild the tray menu: {e}"),
+    }
+}
+
+fn build_menu(app: &AppHandle, lang: Lang) -> tauri::Result<Menu<Wry>> {
+    let (open_label, quit_label) = menu::tray_labels(lang);
     let mut builder = MenuBuilder::new(app)
-        .item(&MenuItemBuilder::with_id("tray:open", "Open OraxDesk").build(app)?);
+        .item(&MenuItemBuilder::with_id("tray:open", open_label).build(app)?);
 
     let recent = recent_hosts(app);
     if !recent.is_empty() {
@@ -27,21 +63,10 @@ pub fn install(app: &AppHandle) -> tauri::Result<()> {
                 .item(&MenuItemBuilder::with_id(format!("tray:host:{host_id}"), name).build(app)?);
         }
     }
-    let menu = builder
+    builder
         .separator()
-        .item(&MenuItemBuilder::with_id("tray:quit", "Quit OraxDesk").build(app)?)
-        .build()?;
-
-    let mut tray = TrayIconBuilder::with_id("main")
-        .menu(&menu)
-        .show_menu_on_left_click(true)
-        .tooltip("OraxDesk")
-        .on_menu_event(|app, event| handle_tray_event(app, event.id().as_ref()));
-    if let Some(icon) = app.default_window_icon() {
-        tray = tray.icon(icon.clone());
-    }
-    tray.build(app)?;
-    Ok(())
+        .item(&MenuItemBuilder::with_id("tray:quit", quit_label).build(app)?)
+        .build()
 }
 
 fn handle_tray_event(app: &AppHandle, id: &str) {

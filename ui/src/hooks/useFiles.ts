@@ -198,6 +198,41 @@ export function useFiles(sessionId: string, enabled: boolean): FilesApi {
   const lastConfig = useRef<FilesConnectConfig | null>(null);
   connectedRef.current = connected;
 
+  /**
+   * One listing read per pane at a time, newest wins.
+   *
+   * A directory read is asynchronous and a person can navigate faster than a
+   * slow share answers (a local drive answers instantly, a network one does
+   * not). Two reads used to land in whichever order the OS finished them, so
+   * the OLDER directory could overwrite the newer one: the pane showed one
+   * path above another directory's files, with no error and no loading state
+   * to explain it. The generation is taken before the read and checked before
+   * it is applied; the same applies to the refresh that runs when a transfer
+   * settles, which can land on top of a navigation.
+   */
+  const localGeneration = useRef(0);
+  const remoteGeneration = useRef(0);
+
+  /**
+   * Operations that must not run twice from one gesture.
+   *
+   * The upload button stays enabled while a picker is open and a slow link
+   * keeps a queue busy, so a double click used to queue every file twice (and
+   * exhaust the three-slot queue with copies), and a double click on "create
+   * folder" sent two `mkdir` calls, the second failing as a raw error over a
+   * folder that had just been created. Keyed by operation rather than one
+   * global flag so different work can still overlap.
+   */
+  const inFlight = useRef(new Set<string>());
+  const claim = (op: string): boolean => {
+    if (inFlight.current.has(op)) return false;
+    inFlight.current.add(op);
+    return true;
+  };
+  const release = (op: string): void => {
+    inFlight.current.delete(op);
+  };
+
   // --------------------------------------------------------------- events
 
   useEffect(() => {
@@ -237,9 +272,11 @@ export function useFiles(sessionId: string, enabled: boolean): FilesApi {
    * second drive would be out of reach.
    */
   const loadLocal = useCallback(async (path: string): Promise<void> => {
+    const generation = ++localGeneration.current;
     setLocal((p) => ({ ...p, loading: true, error: null }));
     try {
       const entries = await filesLocalList(path || null);
+      if (generation !== localGeneration.current) return;
       setLocal((p) => ({
         ...p,
         path: path || p.path,
@@ -249,6 +286,7 @@ export function useFiles(sessionId: string, enabled: boolean): FilesApi {
         selected: [],
       }));
     } catch (err) {
+      if (generation !== localGeneration.current) return;
       setLocal((p) => ({ ...p, loading: false, error: describe(err) }));
     }
   }, []);
@@ -276,9 +314,11 @@ export function useFiles(sessionId: string, enabled: boolean): FilesApi {
   const loadRemote = useCallback(
     async (path: string): Promise<void> => {
       if (!connectedRef.current) return;
+      const generation = ++remoteGeneration.current;
       setRemote((p) => ({ ...p, loading: true, error: null }));
       try {
         const entries = await filesList(sessionId, path);
+        if (generation !== remoteGeneration.current) return;
         setRemote((p) => ({
           ...p,
           path,
@@ -288,6 +328,7 @@ export function useFiles(sessionId: string, enabled: boolean): FilesApi {
           selected: [],
         }));
       } catch (err) {
+        if (generation !== remoteGeneration.current) return;
         setRemote((p) => ({ ...p, loading: false, error: describe(err) }));
       }
     },
@@ -424,10 +465,13 @@ export function useFiles(sessionId: string, enabled: boolean): FilesApi {
     async (localPaths: string[], remoteDir?: string): Promise<void> => {
       const dir = remoteDir || remote.path;
       if (!connectedRef.current || localPaths.length === 0 || !dir) return;
+      if (!claim("upload")) return;
       try {
         await filesUpload(sessionId, localPaths, dir);
       } catch (err) {
         setRemote((p) => ({ ...p, error: describe(err) }));
+      } finally {
+        release("upload");
       }
     },
     [sessionId, remote.path],
@@ -437,10 +481,13 @@ export function useFiles(sessionId: string, enabled: boolean): FilesApi {
     async (remotePaths: string[], localDir?: string): Promise<void> => {
       const dir = localDir || local.path;
       if (!connectedRef.current || remotePaths.length === 0 || !dir) return;
+      if (!claim("download")) return;
       try {
         await filesDownload(sessionId, remotePaths, dir);
       } catch (err) {
         setLocal((p) => ({ ...p, error: describe(err) }));
+      } finally {
+        release("download");
       }
     },
     [sessionId, local.path],
@@ -450,6 +497,7 @@ export function useFiles(sessionId: string, enabled: boolean): FilesApi {
     async (pane: Pane, name: string): Promise<void> => {
       const dir = pane === "local" ? local.path : remote.path;
       const target = joinPath(dir, name);
+      if (!claim(`mkdir:${pane}`)) return;
       try {
         if (pane === "local") {
           await filesLocalMkdir(target);
@@ -462,6 +510,8 @@ export function useFiles(sessionId: string, enabled: boolean): FilesApi {
         const update = (p: PaneState): PaneState => ({ ...p, error: describe(err) });
         if (pane === "local") setLocal(update);
         else setRemote(update);
+      } finally {
+        release(`mkdir:${pane}`);
       }
     },
     [sessionId, local.path, remote.path, loadLocal, loadRemote],
@@ -472,6 +522,7 @@ export function useFiles(sessionId: string, enabled: boolean): FilesApi {
       const dir = parentDir(from);
       const to = joinPath(dir, newName);
       if (to === from) return;
+      if (!claim(`rename:${pane}`)) return;
       try {
         if (pane === "local") {
           await filesLocalRename(from, to);
@@ -484,6 +535,8 @@ export function useFiles(sessionId: string, enabled: boolean): FilesApi {
         const update = (p: PaneState): PaneState => ({ ...p, error: describe(err) });
         if (pane === "local") setLocal(update);
         else setRemote(update);
+      } finally {
+        release(`rename:${pane}`);
       }
     },
     [sessionId, local.path, remote.path, loadLocal, loadRemote],
@@ -491,6 +544,8 @@ export function useFiles(sessionId: string, enabled: boolean): FilesApi {
 
   const remove = useCallback(
     async (pane: Pane, paths: string[]): Promise<void> => {
+      if (paths.length === 0) return;
+      if (!claim(`remove:${pane}`)) return;
       try {
         for (const path of paths) {
           if (pane === "local") await filesLocalRemove(path, true);
@@ -502,6 +557,8 @@ export function useFiles(sessionId: string, enabled: boolean): FilesApi {
         const update = (p: PaneState): PaneState => ({ ...p, error: describe(err) });
         if (pane === "local") setLocal(update);
         else setRemote(update);
+      } finally {
+        release(`remove:${pane}`);
       }
     },
     [sessionId, local.path, remote.path, loadLocal, loadRemote],

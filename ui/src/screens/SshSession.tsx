@@ -92,7 +92,7 @@ function statusPill(state: SessionState, t: ReturnType<typeof useT>): { label: s
     case "disconnected":
       return { label: t("ssh.disconnected"), dot: "bg-danger" };
     default:
-      return { label: "Connecting…", dot: "bg-tertiary animate-pulse" };
+      return { label: t("ssh.connecting"), dot: "bg-tertiary animate-pulse" };
   }
 }
 
@@ -410,7 +410,7 @@ export function SshSession({
               className="btn-secondary px-2.5 py-1 text-xs"
               onClick={session.disconnect}
             >
-              Disconnect
+              {t("ssh.disconnect")}
             </button>
           ) : null}
         </div>

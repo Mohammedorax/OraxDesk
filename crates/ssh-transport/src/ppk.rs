@@ -198,7 +198,7 @@ impl PpkFile {
         let mut lines = text.lines().peekable();
 
         let first = lines.next().ok_or(PpkError::NotPpk)?;
-        let (key, algorithm) = split_field(first)?;
+        let (key, algorithm) = split_field(first, 1)?;
         let version_str = key.strip_prefix(MAGIC).ok_or(PpkError::NotPpk)?.to_string();
         let version = match version_str.as_str() {
             "2" => 2u8,
@@ -217,11 +217,13 @@ impl PpkFile {
         let mut parallelism = None;
         let mut salt = None;
 
+        let mut line_no = 1usize;
         while let Some(line) = lines.next() {
+            line_no += 1;
             if line.trim().is_empty() {
                 continue;
             }
-            let (key, value) = split_field(line)?;
+            let (key, value) = split_field(line, line_no)?;
             match key {
                 "Encryption" => encryption = Some(value.to_string()),
                 "Comment" => comment = value.to_string(),
@@ -301,10 +303,14 @@ impl PpkFile {
 }
 
 /// `Key: value`, with the single space after the colon that PuTTY writes.
-fn split_field(line: &str) -> Result<(&str, &str), PpkError> {
-    let (key, value) = line
-        .split_once(':')
-        .ok_or_else(|| PpkError::Malformed(format!("line is not a field: {line:?}")))?;
+///
+/// The error names the LINE NUMBER, never the text: a mismatched
+/// `Private-Lines` count puts a base64 private-key line here, and embedding it
+/// in an error hands the key to every log and error dialog that shows one.
+fn split_field(line: &str, line_no: usize) -> Result<(&str, &str), PpkError> {
+    let (key, value) = line.split_once(':').ok_or_else(|| {
+        PpkError::Malformed(format!("line {line_no} is not a field"))
+    })?;
     Ok((key.trim(), value.trim()))
 }
 
@@ -409,6 +415,25 @@ fn derive_v3(file: &PpkFile, passphrase: &str, encrypted: bool) -> Result<Derive
         .argon2
         .as_ref()
         .ok_or_else(|| PpkError::Malformed("encrypted v3 key has no Argon2 parameters".into()))?;
+
+    // Argon2 parameters come from the key file, and the crate's limits are the
+    // `u32` maxima: `memory_kib` alone can ask for terabytes. These ceilings
+    // are far above any key PuTTY writes and far below what a crafted file
+    // needs to abort the process or burn minutes of CPU.
+    const MAX_MEMORY_KIB: u32 = 1024 * 1024; // 1 GiB
+    const MAX_PASSES: u32 = 1_000;
+    const MAX_PARALLELISM: u32 = 256;
+    if params.memory_kib == 0
+        || params.memory_kib > MAX_MEMORY_KIB
+        || params.passes == 0
+        || params.passes > MAX_PASSES
+        || params.parallelism == 0
+        || params.parallelism > MAX_PARALLELISM
+    {
+        return Err(PpkError::Malformed(
+            "Argon2 parameters are outside the supported range".into(),
+        ));
+    }
 
     let argon_params = argon2::Params::new(
         params.memory_kib,

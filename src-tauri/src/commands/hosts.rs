@@ -29,16 +29,54 @@ pub async fn save_host(
     profile: HostProfile,
 ) -> Result<HostProfile, String> {
     let store = state.store.clone();
-    // A Boundary computer is saved by its lasting ID, for unattended
-    // access. An invitation is temporary and is never a host.
-    if profile.protocol == "boundary"
-        && boundary_session::unattended::validate_machine_id(&profile.address).is_err()
-    {
-        return Err("Boundary invitations are temporary. Save a computer by its unattended ID, or start a new support connection".into());
-    }
+    validate_profile(&profile)?;
     let returned = profile.clone();
     super::blocking(move || store.save_host(&profile)).await?;
     Ok(returned)
+}
+
+/// What a saved profile has to satisfy before it reaches the store.
+///
+/// The editor validates what a person types, but the store is also written by
+/// imports, Undo and the agent's adopt path, and several columns end up in
+/// places that do not render free text well: a native window title, a tray
+/// menu row, a picker label. So the check is narrow and about shape only:
+/// a real name (no control characters, a sane length), a bare endpoint (no
+/// whitespace), and a port that can be dialled. Nothing here rewrites what
+/// was sent; a refusal is reported instead of a silent repair.
+fn validate_profile(profile: &HostProfile) -> Result<(), String> {
+    let name = profile.friendly_name.trim();
+    if name.is_empty() {
+        return Err("a computer needs a name".into());
+    }
+    if name.chars().count() > 256 {
+        return Err("the name is too long (256 characters at most)".into());
+    }
+    if name.chars().any(char::is_control) {
+        return Err("the name contains control characters".into());
+    }
+    // A Boundary computer is saved by its lasting ID, for unattended
+    // access. An invitation is temporary and is never a host.
+    if profile.protocol == "boundary" {
+        return boundary_session::unattended::validate_machine_id(&profile.address).map_err(|_| {
+            "Boundary invitations are temporary. Save a computer by its unattended ID, or start a new support connection"
+                .to_string()
+        });
+    }
+    let address = profile.address.trim();
+    if address.is_empty() {
+        return Err("a computer needs an address".into());
+    }
+    if address.chars().count() > 255 {
+        return Err("the address is too long (255 characters at most)".into());
+    }
+    if address.chars().any(|c| c.is_whitespace() || c.is_control()) {
+        return Err("the address must not contain spaces".into());
+    }
+    if profile.port == 0 {
+        return Err("the port must be between 1 and 65535".into());
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -227,4 +265,49 @@ pub async fn set_app_setting(
         crate::commands::agent::apply(&app, crate::agent::plane_enabled(Some(&value)));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn profile(name: &str, address: &str, port: u16) -> HostProfile {
+        HostProfile {
+            friendly_name: name.into(),
+            address: address.into(),
+            port,
+            ..Default::default()
+        }
+    }
+
+    /// The ordinary case must keep working, including a non-Latin name: the
+    /// check is about shape, not about what alphabet a person uses.
+    #[test]
+    fn an_ordinary_profile_passes() {
+        assert!(validate_profile(&profile("غرفة الاجتماعات", "10.0.0.4", 5900)).is_ok());
+        assert!(validate_profile(&profile("Studio — iMac", "studio.local", 5901)).is_ok());
+    }
+
+    #[test]
+    fn a_profile_without_a_real_name_is_refused() {
+        assert!(validate_profile(&profile("", "10.0.0.4", 5900)).is_err());
+        assert!(validate_profile(&profile("   ", "10.0.0.4", 5900)).is_err());
+        // A newline reaches a native window title and a tray row.
+        assert!(validate_profile(&profile("living\nroom", "10.0.0.4", 5900)).is_err());
+    }
+
+    #[test]
+    fn a_profile_without_a_bare_endpoint_is_refused() {
+        assert!(validate_profile(&profile("Studio", "", 5900)).is_err());
+        assert!(validate_profile(&profile("Studio", "  ", 5900)).is_err());
+        assert!(validate_profile(&profile("Studio", "10.0.0.4 5900", 5900)).is_err());
+        assert!(validate_profile(&profile("Studio", "10.0.0.4", 0)).is_err());
+    }
+
+    #[test]
+    fn a_boundary_profile_still_needs_an_unattended_id() {
+        let mut boundary = profile("Front desk", "not-a-machine-id", 0);
+        boundary.protocol = "boundary".into();
+        assert!(validate_profile(&boundary).is_err());
+    }
 }

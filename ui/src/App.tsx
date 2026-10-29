@@ -248,6 +248,24 @@ function MainShell(): ReactNode {
     return () => window.removeEventListener("focus", syncMenuState);
   }, [libraryInFront]);
 
+  // After a menu rebuild (language switch) the menu is back to its defaults.
+  // With the library in front that means "nothing live", which is what this
+  // sends; a session in front re-pushes its own snapshot from its listener.
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    let cancelled = false;
+    void safeListen<null>("menu://relabel", () => {
+      if (libraryInFrontRef.current) syncMenuState();
+    }).then((fn) => {
+      if (cancelled) fn();
+      else unlisten = fn;
+    });
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, []);
+
   /**
    * The shell's own keyboard: tabs, and the panes inside them.
    *

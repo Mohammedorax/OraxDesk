@@ -25,8 +25,15 @@ $b = New-Object byte[] 32
 [System.Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($b)
 [Convert]::ToBase64String($b) | npx.cmd wrangler secret put INVITATION_KEY
 
+# (اختياري) سحب جهاز من طرف المشغّل. بدونه لا يوجد مسار الإدارة إطلاقًا (404).
+npx.cmd wrangler secret put OPERATOR_TOKEN
+
 npx.cmd wrangler deploy
 ```
+
+> ⚠️ لا تنشر بمفتاح `.dev.vars` التجريبي. إن نسخته، سيعيد `/v1/signals` الرمز 503
+> ويعرض `/healthz` القيمة `invitation_key: "development"` مع `status: "degraded"`.
+> `ALLOW_TEST_KEY=1` للتطوير المحلي فقط.
 
 ## 2. التحقق بعد النشر
 

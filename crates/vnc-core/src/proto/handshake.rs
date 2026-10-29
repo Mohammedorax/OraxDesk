@@ -9,6 +9,23 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 /// Sanity cap on the server-supplied desktop name length.
 const MAX_NAME_LEN: usize = 64 * 1024;
 
+/// The largest framebuffer this client will accept, in pixels.
+///
+/// A `ServerInit` is four bytes of claim, and an accepted 65535×65535 makes
+/// every later budget a function of that claim: the update budget below is
+/// derived from the framebuffer, and a Tight Fill rect is four wire bytes for
+/// a 256 MiB buffer. 8K is 33.2 M pixels, so 64 M is generous headroom for
+/// real desktops and a hard stop for a hostile one. The same ceiling applies
+/// to `DesktopResize`.
+pub const MAX_FRAMEBUFFER_PIXELS: u64 = 64 * 1024 * 1024;
+
+/// Whether a server-declared geometry is plausible enough to allocate against.
+pub fn framebuffer_fits(width: u16, height: u16) -> bool {
+    width != 0
+        && height != 0
+        && u64::from(width) * u64::from(height) <= MAX_FRAMEBUFFER_PIXELS
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct ServerInit {
     pub width: u16,
@@ -45,9 +62,9 @@ where
     }
     let name_bytes = read_exact_vec(reader, name_len).await?;
     let name = String::from_utf8_lossy(&name_bytes).into_owned();
-    if width == 0 || height == 0 {
+    if !framebuffer_fits(width, height) {
         return Err(VncError::Protocol(format!(
-            "server reported empty framebuffer {width}x{height}"
+            "server reported an implausible framebuffer {width}x{height}"
         )));
     }
     Ok(ServerInit {
@@ -213,6 +230,28 @@ mod tests {
         wire.extend_from_slice(&u32::MAX.to_be_bytes());
         let mut cur = std::io::Cursor::new(wire);
         assert!(read_server_init(&mut cur).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn server_init_rejects_an_implausible_framebuffer() {
+        // 65535x65535 is four bytes of claim that used to make every update
+        // budget a function of the server's own declared geometry.
+        let wire = server_init_wire(u16::MAX, u16::MAX, "hostile");
+        let mut cur = std::io::Cursor::new(wire);
+        assert!(read_server_init(&mut cur).await.is_err());
+
+        // 8K is accepted, with headroom still to spare.
+        let wire = server_init_wire(7680, 4320, "8K");
+        let mut cur = std::io::Cursor::new(wire);
+        assert!(read_server_init(&mut cur).await.is_ok());
+    }
+
+    #[test]
+    fn geometry_ceiling_is_the_same_for_resize() {
+        assert!(framebuffer_fits(7680, 4320));
+        assert!(!framebuffer_fits(u16::MAX, u16::MAX));
+        assert!(!framebuffer_fits(0, 1080));
+        assert!(!framebuffer_fits(1920, 0));
     }
 
     #[tokio::test]

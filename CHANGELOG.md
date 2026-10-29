@@ -10,6 +10,100 @@ to stored data and to the IPC contract between the Rust core and the frontend.
 
 ## [Unreleased]
 
+## [0.31.9] (2026-10-29)
+
+### Added
+
+* The Library's top bar now carries this computer's nine-digit number beside
+  the app name: click to copy, and the number follows the one the registry
+  assigns. The full-width identity row it replaces is gone.
+* The native menu bar and the tray are translated with the rest of the
+  interface (Arabic and English) and are rebuilt when the language is switched,
+  without a restart. Predefined system items stay localised by the OS.
+* The app uses the brand pack's typeface (Tajarib, four real weights), app
+  icons (including a generated `.icns`) and a text wordmark.
+* Registry operator revocation: `POST /v1/admin/devices/{id}/revoke`, gated on
+  a new `OPERATOR_TOKEN` secret. The endpoint does not exist without it.
+
+### Changed
+
+* Device registration is state-driven: once at app start and a 48-hour
+  keep-alive, with a local freshness check so relaunching the app does not
+  contact the registry again. About a quarter of the old six-hour traffic.
+* File transfers are confined to folders the user granted. The pickers now run
+  in the shell (`files_pick_upload`, `files_pick_download_dir`) and grant
+  exactly the folder chosen; the local pane's "Allow a folder" button also
+  gained the session-window grant it was missing, so it works in packaged
+  builds.
+* Editing a host no longer resets its connection history or its "password
+  saved" flag; those columns belong to the operations that own them.
+* A one-time code is no longer consumed when decryption fails (a key rotation
+  mistake used to burn every pending code), and the hourly per-device cap is
+  enforced inside the insert instead of by a raceable count.
+* The published development invitation key is refused in production:
+  `/v1/signals` answers 503 and `/healthz` reports `invitation_key:
+  "development"` unless a deployment opts in with `ALLOW_TEST_KEY=1`.
+* A revoked device stays revoked: the sweeper keeps revoked rows as
+  tombstones, so a machine holding its key cannot re-register after a day.
+* Address publishing accepts IPv6 literals and relay URLs with a path, and
+  skips transport kinds it does not understand instead of failing the whole
+  publish, which kept dual-stack machines out of the directory.
+
+### Fixed
+
+* Double-clicking Add on a discovered machine no longer saves it twice; an
+  endpoint already in the library is reported instead of duplicated.
+* Upload, create-folder, rename, delete and download can no longer be fired
+  twice from one gesture, and a whole upload batch is validated before any
+  transfer starts.
+* A file pane can no longer be overwritten by a slower, older directory read.
+* Closing a tab while its session is connecting no longer leaves a connection
+  running with no window watching it.
+* The About dialog's Project and Contact buttons work in the packaged app; the
+  shell opens the URL so the webview never names one.
+* Recent machines in the tray, Connection ▸ Connect/Wake in the menu and the
+  group-as-grid retry now open what they say they will.
+* "Forget saved key" reports a failure instead of claiming success, and Undo
+  after a delete no longer draws a key icon for a credential that was deleted.
+* The status menu no longer renders literal parentheses, and a redirected RDP
+  session updates the name in the connecting overlay.
+* SSH terminal input is capped, the event window label is validated, and a
+  disconnect no longer waits on a full command channel.
+* Pairing one machine twice at once no longer creates duplicate profiles.
+
+### Security
+
+* Local file transfers enforce the granted-folder confinement: the write path
+  previously accepted any absolute directory and the read path any file.
+* Clock-skew answers from the registry carry their own error code, so automatic
+  clock correction no longer depends on the English wording.
+* Requests that reach the Worker without `cf-connecting-ip` are refused instead
+  of sharing one rate-limit bucket.
+* VNC: a server-declared framebuffer is capped at 64 M pixels (`ServerInit`
+  and `DesktopResize`), the per-update budget has an absolute 256 MiB ceiling,
+  JPEG/H.264 rectangles are charged at decoded size, and a Tight JPEG cannot
+  make the decoder allocate beyond the rectangle it fills.
+* VNC: a profile pinned to VeNCrypt TLS + X.509 is no longer satisfied by the
+  cleartext `Plain` subtype.
+* VNC: a stream of empty updates or bells can no longer starve commands and
+  the stats tick (cancellation keeps priority), and ZRLE run lengths are
+  bounded.
+* RDP: encoded bitmap dimensions are capped before allocation and a refused
+  allocation is a protocol error rather than a process abort; NSCodec refuses
+  planes shorter than its raw tail; ZGFX match distances are overflow-checked;
+  dynamic channels are capped at 16; a redirect without `TargetFQDN` uses the
+  target as the TLS identity; SPNEGO requires `mechListMIC` when the acceptor
+  did not use the first mechanism.
+* SSH/files: a saved profile's password can only be used for that profile's own
+  address and port; uploads from the home directory refuse credential stores
+  unless the user picked the file; downloads refuse server-named `.ssh` and
+  shell-startup files; PPK Argon2 parameters are capped and parse errors no
+  longer echo key material; SFTP listings and the transfer queue are bounded;
+  a recursive delete refuses a symlink root; a changed gateway key is a hard
+  stop, and authentication/subsystem setup obeys the connect deadline.
+* With clipboard sync off, a remote server can no longer replace the local
+  clipboard.
+
 ## [0.31.8] (2026-10-28)
 
 ### Fixed

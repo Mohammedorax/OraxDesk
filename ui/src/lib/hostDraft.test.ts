@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  cleanDisplayName,
   portOnProtocolChange,
   portWasTouched,
   vncCredentialPayload,
@@ -7,6 +8,23 @@ import {
 } from "./hostDraft";
 import { blankHostProfile, type HostProfile } from "./types";
 import { draftFromHost } from "../components/HostDialog";
+
+describe("cleanDisplayName", () => {
+  it("keeps an ordinary name, Arabic and punctuation included", () => {
+    expect(cleanDisplayName("  غرفة الاجتماعات ", "10.0.0.4")).toBe("غرفة الاجتماعات");
+    expect(cleanDisplayName("Studio — iMac", "10.0.0.4")).toBe("Studio — iMac");
+  });
+
+  it("turns a control character into a space rather than carrying it", () => {
+    // mDNS and NetBIOS are whatever the other machine says they are.
+    expect(cleanDisplayName("evil\nname\u0000\there", "10.0.0.4")).toBe("evil name here");
+  });
+
+  it("falls back to the address when the name is empty or only space", () => {
+    expect(cleanDisplayName("", "10.0.0.4")).toBe("10.0.0.4");
+    expect(cleanDisplayName(" \n\t ", "10.0.0.4")).toBe("10.0.0.4");
+  });
+});
 
 describe("portOnProtocolChange", () => {
   it("moves a default port to the other protocol's default", () => {

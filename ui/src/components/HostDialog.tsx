@@ -47,7 +47,12 @@ import {
   sshListWslDistros,
 } from "../lib/tauri";
 import { MOCK_LOCAL_KEYS, useMockData } from "../lib/mock";
-import { portOnProtocolChange, portWasTouched, vncTakesUsername } from "../lib/hostDraft";
+import {
+  cleanDisplayName,
+  portOnProtocolChange,
+  portWasTouched,
+  vncTakesUsername,
+} from "../lib/hostDraft";
 import { addressErrorText, parseConnectTarget } from "../lib/address";
 import { Dialog, Select } from "./primitives";
 import { IconChevronDown, IconChevronRight } from "./icons";
@@ -464,7 +469,10 @@ export function HostDialog({
     // address, so it is normalized here too rather than only on the way out
     // of the field.
     const address = parsed.target.address;
-    const name = d.friendlyName.trim() || address;
+    // Same reason as the address: the name reaches a native window title and
+    // a menu row, so a control character in it is cleaned here rather than
+    // refused by the store after the whole form has been filled in.
+    const name = cleanDisplayName(d.friendlyName, address);
     const result = onSave({ ...d, address, friendlyName: name });
     if (result instanceof Promise) {
       setSaving(true);

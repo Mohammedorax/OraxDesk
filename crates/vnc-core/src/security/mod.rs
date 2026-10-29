@@ -286,6 +286,21 @@ pub(crate) fn allow_insecure(opts: &ConnectOptions) -> bool {
     vnc_opts(opts).allow_insecure
 }
 
+/// The raw security preference the profile stored, if any.
+///
+/// [`SecurityType::parse_pref`] maps both `vencrypt` and `vencrypt-x509` to
+/// the same outer type, so the one place that has to tell them apart reads the
+/// string itself. Owned rather than borrowed: the options may be a default
+/// constructed on the fly.
+pub(crate) fn raw_security_pref(opts: &ConnectOptions) -> Option<String> {
+    vnc_opts(opts)
+        .security_pref
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+}
+
 /// The pinned security type, if the profile names one this build knows.
 pub(crate) fn security_pref(opts: &ConnectOptions) -> Option<SecurityType> {
     SecurityType::parse_pref(vnc_opts(opts).security_pref.as_deref())

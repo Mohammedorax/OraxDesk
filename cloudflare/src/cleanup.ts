@@ -1,3 +1,4 @@
+import { ADDRESS_TTL_SECONDS } from "./constants";
 import { nowSeconds } from "./encoding";
 import type { Env } from "./env";
 
@@ -8,26 +9,6 @@ export interface SweepResult {
   addresses: number;
   devices: number;
 }
-
-/**
- * How long a published address stays true.
- *
- * The same number the directory reads with, so the sweeper and the reader
- * agree on when an address has expired. A device that changed network
- * publishes again, and this is the backstop for one that went away without
- * publishing.
- */
-const ADDRESS_TTL_SECONDS = 60 * 60;
-
-/**
- * How long a revoked or abandoned device row is kept.
- *
- * A device row is small, and it is the record that a device exists, so it is
- * kept for a while after the device stops talking. A revoked device is kept
- * a day, because a revocation is an event and an event is worth keeping
- * long enough to be looked at.
- */
-const DEVICE_RETENTION_SECONDS = 24 * 3600;
 
 /**
  * Bounded cleanup for the Cron Trigger. Each statement deletes at most 500
@@ -50,10 +31,11 @@ const DEVICE_RETENTION_SECONDS = 24 * 3600;
  *     is the retention. 2000 a run keeps the table inside its window.
  *   * An ADDRESS expires on its own after an hour, and the expired ones are
  *     cleared rather than left to be read as "no such device" for ever.
- *   * A DEVICE row is kept for a day after it is revoked, and a device that
- *     has never been seen is kept for a week. Without this the table grows
- *     by one row per registration for ever, and a registration is one of the
- *     few things an anonymous caller can make.
+ *   * A DEVICE row is kept for a week after it was last seen. A REVOKED row
+ *     is never swept: it is the tombstone that refuses the machine's next
+ *     registration. Without the weekly sweep the table grows by one row per
+ *     registration for ever, and a registration is one of the few things an
+ *     anonymous caller can make.
  */
 export async function sweep(env: Env, now = nowSeconds()): Promise<SweepResult> {
   const codes = await env.DB.prepare(
@@ -93,18 +75,25 @@ export async function sweep(env: Env, now = nowSeconds()): Promise<SweepResult> 
   )
     .bind(now - ADDRESS_TTL_SECONDS)
     .run();
-  // A device nobody has heard from in a week, or one that was revoked a day
-  // ago, is not a device anybody can reach.
+  // A device nobody has heard from in a week is not a device anybody can
+  // reach, and without this the table grows by one row per registration for
+  // ever. Revoked rows are deliberately NOT swept: a revoked device that
+  // re-registers is refused by its tombstone (`devices.revoked_at`), and
+  // deleting the row after a day handed the machine its registration back —
+  // a revocation would have lasted exactly one day plus the retention window.
+  // A revocation is meant to be permanent until an operator lifts it, and
+  // rows are small.
   const devices = await env.DB.prepare(
     `DELETE FROM devices
       WHERE rowid IN (
         SELECT rowid FROM devices
-         WHERE (revoked_at IS NOT NULL AND revoked_at < ?)
-            OR (last_seen_at IS NOT NULL AND last_seen_at < ?)
+         WHERE revoked_at IS NULL
+           AND last_seen_at IS NOT NULL
+           AND last_seen_at < ?
          LIMIT 200
       )`,
   )
-    .bind(now - DEVICE_RETENTION_SECONDS, now - 7 * 24 * 3600)
+    .bind(now - 7 * 24 * 3600)
     .run();
   return {
     codes: codes.meta.changes,

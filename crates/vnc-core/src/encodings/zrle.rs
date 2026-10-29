@@ -302,11 +302,21 @@ async fn read_palette<R: AsyncRead + Unpin>(
 }
 
 /// RLE run length: sum of bytes + 1, each 255 byte adds 255 and continues.
+///
+/// A single tile is at most 4096 pixels, so a legitimate run is far below this
+/// ceiling. The ceiling exists because an endless stream of `0xFF` continuation
+/// bytes otherwise keeps this loop alive without ever touching another check:
+/// the caller's `filled + len > n` test only runs once the function returns.
+const MAX_RUN_LENGTH: usize = 16 * 1024;
+
 async fn read_run_length<R: AsyncRead + Unpin>(reader: &mut R) -> Result<usize> {
     let mut len = 1usize;
     loop {
         let b = reader.read_u8().await?;
-        len += b as usize;
+        len = len.saturating_add(b as usize);
+        if len > MAX_RUN_LENGTH {
+            return Err(derr("zrle", "run length exceeds the tile ceiling"));
+        }
         if b != 255 {
             return Ok(len);
         }

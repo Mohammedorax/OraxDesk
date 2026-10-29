@@ -184,4 +184,35 @@ describe("signal codes", () => {
     expect(rows!.n).toBe(0);
     expect((await resolveSignal(code)).status).toBe(404);
   });
+
+  it("does not burn a code when the sealing key is unavailable", async () => {
+    // A rotation mistake (a key id this Worker does not hold) used to consume
+    // the row and only then fail to decrypt: the code was gone and the helper
+    // got a 404, for every pending code at once. Decryption happens BEFORE the
+    // claim now, so a configuration failure answers 404 without destroying
+    // anything.
+    const device = await registeredDevice();
+    const created = await createSignal(device, makeInvitation());
+    const { code } = await jsonBody<{ code: string }>(created);
+    const row = await testDb
+      .prepare("SELECT key_id FROM signal_codes WHERE code = ?")
+      .bind(code)
+      .first<{ key_id: string }>();
+    expect(row).not.toBeNull();
+
+    await testDb
+      .prepare("UPDATE signal_codes SET key_id = 'rotated1' WHERE code = ?")
+      .bind(code)
+      .run();
+    expect((await resolveSignal(code)).status).toBe(404);
+
+    // Undo the "misconfiguration": the code is still live and still usable.
+    await testDb
+      .prepare("UPDATE signal_codes SET key_id = ? WHERE code = ?")
+      .bind(row!.key_id, code)
+      .run();
+    const resolved = await resolveSignal(code);
+    expect(resolved.status).toBe(200);
+    expect((await jsonBody<{ invitation: string }>(resolved)).invitation).toBeTruthy();
+  });
 });

@@ -1,6 +1,43 @@
 @import "tailwindcss";
 
 /* ---------------------------------------------------------------------------
+   Brand typeface: Tajarib (OraxDesk brand pack).
+   Four real weights, so the interface never synthesises a bold: a faux bold
+   on Arabic breaks the joins between letters, which is the one thing a
+   typeface for this script must not do. Latin and Arabic both live in the
+   same file (the pack's OTFs cover both), so one family carries the whole UI.
+--------------------------------------------------------------------------- */
+
+@font-face {
+  font-family: "Tajarib";
+  src: url("/fonts/Tajarib_Typeface_Light.otf") format("opentype");
+  font-weight: 300;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Tajarib";
+  src: url("/fonts/Tajarib_Typeface_Regular.otf") format("opentype");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Tajarib";
+  src: url("/fonts/Tajarib_Typeface_Medium.otf") format("opentype");
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Tajarib";
+  src: url("/fonts/Tajarib_Typeface_Bold.otf") format("opentype");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* ---------------------------------------------------------------------------
    OraxDesk design tokens, PRD/11 §2.
    Light theme is the :root base; dark applies via prefers-color-scheme and can
    be forced either way with [data-theme="light" | "dark"] on <html>
@@ -20,6 +57,11 @@
   --text-tertiary: #878e9b;
   --accent: #2f6fe4;
   --accent-fg: #ffffff;
+  /* Brand colours, from the identity pack, for the wordmark only. The rest of
+     the interface keeps its own semantic accent: a UI tinted #0052FF
+     everywhere stops reading as a brand and starts reading as a theme. */
+  --brand-blue: #0052ff;
+  --brand-red: #ff1f2d;
   --success: #178745;
   --success-subtle: rgba(23, 135, 69, 0.12);
   --warning: #a06a00;
@@ -57,6 +99,8 @@
     --text-tertiary: #757c89;
     --accent: #5b95f5;
     --accent-fg: #0b1220;
+    --brand-blue: #4b93ff;
+    --brand-red: #ff5a63;
     --success: #3fc873;
     --success-subtle: rgba(63, 200, 115, 0.14);
     --warning: #e3a13c;
@@ -86,6 +130,8 @@
   --text-tertiary: #757c89;
   --accent: #5b95f5;
   --accent-fg: #0b1220;
+  --brand-blue: #4b93ff;
+  --brand-red: #ff5a63;
   --success: #3fc873;
   --success-subtle: rgba(63, 200, 115, 0.14);
   --warning: #e3a13c;
@@ -128,8 +174,8 @@
   --radius-pill: 999px;
 
   --font-sans:
-    -apple-system, BlinkMacSystemFont, "Segoe UI Variable Text", "Segoe UI",
-    system-ui, "Inter", "Ubuntu", "Cantarell", sans-serif;
+    "Tajarib", -apple-system, BlinkMacSystemFont, "Segoe UI Variable Text",
+    "Segoe UI", system-ui, "Inter", "Ubuntu", "Cantarell", sans-serif;
   --font-mono:
     "JetBrains Mono", ui-monospace, "SF Mono", SFMono-Regular, Menlo,
     Consolas, "Liberation Mono", monospace;
@@ -164,6 +210,23 @@ input,
 textarea,
 [contenteditable] {
   user-select: text;
+}
+
+/* The wordmark: brand typeface, brand colours, and the red X that the
+   logotype carries. Set as text rather than a picture so it stays sharp at
+   every size and follows the theme's own blue/red pair (the pack's #0052FF
+   and #FF1F2D are too dark on a dark surface). */
+.brand-wordmark {
+  font-family: "Tajarib", var(--font-sans);
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+}
+.brand-wordmark .brand-x {
+  color: var(--brand-red);
+}
+.brand-wordmark .brand-desk {
+  color: var(--brand-blue);
 }
 
 /* Addresses / fingerprints: mono with tabular figures so digit changes are visible */

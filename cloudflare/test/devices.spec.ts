@@ -66,6 +66,11 @@ describe("device registration", () => {
       }),
     );
     expect(response.status).toBe(401);
+    // Its own code, because the Rust client auto-corrects its clock off this
+    // answer and used to decide by matching the English sentence.
+    expect((await jsonBody<{ error: { code: string } }>(response)).error.code).toBe(
+      "clock_skew",
+    );
   });
 
   it("refuses a replayed nonce", async () => {
@@ -135,7 +140,10 @@ describe("device registration", () => {
     const wrongType = await SELF.fetch(
       new Request("https://registry.test/v1/devices", {
         method: "POST",
-        headers: { "content-type": "text/plain" },
+        headers: {
+          "content-type": "text/plain",
+          "cf-connecting-ip": "203.0.113.8",
+        },
         body: "{}",
       }),
     );

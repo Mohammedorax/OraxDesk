@@ -765,14 +765,9 @@ export const AGENT_PLANE_ON = "true";
 export const AGENT_PLANE_OFF = "false";
 
 /**
- * Hand back the HTTP bearer token, for one copy to the clipboard. ASSUMED.
- *
- * The HTTP half of the plane is being built alongside this screen, so this may
- * answer nothing at all, and nothing at all is a perfectly good answer: the
- * modal simply does not offer the button. A token is never rendered and never
- * held in React state, see `AgentConnect`.
+ * The HTTP half of the plane exposes its URL and the `claude mcp add` line;
+ * there is no bearer token for the webview to hand out.
  */
-export const AGENT_HTTP_TOKEN_COMMAND = "agent_http_token";
 
 /**
  * What the plane says about itself.

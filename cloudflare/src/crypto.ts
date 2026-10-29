@@ -43,6 +43,21 @@ export function invitationKeyStatus(base64Key: string | undefined): "ok" | "miss
   }
 }
 
+/**
+ * The invitation key this repository publishes in its tests and `.dev.vars`.
+ *
+ * It is not a secret: it is in the source tree, so an invitation sealed under
+ * it can be forged by anybody who can read the repository. A real deployment
+ * must replace it, and the Worker's code says so rather than trusting an
+ * operator to notice.
+ */
+const DEVELOPMENT_INVITATION_KEY = "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY";
+
+/** Is this deployment still using the published development key? */
+export function isDevelopmentInvitationKey(base64Key: string | undefined): boolean {
+  return base64Key !== undefined && base64Key.trim() === DEVELOPMENT_INVITATION_KEY;
+}
+
 export interface SealedInvitation {
   ciphertext: Uint8Array;
   nonce: Uint8Array;

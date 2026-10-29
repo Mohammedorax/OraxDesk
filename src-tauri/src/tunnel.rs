@@ -104,16 +104,24 @@ pub async fn establish(
     profile_id: Option<&str>,
     accept_host_key: Option<&str>,
 ) -> Result<TunnelOutcome, String> {
-    let auth = build_auth(app, settings.auth, settings.key_path.as_deref(), profile_id).await?;
-    let username = if settings.user.trim().is_empty() {
-        local_username()?
-    } else {
-        settings.user.clone()
-    };
     let gateway = if settings.host.trim().is_empty() {
         vnc_address.to_string()
     } else {
         settings.host.trim().to_string()
+    };
+    let auth = build_auth(
+        app,
+        settings.auth,
+        settings.key_path.as_deref(),
+        profile_id,
+        &gateway,
+        settings.port,
+    )
+    .await?;
+    let username = if settings.user.trim().is_empty() {
+        local_username()?
+    } else {
+        settings.user.clone()
     };
 
     // The tunnel rides the bare carrier: it wants somewhere to dial and an
@@ -194,6 +202,15 @@ impl StreamConnector for TunnelConnector {
                 Err(_) => return Err(TransportError::Timeout),
                 Ok(Ok(stream)) => stream,
                 Ok(Err(SshError::Timeout)) => return Err(TransportError::Timeout),
+                // A changed host key on a REDIAL is the hard stop, not a
+                // retryable I/O error. Flattening it into `Io` made the VNC
+                // supervisor retry forever against a gateway that had already
+                // proved it is not the one we pinned.
+                Ok(Err(SshError::HostKeyChanged {
+                    expected, actual, ..
+                })) => {
+                    return Err(TransportError::CertificateMismatch { expected, actual })
+                }
                 Ok(Err(e)) => return Err(TransportError::Io(std::io::Error::other(e.to_string()))),
             };
             Ok(Box::pin(stream) as BoxedStream)

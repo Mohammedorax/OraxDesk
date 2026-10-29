@@ -207,6 +207,8 @@ pub async fn ssh_list_wsl_distros(
         config.auth,
         config.key_path.as_deref(),
         config.profile_id.as_deref(),
+        &config.host,
+        config.port,
     )
     .await?;
     let username = if config.username.trim().is_empty() {
@@ -256,6 +258,7 @@ pub async fn ssh_connect(
     config: SshConnectRequest,
 ) -> Result<SshConnectOutcome, String> {
     crate::windows::validate_session_id(&session_id)?;
+    validate_event_window(&app, &window_label)?;
 
     // Replacing an existing session is a reconnect, not a second terminal.
     if let Some(existing) = state.sessions.lock().remove(&session_id) {
@@ -268,6 +271,8 @@ pub async fn ssh_connect(
         config.auth,
         config.key_path.as_deref(),
         config.profile_id.as_deref(),
+        &config.host,
+        config.port,
     )
     .await?;
 
@@ -379,12 +384,22 @@ pub async fn ssh_connect(
 
 /// Keystrokes and pastes. `data` is base64 because a terminal carries bytes,
 /// not text; see the module header.
+///
+/// The cap matches the main session lane's (`MAX_TERMINAL_INPUT_LEN` in
+/// `framing.rs`). A paste arrives in pieces this size at most, and without a
+/// cap a wedged webview could hand the shell an unbounded string to decode
+/// and queue, which is memory the user did not ask to spend.
 #[tauri::command]
 pub async fn ssh_send(
     state: State<'_, SshState>,
     session_id: String,
     data: String,
 ) -> Result<(), String> {
+    /// 64 KiB of base64 is 48 KiB of bytes; a single key event is a handful.
+    const MAX_SSH_INPUT_B64: usize = 88 * 1024;
+    if data.len() > MAX_SSH_INPUT_B64 {
+        return Err("terminal input is too large; send it in smaller pieces".into());
+    }
     let bytes = base64::engine::general_purpose::STANDARD
         .decode(data.as_bytes())
         .map_err(|e| format!("malformed terminal input: {e}"))?;
@@ -696,6 +711,23 @@ fn algorithm_name(algorithm: &str) -> String {
 // ---------------------------------------------------------------------------
 // Event pump
 // ---------------------------------------------------------------------------
+
+/// The label of the window this terminal's events belong to.
+///
+/// `window_label` arrives from the webview, and an arbitrary label would send
+/// remote terminal output to a window it was not meant for, or leave
+/// `shutdown_for_window` collecting sessions by a name no window has. The
+/// label must name a window that actually exists; the two legitimate values
+/// are `main` (tabbed view) and `session-<id>` (a session window of its own).
+fn validate_event_window(app: &AppHandle, label: &str) -> Result<(), String> {
+    if label.is_empty() || label.len() > 128 {
+        return Err("invalid terminal window label".into());
+    }
+    if app.get_webview_window(label).is_none() {
+        return Err(format!("no such window: {label}"));
+    }
+    Ok(())
+}
 
 /// Forward `SshEvent`s to the session's window as flat JSON on `ssh://event`.
 fn spawn_event_pump(

@@ -59,6 +59,9 @@ The device directory adds two more: `POST /v1/devices/{id}/address` (signed by
 that device) and `GET /v1/devices/{id}/address` (public, like iroh's own public
 directory).
 
+The operator endpoint adds one, and it only exists when a token is configured:
+`POST /v1/admin/devices/{id}/revoke` with `X-Orax-Operator`.
+
 ### The device directory
 
 A machine publishes where it is, so a helper can reach it by its id without
@@ -166,14 +169,56 @@ No Cloudflare account is needed for anything below.
 
 ```sh
 npm install                     # wrangler, typescript, worker types
-npm test                        # offline schema tests (node:sqlite, no deps needed)
+npm test                        # schema + Worker tests
 npx wrangler d1 migrations apply orax-registry --local
-npx wrangler dev                # serves /healthz and 501 everywhere else
+npx wrangler dev                # serves /healthz and the API locally
 ```
 
-`npm test` is dependency-free on purpose: it applies
-`migrations/0001_init.sql` to a real SQLite engine through `node:sqlite`, so the
-schema can be verified before any toolchain install.
+`npm test` runs the schema tests against a real SQLite engine through
+`node:sqlite`, and the Worker tests in workerd through the Cloudflare vitest
+plugin, so the schema and the handlers are both checked before any deployment.
+
+`.dev.vars` holds the **published development invitation key** and must keep
+`ALLOW_TEST_KEY=1` for `wrangler dev` to mint codes. That key is in the source
+tree: a deployment that still has it refuses `/v1/signals` with `503` and
+reports `invitation_key: "development"` on `/healthz`, rather than pretending
+to be configured. `npm test` sets the same opt-in in `vitest.config.mts`.
+
+### Operator revocation
+
+A device can revoke itself with its own key, which is no use when the machine
+was stolen or the key is believed leaked. The one server-side act is:
+
+```sh
+npx wrangler secret put OPERATOR_TOKEN        # choose a long random value
+curl -X POST "https://<registry>/v1/admin/devices/<id>/revoke" \
+     -H "X-Orax-Operator: <token>" \
+     -H "content-type: application/json" \
+     -d '{"reason":"stolen"}'
+```
+
+It sets `revoked_at`, clears the registry key, drops pending codes, and writes
+one audit row. The row is a **tombstone**: the device cannot re-register, and
+lifting the revocation is a database decision, not an API one. With no
+`OPERATOR_TOKEN` configured the route answers `404` — a deployment that never
+chose an operator has no remote administration surface at all. Wrong and
+missing tokens both answer `401`, so a prober cannot tell whether the endpoint
+exists.
+
+### Free-plan capacity
+
+The numbers that matter for a self-hosted deployment (Workers Free + D1 Free,
+October 2026): 100,000 Worker requests/day, 5,000,000 D1 rows read/day,
+100,000 rows written/day, 5 GB storage, and five Cron Triggers.
+
+This service refreshes a device's registration once at app start and then as a
+48-hour keep-alive (the sweep forgets a device after seven days). That is about
+5–15 rows written per device per day including the sweep, so the **write** budget
+is the first to run out: roughly a few thousand always-on devices on the free
+plan, more if most machines are only registered when used. Upgrading to Workers
+Paid ($5/month) raises the write allowance to 50 million rows/month and removes
+the request limit. Watch `meta.rows_written` from the dashboard before scaling.
+
 
 ## What the schema guarantees
 

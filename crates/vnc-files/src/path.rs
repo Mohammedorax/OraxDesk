@@ -101,6 +101,43 @@ pub fn looks_absolute(path: &str) -> bool {
     false
 }
 
+/// A name that must never arrive from a server into a local folder.
+///
+/// Downloads default to the user's home directory, and these are the names a
+/// hostile server would use to turn a file transfer into code execution or a
+/// new trusted key: shell startup files, SSH/cloud/credential stores, and the
+/// directories that hold them.
+pub fn is_sensitive_local_name(name: &str) -> bool {
+    const NAMES: &[&str] = &[
+        ".ssh",
+        ".aws",
+        ".gnupg",
+        ".kube",
+        ".docker",
+        ".password-store",
+        ".config",
+        ".local",
+        ".mozilla",
+        ".thunderbird",
+        ".pki",
+        ".netrc",
+        ".git-credentials",
+        ".pgpass",
+        ".bashrc",
+        ".bash_profile",
+        ".bash_login",
+        ".profile",
+        ".zshrc",
+        ".zprofile",
+        ".zshenv",
+        ".kshrc",
+        ".cshrc",
+        ".login",
+        ".gitconfig",
+    ];
+    NAMES.contains(&name.to_ascii_lowercase().as_str())
+}
+
 /// Normalise a POSIX remote path, rejecting traversal.
 ///
 /// Collapses `//` and `.`, keeps a leading `/` (remote absolute paths are
@@ -214,7 +251,20 @@ pub fn safe_local_join(root: &Path, relative: &str) -> Result<PathBuf> {
         if part.is_empty() || part == "." {
             continue;
         }
-        out.push(component(part)?);
+        let part = component(part)?;
+        // A server names its own files, and a download lands wherever the user
+        // pointed the local pane (home by default). A server-chosen `.ssh`
+        // directory or `.bashrc`/`.profile` file merged into home is therefore
+        // a way to write a key into authorized_keys or a command into a shell
+        // startup file. Refuse credential and startup names on the local side;
+        // remote paths keep their names, so deleting a server's `.ssh` still
+        // works.
+        if is_sensitive_local_name(part) {
+            return Err(reject(format!(
+                "refusing to write a downloaded `{part}` into a local home directory"
+            )));
+        }
+        out.push(part);
         depth += 1;
     }
     if depth == 0 {
@@ -304,6 +354,20 @@ mod tests {
                 result.ok()
             );
         }
+    }
+
+    #[test]
+    fn safe_local_join_refuses_credential_and_startup_names() {
+        let root = Path::new("/tmp/deskvnc-downloads");
+        for name in [".ssh", ".bashrc", ".profile", ".gitconfig", "sub/.ssh", ".config"] {
+            assert!(
+                safe_local_join(root, name).is_err(),
+                "a server-supplied {name} must not be written into the destination"
+            );
+        }
+        // Ordinary work dotfiles still arrive.
+        assert!(safe_local_join(root, ".env").is_ok());
+        assert!(safe_local_join(root, "project/.gitignore").is_ok());
     }
 
     #[test]

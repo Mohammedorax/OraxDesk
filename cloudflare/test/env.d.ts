@@ -8,6 +8,8 @@ declare namespace Cloudflare {
     DB: D1Database;
     API_VERSION: string;
     INVITATION_KEY: string;
+    ALLOW_TEST_KEY?: string;
+    OPERATOR_TOKEN?: string;
     TEST_MIGRATIONS: D1Migration[];
   }
 }

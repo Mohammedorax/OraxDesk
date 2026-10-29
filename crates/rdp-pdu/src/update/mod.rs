@@ -23,7 +23,9 @@ pub mod fastpath;
 pub mod slowpath;
 pub mod surface;
 
-use crate::io::limits::{MAX_BITMAP_RECTS, MAX_COLOR_POINTER_DIM, MAX_POINTER_DIM};
+use crate::io::limits::{
+    MAX_BITMAP_PIXELS, MAX_BITMAP_RECTS, MAX_COLOR_POINTER_DIM, MAX_POINTER_DIM,
+};
 use crate::io::{Decode, Encode, Payload, PduError, PduResult, Reader, Writer};
 
 /// `TS_BITMAP_DATA.flags` (MS-RDPBCGR 2.2.9.1.1.3.1.2.2).
@@ -388,6 +390,19 @@ impl<'a> Decode<'a> for BitmapData<'a> {
         let flags = r.u16(Self::NAME)?;
         let at_length = r.offset();
         let bitmap_length = usize::from(r.u16(Self::NAME)?);
+
+        // The encoded dimensions are the allocation a decoder makes before it
+        // reads the payload, so they are capped here rather than downstream.
+        // A hostile 65535x65535 claim with a 1x1 destination was enough to ask
+        // for 17 GB of RGBA.
+        if u64::from(width) * u64::from(height) > MAX_BITMAP_PIXELS {
+            return Err(PduError::InvalidField {
+                context: Self::NAME,
+                field: "width * height",
+                value: u64::from(width) * u64::from(height),
+                offset: at,
+            });
+        }
 
         // The destination may be smaller than the encoded bitmap, in which
         // case the bitmap is clipped and `rdp-core` does the clipping

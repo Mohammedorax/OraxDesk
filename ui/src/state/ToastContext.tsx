@@ -27,6 +27,15 @@ interface ToastContextValue {
 const ToastContext = createContext<ToastContextValue | null>(null);
 
 const AUTO_DISMISS_MS = 4000;
+/**
+ * How long a toast offering an action stays.
+ *
+ * Four seconds is fine for "copied"; it is not enough to notice that a machine
+ * was deleted, decide to undo it, and reach the button. A toast with an action
+ * is a question, and a question that disappears while it is being read is a
+ * no. Destructive toasts all carry Undo, so this is the one that matters.
+ */
+const AUTO_DISMISS_ACTION_MS = 12000;
 const MAX_STACK = 3;
 
 export function ToastProvider({ children }: { children: ReactNode }): ReactNode {
@@ -47,7 +56,7 @@ export function ToastProvider({ children }: { children: ReactNode }): ReactNode 
         ];
         return next.slice(-MAX_STACK);
       });
-      window.setTimeout(() => dismiss(id), AUTO_DISMISS_MS);
+      window.setTimeout(() => dismiss(id), action ? AUTO_DISMISS_ACTION_MS : AUTO_DISMISS_MS);
     },
     [dismiss],
   );

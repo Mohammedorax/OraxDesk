@@ -251,6 +251,25 @@ impl Store {
 
     /// Upserts the profile (including its tag assignments). `created_at` is
     /// preserved on update; `updated_at` is set to now.
+    ///
+    /// The three columns that record HISTORY rather than configuration, and
+    /// the one that records a fact about the keychain, are deliberately NOT
+    /// taken from the incoming profile on update:
+    ///
+    ///   * `last_connected`, `connect_count` and `thumbnail_at` are written
+    ///     by [`Store::touch_connected`] and the thumbnail capture, at moments
+    ///     the profile editor cannot see. The editor sends a whole profile
+    ///     back, and that snapshot may be minutes old: renaming a host used to
+    ///     reset a counter of seven to whatever the window last read, or to
+    ///     zero if the list had not arrived yet.
+    ///   * `has_password` is a fact about the credential store, and only
+    ///     [`Store::set_has_password`] may change it. A profile write must not
+    ///     resurrect a flag after `delete_password` cleared it, nor clear one
+    ///     when the credential is still there.
+    ///
+    /// On INSERT (a new host, a duplicate, an undo after a delete) the
+    /// incoming values are written as they are: there is no older row to
+    /// disagree with, and restoring a deleted host should restore its history.
     pub fn save_host(&self, profile: &HostProfile) -> Result<()> {
         let mut conn = self.conn.lock();
         let tx = conn.transaction()?;
@@ -277,9 +296,8 @@ impl Store {
                 passthrough=excluded.passthrough, view_only=excluded.view_only,
                 ssh_tunnel=excluded.ssh_tunnel, wol_mac=excluded.wol_mac,
                 wol_broadcast=excluded.wol_broadcast, network_id=excluded.network_id,
-                cert_pin=excluded.cert_pin, has_password=excluded.has_password,
-                thumbnail_at=excluded.thumbnail_at, last_connected=excluded.last_connected,
-                connect_count=excluded.connect_count, updated_at=excluded.updated_at,
+                cert_pin=excluded.cert_pin,
+                updated_at=excluded.updated_at,
                 protocol=excluded.protocol, rdp_settings=excluded.rdp_settings,
                 ssh_settings=excluded.ssh_settings",
             params![
@@ -456,6 +474,23 @@ impl Store {
                               updated_at = ?1
              WHERE id = ?2",
             params![now, id],
+        )?;
+        Ok(())
+    }
+
+    /// Set the library row's `has_password`, the flag the editor and the key
+    /// icon read.
+    ///
+    /// The ONLY writer of that column. [`Store::save_host`] deliberately
+    /// leaves it alone on update, because a profile write carries a snapshot
+    /// that can be older than the keychain: renaming a host used to clear the
+    /// key icon for a password that was still stored, and undoing a delete
+    /// used to bring the icon back for one that was not.
+    pub fn set_has_password(&self, id: &str, saved: bool) -> Result<()> {
+        let conn = self.conn.lock();
+        conn.execute(
+            "UPDATE hosts SET has_password = ?1, updated_at = ?2 WHERE id = ?3",
+            params![saved as i64, now_ts(), id],
         )?;
         Ok(())
     }
@@ -1138,6 +1173,57 @@ mod tests {
         store.delete_host(&host.id).unwrap();
         assert!(store.get_host(&host.id).unwrap().is_none());
         assert!(store.list_hosts().unwrap().is_empty());
+    }
+
+    /// A profile write is an upsert of CONFIGURATION. The columns that record
+    /// history, and the one that records whether the keychain holds a secret,
+    /// belong to the operations that own them: renaming a host must not reset
+    /// its connection count, and must not claim a deleted password is still
+    /// saved.
+    #[test]
+    fn editing_a_host_keeps_its_history_and_key_flag() {
+        let (_dir, store) = temp_store();
+        let mut host = sample_host("Studio", "10.0.0.7");
+        host.connect_count = 0;
+        host.last_connected = None;
+        host.has_password = false;
+        store.save_host(&host).unwrap();
+
+        store.touch_connected(&host.id).unwrap();
+        store.touch_connected(&host.id).unwrap();
+        store.set_has_password(&host.id, true).unwrap();
+
+        // The stale snapshot an editor window would send back: counters from
+        // before the connects, and the flag as it was before the password.
+        let stale = host.clone();
+        store.save_host(&stale).unwrap();
+        let kept = store.get_host(&host.id).unwrap().expect("host survives");
+        assert_eq!(kept.connect_count, 2, "a rename does not reset the count");
+        assert!(
+            kept.last_connected.is_some(),
+            "a rename keeps the last connect"
+        );
+        assert!(
+            kept.has_password,
+            "a profile write does not clear the key flag"
+        );
+
+        // Clearing goes through the one writer that means it.
+        store.set_has_password(&host.id, false).unwrap();
+        store.save_host(&host).unwrap();
+        assert!(
+            !store.get_host(&host.id).unwrap().unwrap().has_password,
+            "a profile write does not resurrect a cleared key flag"
+        );
+
+        // INSERT, not UPDATE: a restored row keeps whatever it was saved with.
+        let mut restored = sample_host("Restored", "10.0.0.8");
+        restored.connect_count = 5;
+        restored.has_password = true;
+        store.save_host(&restored).unwrap();
+        let got = store.get_host(&restored.id).unwrap().unwrap();
+        assert_eq!(got.connect_count, 5);
+        assert!(got.has_password);
     }
 
     /// Ticking "remember this password" on a quick connect has to produce a

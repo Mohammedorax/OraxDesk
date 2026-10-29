@@ -1,7 +1,7 @@
 import { sweep } from "./cleanup";
-import { invitationKeyStatus } from "./crypto";
+import { invitationKeyStatus, isDevelopmentInvitationKey } from "./crypto";
 import { fetchAddress, publishAddress } from "./directory";
-import { getDevice, getDeviceByNumber, registerDevice, revokeDevice } from "./devices";
+import { getDevice, getDeviceByNumber, registerDevice, revokeDevice, revokeDeviceAsOperator } from "./devices";
 import { sha256Hex } from "./encoding";
 import type { Env } from "./env";
 import {
@@ -12,7 +12,7 @@ import {
   readBody,
   requireJsonContentType,
 } from "./http";
-import { resolveLimiter, directoryLimiter, registerLimiter } from "./ratelimit";
+import { resolveLimiter, directoryLimiter, registerLimiter, adminLimiter } from "./ratelimit";
 import { createSignal, resolveSignal, revokeSignal } from "./signals";
 
 export default {
@@ -43,8 +43,7 @@ async function handle(request: Request, env: Env): Promise<Response> {
       // Worker, which is not configured in this repository and is therefore
       // an operational assumption rather than something this code can rely
       // on. What this does is make the cheap abuse expensive.
-      const ip = request.headers.get("cf-connecting-ip") ?? "unknown";
-      if (!registerLimiter.allow(ip)) {
+      if (!registerLimiter.allow(clientIp(request))) {
         throw new ApiError(429, "rate_limited", "Too many registrations from this address", {
           "retry-after": "60",
         });
@@ -60,13 +59,34 @@ async function handle(request: Request, env: Env): Promise<Response> {
         // The nine digit number is a BILLION values read one at a time with
         // no authentication, so this is the one endpoint where a flood is
         // cheap. It gets the tightest window of the three.
-        const ip = request.headers.get("cf-connecting-ip") ?? "unknown";
-        if (!directoryLimiter.allow(ip)) {
+        if (!directoryLimiter.allow(clientIp(request))) {
           throw new ApiError(429, "rate_limited", "Too many lookups from this address", {
             "retry-after": "60",
           });
         }
         return await getDeviceByNumber(env, number);
+      }
+    }
+
+    // Operator revocation. The handler itself answers 404 when no operator
+    // token is configured, so this route exists in the code and not in the
+    // deployment's surface.
+    if (method === "POST" && path.startsWith("/v1/admin/devices/")) {
+      const rest = path.slice("/v1/admin/devices/".length);
+      if (rest.endsWith("/revoke")) {
+        if (!adminLimiter.allow(clientIp(request))) {
+          throw new ApiError(429, "rate_limited", "Too many operator calls", {
+            "retry-after": "60",
+          });
+        }
+        requireJsonContentType(request);
+        const raw = await readBody(request);
+        return await revokeDeviceAsOperator(
+          env,
+          request,
+          rest.slice(0, -"/revoke".length),
+          parseObject(raw),
+        );
       }
     }
 
@@ -110,8 +130,7 @@ async function handle(request: Request, env: Env): Promise<Response> {
     if (method === "POST" && path === "/v1/signals/resolve") {
       // Per-isolate speed bump against code guessing; the single-use row is the
       // real bound. Edge rate limiting sits in front of this in production.
-      const ip = request.headers.get("cf-connecting-ip") ?? "unknown";
-      if (!resolveLimiter.allow(ip)) {
+      if (!resolveLimiter.allow(clientIp(request))) {
         throw new ApiError(429, "rate_limited", "Too many code attempts", {
           "retry-after": "60",
         });
@@ -140,6 +159,23 @@ async function handle(request: Request, env: Env): Promise<Response> {
   }
 }
 
+/**
+ * The caller's address, as Cloudflare saw it.
+ *
+ * Required, not defaulted. A request that reached the Worker without the
+ * header shared one "unknown" budget with every other such request, so one
+ * client behind a misconfigured origin could exhaust it for everybody. There
+ * is no legitimate path to the Worker that lacks the header, so a request
+ * without it is refused rather than lumped together with the rest.
+ */
+function clientIp(request: Request): string {
+  const ip = request.headers.get("cf-connecting-ip");
+  if (ip === null || ip === "") {
+    throw new ApiError(400, "bad_request", "The request did not come through Cloudflare");
+  }
+  return ip;
+}
+
 async function health(env: Env): Promise<Response> {
   let dbOk = false;
   try {
@@ -148,7 +184,9 @@ async function health(env: Env): Promise<Response> {
   } catch {
     dbOk = false;
   }
-  const invitationKey = invitationKeyStatus(env.INVITATION_KEY);
+  const invitationKey = isDevelopmentInvitationKey(env.INVITATION_KEY) && env.ALLOW_TEST_KEY !== "1"
+    ? "development"
+    : invitationKeyStatus(env.INVITATION_KEY);
   const healthy = dbOk && invitationKey === "ok";
   return jsonResponse(
     {

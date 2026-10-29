@@ -67,15 +67,11 @@ fn holds_password(creds: &StoredCredentials) -> bool {
 /// Set the library row's `has_password`. A failure here is logged and not
 /// returned: the secret itself is already where it belongs.
 fn mark_saved(store: &vnc_store::Store, host_id: &str, saved: bool) {
-    match store.get_host(host_id) {
-        Ok(Some(mut profile)) if profile.has_password != saved => {
-            profile.has_password = saved;
-            if let Err(e) = store.save_host(&profile) {
-                tracing::warn!(host = %host_id, "could not update has_password: {e}");
-            }
-        }
-        Ok(_) => {}
-        Err(e) => tracing::warn!(host = %host_id, "could not load host: {e}"),
+    // `set_has_password`, not load + `save_host`: the profile write would be
+    // a full upsert, and the flag is the one column that a stale profile must
+    // not carry. The store owns that transition.
+    if let Err(e) = store.set_has_password(host_id, saved) {
+        tracing::warn!(host = %host_id, "could not update has_password: {e}");
     }
 }
 
@@ -182,6 +178,24 @@ pub async fn delete_password(state: State<'_, AppState>, host_id: String) -> Res
         Ok::<(), vnc_store::Error>(())
     })
     .await
+}
+
+/// Set the library row's "a password is saved" flag.
+///
+/// A UI hint, not a secret: it decides whether a tile draws a key and whether
+/// the editor says a password is stored. Exposed because Undo after a delete
+/// has to restore a profile whose keychain entry may or may not have survived
+/// (a locked vault refuses the delete rather than failing the whole
+/// operation), and the honest answer is asked for with `has_password` and then
+/// recorded here. Without it the icon would have to guess.
+#[tauri::command]
+pub async fn set_has_password(
+    state: State<'_, AppState>,
+    host_id: String,
+    saved: bool,
+) -> Result<(), String> {
+    let store = state.store.clone();
+    super::blocking(move || store.set_has_password(&host_id, saved)).await
 }
 
 /// Which backend is in use (`"OsKeychain"`, `"EncryptedFile"`, or

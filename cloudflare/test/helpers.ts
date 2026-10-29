@@ -208,7 +208,13 @@ export async function resolveSignal(code: string): Promise<Response> {
   return SELF.fetch(
     new Request("https://registry.test/v1/signals/resolve", {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: {
+        "content-type": "application/json",
+        // Cloudflare always sets this in production; the Worker now refuses a
+        // request without it rather than sharing one "unknown" rate-limit
+        // bucket between everybody.
+        "cf-connecting-ip": "203.0.113.7",
+      },
       body: JSON.stringify({ code }),
     }),
   );

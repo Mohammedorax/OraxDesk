@@ -187,7 +187,19 @@ impl Graphics {
             return Ok(None);
         }
 
-        let mut pixels = vec![0u8; usize::from(data.width) * usize::from(data.height) * DST_BPP];
+        let mut pixels = Vec::new();
+        let len = usize::from(data.width) * usize::from(data.height) * DST_BPP;
+        // `try_reserve` rather than `vec![0; len]`: a refused allocation is a
+        // protocol error for this one update, not an abort that takes every
+        // session down. The dimensions are already capped by `rdp-pdu`; this
+        // is the last line before the allocator.
+        pixels.try_reserve_exact(len).map_err(|_| {
+            RdpError::Protocol(format!(
+                "a {}x{} bitmap does not fit in memory",
+                data.width, data.height
+            ))
+        })?;
+        pixels.resize(len, 0);
         self.decode_into(data, &mut pixels)?;
 
         // The encoded bitmap may be wider than its destination, in which case

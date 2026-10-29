@@ -858,7 +858,7 @@ export function SessionToolbar(props: SessionToolbarProps): ReactNode {
         >
           {openMenu === "status" ? (
             <div className="w-60 px-2.5 py-1.5">
-              (<SessionStatusDetails stats={props.stats} queueStats={props.queueStats} desktopName={props.desktopName} />)
+              <SessionStatusDetails stats={props.stats} queueStats={props.queueStats} desktopName={props.desktopName} />
             </div>
           ) : null}
           {openMenu === "scale" ? (

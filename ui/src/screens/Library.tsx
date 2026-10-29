@@ -16,7 +16,7 @@ import type { DiscoveredHost, HostGroup, HostProfile, ProtocolKind } from "../li
 import { serializeRdpSettings } from "../lib/rdp";
 import { serializeSshSettings } from "../lib/ssh";
 import { loadSshDefaults } from "../lib/sshDefaults";
-import { vncCredentialPayload, vncTakesUsername } from "../lib/hostDraft";
+import { cleanDisplayName, vncCredentialPayload, vncTakesUsername } from "../lib/hostDraft";
 import {
   hostMac,
   hostProtocol,
@@ -31,6 +31,8 @@ import {
   safeInvoke,
   safeListen,
   forgetCertificate,
+  hasSavedPassword,
+  setHasPassword,
   type OpenSessionOptions,
   type SessionWindowOutcome,
 } from "../lib/tauri";
@@ -57,7 +59,8 @@ import { QuickConnect } from "../components/QuickConnect";
 import { GetHelp } from "../components/GetHelp";
 import { BoundaryConnect } from "../components/BoundaryConnect";
 import { mustInvoke } from "../lib/tauri";
-import { DeviceIdentityCard } from "../components/DeviceIdentityCard";
+import { DeviceIdentityChip } from "../components/DeviceIdentityChip";
+import { Wordmark } from "../components/Wordmark";
 import { registry } from "../lib/support";
 import { ContextMenu, Dialog, EmptyState, Select, TileSkeleton, type MenuItem } from "../components/primitives";
 import {
@@ -418,12 +421,45 @@ export function Library({
           continue;
         }
         void openSessionWindow({ profileId: host.id, asTab: true })
-          .then((outcome) => {
+          .then(async (outcome) => {
             if (!outcome) return;
             if (outcome.reused) {
               // Already connected somewhere: move it in rather than refusing.
-              adopt(tabId, paneId, outcome.sessionId);
-              return;
+              // A tab the shell believes is still open but which is not on the
+              // strip is a session on its way out (see `openSession`), so ask
+              // again for a new one instead of adopting a session no pane can
+              // hold. A session in its own window cannot be moved at all, and
+              // saying so is better than a pane that silently stays empty.
+              if (outcome.target === "window") {
+                push("info", t("library.alreadyOpen", { name: host.friendlyName }));
+                return;
+              }
+              if (!hasTab(outcome.sessionId)) {
+                try {
+                  outcome = await openSessionWindow({
+                    profileId: host.id,
+                    asTab: true,
+                    forceNew: true,
+                  });
+                } catch (err: unknown) {
+                  push(
+                    "danger",
+                    t("library.connectFailed", {
+                      name: host.friendlyName,
+                      reason: describeError(err),
+                    }),
+                  );
+                  return;
+                }
+                if (!outcome) return;
+                if (outcome.reused) {
+                  push("info", t("library.alreadyOpen", { name: host.friendlyName }));
+                  return;
+                }
+              } else {
+                adopt(tabId, paneId, outcome.sessionId);
+                return;
+              }
             }
             if (outcome.target !== "tab" || !outcome.params) return;
             openTab(
@@ -451,7 +487,7 @@ export function Library({
           });
       }
     },
-    [groups, hosts, openArranged, openTab, adopt, push, t],
+    [groups, hosts, openArranged, openTab, adopt, hasTab, push, t],
   );
 
   /**
@@ -799,7 +835,7 @@ export function Library({
     (d: DiscoveredHost): void => {
       setHostDialog(
         draftFromHost(null, {
-          friendlyName: d.name,
+          friendlyName: cleanDisplayName(d.name, d.address),
           address: d.address,
           port: d.port,
           // The discovery row already knows what answers on that port, so the
@@ -823,22 +859,43 @@ export function Library({
    * fourteen-field form to keep one machine is the longest possible way to
    * do the shortest thing.
    *
+   * Two clicks must still mean one host. The button stays live while the
+   * write is in flight (the list refreshes under it), and a fresh draft used
+   * to get a fresh UUID per click, so a double click wrote two rows with the
+   * same endpoint and two separate keychain entries. An endpoint that is
+   * already saved is not written again either: the same address, port and
+   * protocol IS the same machine, and adding a second tile for it is a
+   * duplicate card, a duplicate key icon and a confusing "which one am I
+   * connecting to".
+   *
    * The tile's "Edit" button still opens the full form for anyone who wants
    * it, and the toast offers Undo, so nothing is taken away.
    */
+  const savingDiscovered = useRef(new Set<string>());
   const saveDiscovered = useCallback(
     (d: DiscoveredHost): void => {
+      const protocol = d.protocol ?? "vnc";
+      const endpoint = `${protocol}|${d.address}|${d.port}`;
+      const existing = hostsRef.current.find(
+        (h) => h.protocol === protocol && h.address === d.address && h.port === d.port,
+      );
+      if (existing) {
+        push("info", t("library.alreadyInLibrary", { name: existing.friendlyName }));
+        return;
+      }
+      if (savingDiscovered.current.has(endpoint)) return;
+      savingDiscovered.current.add(endpoint);
       const draft = draftFromHost(null, {
-        friendlyName: d.name,
+        friendlyName: cleanDisplayName(d.name, d.address),
         address: d.address,
         port: d.port,
-        protocol: d.protocol ?? "vnc",
+        protocol,
         osHint: resolvedOsHint(d),
         wolMac: hostMac(d),
       });
       void (async () => {
         try {
-          await saveHost({
+          const created = await saveHost({
             id: draft.id,
             friendlyName: draft.friendlyName,
             address: draft.address,
@@ -858,19 +915,14 @@ export function Library({
             rdpSettings: null,
             sshSettings: null,
           });
-          push("success", t("library.added", { name: draft.friendlyName }), {
+          if (!created) return;
+          push("success", t("library.added", { name: created.friendlyName }), {
             label: t("library.undo"),
             run: () => {
-              void (async () => {
-                // The same address AND port, not just the address: another
-                // saved computer on the same machine but a different port is
-                // a different computer, and removing it would be a surprise.
-                for (const h of hostsRef.current.filter(
-                  (x) => x.address === draft.address && x.port === draft.port,
-                )) {
-                  await deleteHost(h.id);
-                }
-              })().catch((err: unknown) =>
+              // Exactly the row this click created. Matching on address and
+              // port instead would take out a profile that was already saved
+              // by hand before the tile was ever clicked.
+              void deleteHost(created.id).catch((err: unknown) =>
                 push("danger", t("library.removeFailed", { reason: describeError(err) })),
               );
             },
@@ -880,6 +932,8 @@ export function Library({
             "danger",
             t("library.saveFailed", { name: d.name, reason: describeError(err) }),
           );
+        } finally {
+          savingDiscovered.current.delete(endpoint);
         }
       })();
     },
@@ -1127,13 +1181,37 @@ export function Library({
     }, [summaries, selectTab, settings.libraryView, update, startScan, focusQuickConnect, onOpenPreferences, onOpenAbout, reload, push, t]);
 
 
-  // Onboarding hand-off: open the add dialog pre-filled from a discovered host
+  // Onboarding hand-off: open the add dialog pre-filled from a discovered host.
+  // The pending id is only cleared when the host was actually found: clearing
+  // it while the entry had already vanished (a `lost` event between the two
+  // screens) dismissed the hand-off with no dialog and no message at all.
   useEffect(() => {
     if (!autoAddDiscoveredId) return;
     const d = discovered.find((x) => x.id === autoAddDiscoveredId);
-    if (d) addDiscovered(d);
+    if (!d) return;
+    addDiscovered(d);
     onAutoAddHandled?.();
   }, [autoAddDiscoveredId, discovered, addDiscovered, onAutoAddHandled]);
+
+  /**
+   * Restore a deleted host, with the key icon telling the truth.
+   *
+   * `delete_host` drops the profile AND its keychain entry, and the profile we
+   * kept for Undo still says a password was saved. Writing that flag back drew
+   * a key icon for a secret that no longer exists — the tile claimed a saved
+   * password and the next connect asked for one. The vault may also have
+   * refused to delete (locked), so the answer is asked for rather than
+   * assumed: `has_password` reports what is in the keychain now.
+   */
+  const restoreHost = useCallback(
+    async (host: HostProfile): Promise<void> => {
+      const restored = await saveHost({ ...host, hasPassword: false });
+      if (!restored) return;
+      const saved = await hasSavedPassword(restored.id, hostProtocol(restored));
+      if (saved === true) await setHasPassword(restored.id, true);
+    },
+    [saveHost],
+  );
 
   // ------------------------------------------------------------ hotkeys
 
@@ -1187,14 +1265,52 @@ export function Library({
     return () => window.removeEventListener("keydown", onKey);
   }, [inFront, focusQuickConnect, selectAll, clearSelection, isGesturing, cancelGesture]);
 
-  // The same two things off the native File menu. menu.rs routes them here
-  // whichever window has focus, so they work from inside a session too, and in
-  // tabbed view "from inside a session" means the library is behind a tab:
-  // bring it forward first, or the dialog and the address bar would open on a
-  // pane nobody is looking at.
+  // The library's own Windows/Linux menu items, delivered the same way the
+  // session items are. `menu:connect` and `menu:wake` act on the host selected
+  // here, which is why `menu.rs` routes them to this window rather than to
+  // whichever session has the focus.
+  const selectedIdsRef = useRef(selectedIds);
+  selectedIdsRef.current = selectedIds;
   useEffect(() => {
     let unlisten: (() => void) | undefined;
     void safeListen<{ id: string }>("menu://action", ({ id }) => {
+      if (id === "menu:connect" || id === "menu:wake") {
+        selectTab(null);
+        const chosen = [...selectedIdsRef.current]
+          .map((hostId) => hostsRef.current.find((h) => h.id === hostId))
+          .filter((h): h is HostProfile => h !== undefined);
+        // Both gestures act on one machine. Nine selected and "Connect" is
+        // not a request to dial nine hosts by accident, the context menu
+        // already says the same thing.
+        if (chosen.length !== 1) {
+          push(
+            "info",
+            t(id === "menu:connect" ? "library.selectOneToConnect" : "library.selectOneToWake"),
+          );
+          return;
+        }
+        const host = chosen[0];
+        if (id === "menu:connect") {
+          connectHost(host);
+          return;
+        }
+        if (!host.wolMac) {
+          push("info", t("library.wakeNeedsMac"));
+          return;
+        }
+        void wakeHost(host.id)
+          .then(() => push("info", t("library.magicPacketSent", { name: host.friendlyName })))
+          .catch((err: unknown) =>
+            push(
+              "danger",
+              t("library.wakeFailed", {
+                name: host.friendlyName,
+                reason: describeError(err),
+              }),
+            ),
+          );
+        return;
+      }
       if (id !== "menu:quick-connect" && id !== "menu:new-host") return;
       selectTab(null);
       // Focus cannot land on an element that is still hidden, so let the pane
@@ -1207,7 +1323,30 @@ export function Library({
       unlisten = fn;
     });
     return () => unlisten?.();
-  }, [focusQuickConnect, selectTab]);
+  }, [focusQuickConnect, selectTab, connectHost, wakeHost, push, t]);
+
+  /**
+   * A recent machine picked from the tray icon.
+   *
+   * `tray.rs` raises the library and emits the host id; nothing was listening,
+   * so the gesture changed the window and connected nothing. The tray menu is
+   * built at startup, so a host deleted since is answered with a sentence
+   * rather than silence.
+   */
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    void safeListen<{ hostId: string }>("tray://connect", ({ hostId }) => {
+      const host = hostsRef.current.find((h) => h.id === hostId);
+      if (!host) {
+        push("info", t("library.hostGone"));
+        return;
+      }
+      connectHost(host);
+    }).then((fn) => {
+      unlisten = fn;
+    });
+    return () => unlisten?.();
+  }, [connectHost, push, t]);
 
   // ------------------------------------------------------------ context menu
 
@@ -1274,7 +1413,7 @@ export function Library({
                 label: t("library.undo"),
                 run: () => {
                   void (async () => {
-                    for (const h of doomed) await saveHost({ ...h });
+                    for (const h of doomed) await restoreHost(h);
                   })().catch((err: unknown) =>
                     push(
                       "danger",
@@ -1288,7 +1427,7 @@ export function Library({
         },
       ];
     },
-    [hostById, groups, tags, dropOnTarget, deleteHost, saveHost, clearSelection, push, t],
+    [hostById, groups, tags, dropOnTarget, deleteHost, restoreHost, clearSelection, push, t],
   );
 
   const menuItemsFor = useCallback(
@@ -1371,8 +1510,20 @@ export function Library({
         // usual "Trust this computer" prompt applies.
         label: t("library.menuForgetKey"),
         onSelect: () => {
-          void forgetCertificate(host.address, host.port).then(() =>
-            push("info", t("library.forgotKey", { name: host.friendlyName })),
+          // `forgetCertificate` propagates failures now: this button exists to
+          // make a hard-stopped machine reachable again, so a refusal (ACL,
+          // storage) has to be visible or the user is left believing it was
+          // fixed while every connect still stops.
+          void forgetCertificate(host.address, host.port).then(
+            () => push("info", t("library.forgotKey", { name: host.friendlyName })),
+            (error: unknown) =>
+              push(
+                "danger",
+                t("library.forgetKeyFailed", {
+                  name: host.friendlyName,
+                  reason: describeError(error),
+                }),
+              ),
           );
         },
       },
@@ -1393,7 +1544,7 @@ export function Library({
             () => {
               push("info", t("library.deleted", { name: host.friendlyName }), {
                 label: t("library.undo"),
-                run: () => void saveHost({ ...host }),
+                run: () => void restoreHost(host),
               });
             },
             (error: unknown) => {
@@ -1409,7 +1560,7 @@ export function Library({
         },
       },
     ],
-    [allowMultiple, tabbed, connectHost, editHost, saveHost, deleteHost, wakeHost, refreshThumbnail, push, t],
+    [allowMultiple, tabbed, connectHost, editHost, saveHost, deleteHost, restoreHost, wakeHost, refreshThumbnail, push, t],
   );
 
   // ------------------------------------------------------------ render
@@ -1431,7 +1582,21 @@ export function Library({
         control they cannot see.
       */}
       <header className="flex flex-wrap items-center gap-3 border-b border-subtle bg-surface/80 px-4 py-2.5">
-        <h1 className="mr-1 text-sm font-semibold tracking-tight text-primary">OraxDesk</h1>
+        <span className="mr-1 flex shrink-0 items-center gap-2">
+          <img
+            src="/brand/icon-64.png"
+            alt=""
+            aria-hidden="true"
+            className="size-5 rounded-[5px]"
+          />
+          <h1 className="text-sm text-primary">
+            <Wordmark />
+          </h1>
+        </span>
+        {/* The machine's number, beside its name: the one place a person is
+            already looking when somebody asks them for it. It used to be a
+            full-width card on a row of its own under this bar. */}
+        <DeviceIdentityChip />
         <QuickConnect
           hosts={hosts}
           discovered={discovered}
@@ -1544,8 +1709,6 @@ export function Library({
           <IconHelp size={15} />
         </button>
       </header>
-
-      <DeviceIdentityCard />
 
       {/* `relative` anchors the floating selection bar: it must NOT be part of
           the flow, or appearing on the first click would push every tile down

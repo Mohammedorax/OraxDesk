@@ -377,6 +377,18 @@ export function useSession(
   useEffect(() => {
     let cancelled = false;
     let unlisten: (() => void) | undefined;
+    /**
+     * True from the moment `connect_session` is invoked until it answers.
+     *
+     * The cleanup below must not send `disconnect_session` while this is
+     * true: the shell has not registered the session yet, so the disconnect
+     * reaches nothing and is forgotten, and the connect then completes into a
+     * session with no window watching it — the "already open, connect
+     * nothing" state a tab closed and reopened in a hurry falls into. The
+     * completion path below issues the disconnect instead, once there is a
+     * session for it to reach.
+     */
+    let connectInFlight = false;
 
     if (!inTauri()) {
       // Browser dev: run a small synthetic session so the screen is explorable.
@@ -495,6 +507,14 @@ export function useSession(
         case "ssh-notice":
           setSshNotice(ev.message);
           break;
+        case "redirect":
+          // The driver follows a Redirect PDU on its own; the session simply
+          // moves to the machine named in the target. The connecting overlay
+          // is still on screen at this point, naming the machine we dialled,
+          // and the one comment on the Rust side asks the UI to do exactly
+          // this: stop naming the old host.
+          setDesktopName(ev.target);
+          break;
         case "certificate-prompt":
           setCertPrompt({
             fingerprint: ev.fingerprint,
@@ -574,6 +594,7 @@ export function useSession(
 
       if (cancelled) return;
       setState({ state: "connecting" });
+      connectInFlight = true;
       try {
         const acceptSshHostKey = acceptSshHostKeyRef.current;
         acceptSshHostKeyRef.current = null;
@@ -645,6 +666,14 @@ export function useSession(
           return;
         }
 
+        // The effect was torn down while the handshake was still running, so
+        // the session exists only now. Disconnect here rather than from the
+        // cleanup, which would have arrived too early to reach it.
+        if (cancelled) {
+          void safeInvoke("disconnect_session", { sessionId: sessionIdRef.current }, null);
+          return;
+        }
+
         if (outcome.sessionId) sessionIdRef.current = outcome.sessionId;
 
         // The same safety net for Boundary's permission: it is announced once,
@@ -678,13 +707,21 @@ export function useSession(
             can_retry: true,
           });
         }
+      } finally {
+        connectInFlight = false;
       }
     })();
 
     return () => {
       cancelled = true;
       unlisten?.();
-      void safeInvoke("disconnect_session", { sessionId: sessionIdRef.current }, null);
+      // See `connectInFlight`: a disconnect sent before the shell has
+      // registered the session reaches nothing, and the connect then lands
+      // with no window watching. That path disconnects from its own
+      // completion branch instead.
+      if (!connectInFlight) {
+        void safeInvoke("disconnect_session", { sessionId: sessionIdRef.current }, null);
+      }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [params.sessionId, params.profileId, params.address, params.port, connectNonce]);

@@ -158,6 +158,7 @@ function Tab({
   label: string;
   status?: string;
 }): ReactNode {
+  const t = useT();
   return (
     <div
       ref={ref}
@@ -197,7 +198,7 @@ function Tab({
       {onClose ? (
         <button
           type="button"
-          aria-label={`Close ${label}`}
+          aria-label={t("session.closeTabAria", { title: label })}
           // Always visible on the tab in front: a close button that only shows
           // on hover cannot be found without a pointer.
           className={classNames(

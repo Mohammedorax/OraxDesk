@@ -32,7 +32,10 @@ paths:
                   db: { type: string, enum: [ok] }
                   invitation_key: { type: string, enum: [ok] }
         "503":
-          description: Database unreachable or key missing/invalid
+          description: >-
+            Database unreachable, key missing/invalid, or the deployment is
+            still using the published development key (reported as
+            `invitation_key: "development"`)
   /v1/devices:
     post:
       tags: [devices]
@@ -235,6 +238,42 @@ paths:
         "204": { description: Revoked; pending codes deleted }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
+  /v1/admin/devices/{id}/revoke:
+    post:
+      tags: [ops]
+      summary: Revoke a device from the server side (operator only)
+      description: >-
+        The one server-side act, for a stolen machine or a key believed leaked.
+        It requires `OPERATOR_TOKEN` to be configured in the deployment and the
+        same value in `X-Orax-Operator`. With no token configured the route
+        answers 404, so a deployment that never chose an operator has no remote
+        administration surface at all. The row stays as a tombstone: the device
+        cannot re-register, and lifting the revocation is a database decision.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, pattern: "^[0-9a-f]{64}$" }
+        - name: X-Orax-Operator
+          in: header
+          required: true
+          description: The deployment's operator token, compared in constant time
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                reason: { type: string, maxLength: 120 }
+      responses:
+        "204": { description: Revoked; registry key cleared and pending codes deleted }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "429": { $ref: "#/components/responses/RateLimited" }
   /v1/signals:
     post:
       tags: [signals]

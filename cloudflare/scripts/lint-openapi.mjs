@@ -44,6 +44,7 @@ const expected = [
   "/v1/devices/{id}",
   "/v1/devices/{id}/address",
   "/v1/devices/{id}/revoke",
+  "/v1/admin/devices/{id}/revoke",
   "/v1/signals",
   "/v1/signals/resolve",
   "/v1/signals/revoke",

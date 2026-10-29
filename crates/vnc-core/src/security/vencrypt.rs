@@ -176,13 +176,19 @@ const ANON_TLS_MESSAGE: &str = "anonymous TLS (VeNCrypt TLS* subtypes) is not su
 /// the password on the wire in the clear.
 pub fn select_subtype(
     offered: &[VeNCryptSubtype],
-    _opts: &ConnectOptions,
+    opts: &ConnectOptions,
 ) -> Result<VeNCryptSubtype> {
     if offered.is_empty() {
         return Err(VncError::Protocol(
             "server offered no VeNCrypt subtypes".into(),
         ));
     }
+
+    // A profile pinned to "VeNCrypt (TLS + X.509)" must not be satisfied by a
+    // cleartext `Plain` subtype. `select_security_type` only sees the outer
+    // type, so this is the one place the distinction exists.
+    let require_x509 = super::raw_security_pref(opts)
+        .is_some_and(|pref| pref.eq_ignore_ascii_case("vencrypt-x509"));
 
     let mut ranked: Vec<VeNCryptSubtype> = offered.to_vec();
     ranked.sort_by(|a, b| b.rank().cmp(&a.rank()).then_with(|| a.cmp(b)));
@@ -191,17 +197,28 @@ pub fn select_subtype(
     // Anonymous TLS is still refused: it encrypts but authenticates nothing,
     // so it invites a man in the middle who would otherwise be visible.
     //
-    // Cleartext subtypes (Plain) are NOT refused. `ranked` is strongest-first,
-    // so one is only reached when the server offered nothing better, and
-    // refusing it made such a server unreachable while pointing at an
-    // "Allow an unencrypted connection" control the app never had (issue #1).
-    // The password exposure is real and is what the unencrypted session badge
-    // is for; a VncAuth server, allowed since the start, exposes the session
-    // just as plainly.
-    let usable = ranked.iter().copied().find(|s| !s.is_anonymous_tls());
+    // Cleartext subtypes (Plain) are NOT refused on the default path:
+    // `ranked` is strongest-first, so one is only reached when the server
+    // offered nothing better, and refusing it made such a server unreachable
+    // while pointing at an "Allow an unencrypted connection" control the app
+    // never had (issue #1). The password exposure is real and is what the
+    // unencrypted session badge is for; a VncAuth server, allowed since the
+    // start, exposes the session just as plainly. An explicit TLS + X.509
+    // choice is different: there the user asked for the encrypted subtype and
+    // silently getting `Plain` would be a downgrade of that choice.
+    let usable = ranked.iter().copied().find(|s| {
+        !s.is_anonymous_tls() && (!require_x509 || s.uses_x509())
+    });
 
     if let Some(s) = usable {
         return Ok(s);
+    }
+
+    if require_x509 {
+        return Err(VncError::Protocol(
+            "the server offers no VeNCrypt TLS + X.509 subtype; clear the pinned security type or use a server that supports it"
+                .into(),
+        ));
     }
 
     if ranked.iter().any(|s| s.is_anonymous_tls()) {
@@ -498,6 +515,24 @@ mod tests {
             select_subtype(&offered, &opts(false)).unwrap(),
             VeNCryptSubtype::X509Vnc
         );
+    }
+
+    #[test]
+    fn an_x509_pin_is_not_satisfied_by_cleartext_plain() {
+        let mut pinned = opts(false);
+        pinned.vnc_mut().security_pref = Some("vencrypt-x509".into());
+
+        // The encrypted subtype is chosen even though Plain ranks higher.
+        let offered = vec![VeNCryptSubtype::Plain, VeNCryptSubtype::X509Vnc];
+        assert_eq!(
+            select_subtype(&offered, &pinned).unwrap(),
+            VeNCryptSubtype::X509Vnc
+        );
+
+        // A server that only offers cleartext is refused rather than silently
+        // downgrading a TLS + X.509 choice.
+        let offered = vec![VeNCryptSubtype::Plain];
+        assert!(select_subtype(&offered, &pinned).is_err());
     }
 
     #[test]

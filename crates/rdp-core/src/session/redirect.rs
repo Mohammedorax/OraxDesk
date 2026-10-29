@@ -169,14 +169,18 @@ impl Redirection {
             ..
         } = self;
 
-        options.host = target;
         // The certificate the target presents is issued to its FQDN, so that
         // is what SNI, the trust on first use pin and the CredSSP service
         // principal have to use, not the address we dialled (PRDRDP/00 R26
         // makes `server_name` the identity and `host` the dial address).
-        if let Some(fqdn) = fqdn {
-            options.rdp_mut().server_name = Some(fqdn);
-        }
+        //
+        // `TargetFQDN` is optional in MS-RDPBCGR 2.2.13.1. When the server
+        // omits it, the identity must become the target itself: keeping the
+        // BROKER's name would pin the target's certificate under a name that
+        // does not belong to it and show that name in the trust prompt.
+        let identity = fqdn.unwrap_or_else(|| target.clone());
+        options.host = target;
+        options.rdp_mut().server_name = Some(identity);
         if let Some(username) = username {
             options.credentials.username = Some(username);
         }

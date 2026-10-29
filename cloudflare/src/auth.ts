@@ -133,7 +133,12 @@ export async function verifySignature(
   const auth = readAuthHeaders(request);
   const now = nowSeconds();
   if (Math.abs(now - auth.timestamp) > AUTH_MAX_SKEW_SECONDS) {
-    throw unauthorized("Request timestamp is outside the allowed window");
+    // Its own error code, not just its own sentence. The Rust client answers
+    // this one by measuring the server's clock and signing again, and it used
+    // to decide by matching the English message: rewording the sentence
+    // silently disabled the automatic correction. The message stays for
+    // people; the code is what the client reads.
+    throw new ApiError(401, "clock_skew", "Request timestamp is outside the allowed window");
   }
   const url = new URL(request.url);
   const v2 = utf8(

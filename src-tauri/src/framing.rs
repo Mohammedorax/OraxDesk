@@ -142,7 +142,14 @@ pub fn decode_jpeg_rects(rects: Vec<DecodedRect>) -> Vec<DecodedRect> {
         .into_iter()
         .map(|r| match &r.payload {
             RectPayload::Jpeg(data) => {
-                match vnc_core::encodings::tight::decode_jpeg_to_rgba(data) {
+                // The rect is the only place the image can be shown, so it is
+                // also the ceiling on what the decoder may allocate: a tiny
+                // rect carrying a huge SOF header is refused before the
+                // allocation, not decoded and then discarded.
+                match vnc_core::encodings::tight::decode_jpeg_to_rgba_limited(
+                    data,
+                    r.rect.area(),
+                ) {
                     Ok((w, h, rgba))
                         if w == u32::from(r.rect.width) && h == u32::from(r.rect.height) =>
                     {

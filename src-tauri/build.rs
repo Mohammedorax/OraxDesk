@@ -361,9 +361,13 @@ fn main() {
             "set_app_setting",
             // build/system fingerprint for the About dialog and bug reports
             "about_info",
+            // the About dialog's two links, opened by the shell so the
+            // webview never names a URL
+            "open_about_link",
             // the native menu mirrors the session toolbar, so the webview has
             // to push it the state that toolbar would have shown
             "sync_session_menu",
+            "set_ui_language",
             // `.rdp` file import. The webview sends a PATH and the shell
             // reads the file, so these are the only two new command names
             // this work adds and each is a grant to review on its own.
@@ -372,6 +376,7 @@ fn main() {
             // credentials (write/query only, passwords never flow back to JS)
             "save_password",
             "has_password",
+            "set_has_password",
             "saved_user_names",
             "delete_password",
             "credential_backend",
@@ -464,6 +469,8 @@ fn main() {
             "files_local_home",
             "files_local_list",
             "files_local_grant_root",
+            "files_pick_upload",
+            "files_pick_download_dir",
             "files_local_mkdir",
             "files_local_rename",
             "files_local_remove",

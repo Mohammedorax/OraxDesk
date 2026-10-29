@@ -127,7 +127,19 @@ impl SftpSession {
     ) -> Result<Self> {
         let mut ssh = connect_and_authenticate(&cfg.ssh, verifier).await?;
 
-        let sftp = open_sftp_subsystem(&mut ssh).await?;
+        // The subsystem request is the next place a server can accept the
+        // connection and then simply never answer. The connect deadline
+        // covers it too, so the Files panel cannot sit on "connecting"
+        // forever behind a server that accepted TCP and then went quiet.
+        let sftp = match tokio::time::timeout(
+            cfg.ssh.connect_timeout(),
+            open_sftp_subsystem(&mut ssh),
+        )
+        .await
+        {
+            Ok(result) => result?,
+            Err(_) => return Err(Error::Timeout),
+        };
 
         tracing::info!(endpoint = %cfg.endpoint(), auth = cfg.ssh.auth.label(), "sftp sidecar connected");
         Ok(Self {
@@ -191,8 +203,16 @@ impl SftpSession {
         let dir = self.resolve(dir).await?;
         let read = self.sftp.read_dir(dir.clone()).await.map_err(Error::sftp)?;
 
+        // A listing is server-controlled and it becomes a Vec the UI renders.
+        // Twenty thousand rows is far more than a person can use and bounds
+        // what a hostile server can make the client hold.
+        const MAX_LISTING: usize = 20_000;
         let mut entries = Vec::new();
         for entry in read {
+            if entries.len() >= MAX_LISTING {
+                tracing::warn!(%dir, "remote listing truncated at the entry ceiling");
+                break;
+            }
             let name = entry.file_name();
             if path::component(&name).is_err() {
                 tracing::warn!(%dir, "dropping unsafe entry name from remote listing");
@@ -268,6 +288,20 @@ impl SftpSession {
     /// Delete a file, or a directory (empty unless `recursive`).
     pub async fn remove(&self, remote: &str, recursive: bool) -> Result<()> {
         let full = self.resolve(remote).await?;
+        // `metadata` follows a symlink. A recursive delete through one would
+        // enumerate and delete the TARGET's contents, not the link: the walk
+        // skips symlinks it meets inside the tree, but the root was never
+        // checked. Refuse the root instead.
+        let link = self
+            .sftp
+            .symlink_metadata(full.clone())
+            .await
+            .map_err(Error::sftp)?;
+        if link.file_type().is_symlink() {
+            return Err(Error::UnsafePath(format!(
+                "refusing to delete {remote}: it is a symbolic link"
+            )));
+        }
         let meta = self
             .sftp
             .metadata(full.clone())
@@ -800,7 +834,9 @@ impl SftpSession {
     /// Names already present in a remote directory, for `Rename` conflicts.
     async fn sibling_names(&self, dir: &str) -> Vec<String> {
         match self.sftp.read_dir(dir.to_string()).await {
-            Ok(listing) => listing.map(|e| e.file_name()).collect(),
+            // Only used to make a collision-free name; the first few thousand
+            // are more than enough and the listing is server-controlled.
+            Ok(listing) => listing.take(10_000).map(|e| e.file_name()).collect(),
             Err(_) => Vec::new(),
         }
     }
