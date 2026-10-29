@@ -1,5 +1,24 @@
 import { describe, expect, it } from "vitest";
-import { inboxStateLook, isMissingRegistryError, normalizeInboxNumber } from "./inbox";
+import {
+  inboxStateLook,
+  isMissingRegistryError,
+  normalizeInboxNumber,
+  withoutRemoved,
+} from "./inbox";
+import type { InboxEntry } from "./types";
+
+function entry(id: string, number: string): InboxEntry {
+  return {
+    id,
+    number,
+    note: null,
+    deviceId: null,
+    state: "unknown",
+    detail: null,
+    lastCheckedAt: null,
+    createdAt: 0,
+  };
+}
 
 describe("normalizeInboxNumber", () => {
   it("takes nine digits as they are", () => {
@@ -71,5 +90,30 @@ describe("isMissingRegistryError", () => {
     expect(isMissingRegistryError("no registry origin has been set")).toBe(true);
     expect(isMissingRegistryError(new Error("The registry could not be asked: timeout"))).toBe(false);
     expect(isMissingRegistryError(new Error("not found"))).toBe(false);
+  });
+});
+
+describe("withoutRemoved", () => {
+  const LIST = [entry("a", "250739098"), entry("b", "250739099")];
+
+  it("keeps a number that has not been removed", () => {
+    expect(withoutRemoved(LIST, new Set()).map((row) => row.id)).toEqual(["a", "b"]);
+  });
+
+  it("drops a number that has been removed", () => {
+    expect(withoutRemoved(LIST, new Set(["a"])).map((row) => row.id)).toEqual(["b"]);
+  });
+
+  it("keeps a removed number out even when a refresh brings it back", () => {
+    // The remove and the refresh are two separate requests, and the answer
+    // that arrives last is not necessarily the newer truth: a row that comes
+    // back on its own is a row nobody deleted.
+    expect(withoutRemoved(LIST, new Set(["a"])).map((row) => row.id)).not.toContain("a");
+  });
+
+  it("does not touch the list it was given", () => {
+    const list = [entry("a", "250739098")];
+    withoutRemoved(list, new Set(["a"]));
+    expect(list).toHaveLength(1);
   });
 });

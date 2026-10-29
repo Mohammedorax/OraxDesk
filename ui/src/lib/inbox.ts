@@ -6,7 +6,7 @@
  * called — are in one place a test can hold.
  */
 import type { MessageKey } from "./i18n";
-import { isInboxState, type InboxState } from "./types";
+import { isInboxState, type InboxEntry, type InboxState } from "./types";
 
 /**
  * The catalogue keys this module owns.
@@ -91,4 +91,20 @@ export function normalizeInboxNumber(text: string): string | null {
 export function isMissingRegistryError(error: unknown): boolean {
   const text = error instanceof Error ? error.message : String(error ?? "");
   return /no registry origin|registry origin has not been set/i.test(text);
+}
+
+/**
+ * The rows as the list shows them.
+ *
+ * A number that has been removed stays removed even if a refresh that was
+ * already on its way brings it back: the remove and the refresh are two
+ * separate requests, and the answer that arrives last is not necessarily the
+ * newer truth. A row that comes back on its own is a row nobody deleted.
+ */
+export function withoutRemoved(
+  rows: InboxEntry[],
+  removedIds: ReadonlySet<string>,
+): InboxEntry[] {
+  if (removedIds.size === 0) return rows;
+  return rows.filter((row) => !removedIds.has(row.id));
 }

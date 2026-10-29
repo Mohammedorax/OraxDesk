@@ -50,6 +50,9 @@ import { classNames, describeError, formatBps, fuzzyMatch, modKeyLabel, timeAgo 
 import { useI18n, useT } from "../lib/i18n";
 import { formatTarget } from "../lib/address";
 import { Sidebar, type SidebarSelection } from "../components/Sidebar";
+import { SidebarDeleteButton } from "../components/SidebarDeleteButton";
+import { DeleteHostsDialog } from "../components/DeleteHostsDialog";
+import { deleteSelection } from "../lib/hostDeletion";
 import { useHostDragSelect, type DropTarget } from "../hooks/useHostDragSelect";
 import { HostTile, DiscoveredTile, addressLabel, osLabel } from "../components/HostTile";
 import { CommandPalette, type PaletteAction } from "../components/CommandPalette";
@@ -152,6 +155,8 @@ export function Library({
   const [activeTagIds, setActiveTagIds] = useState<Set<string>>(new Set());
   const [tagMode, setTagMode] = useState<"and" | "or">("or");
   const [namePrompt, setNamePrompt] = useState<"group" | "tag" | null>(null);
+  /** The machines the sidebar's trash button is about to delete, if it asked. */
+  const [deleteAsk, setDeleteAsk] = useState<HostProfile[] | null>(null);
   const quickConnectRef = useRef<HTMLInputElement>(null);
 
   const focusQuickConnect = useCallback((): void => {
@@ -798,6 +803,15 @@ export function Library({
   } = useHostDragSelect({ order: visibleOrder, onDrop: dropOnTarget });
 
   /**
+   * What the sidebar's trash button may act on.
+   *
+   * The selection is a set of ids and an id can name a machine that is no
+   * longer in the library, so the ids are resolved before anything is
+   * deleted (see `lib/hostDeletion.ts`).
+   */
+  const deletion = useMemo(() => deleteSelection(hosts, selectedIds), [hosts, selectedIds]);
+
+  /**
    * What the Escape / Select-all shortcuts need to know, in a ref.
    *
    * Through the state itself, the keydown effect below would tear down and
@@ -806,7 +820,12 @@ export function Library({
    */
   const selectionKeys = useRef({ overlaid: false, hasSelection: false });
   selectionKeys.current = {
-    overlaid: hostDialog !== null || paletteOpen || namePrompt !== null || ctxMenu !== null,
+    overlaid:
+      hostDialog !== null ||
+      paletteOpen ||
+      namePrompt !== null ||
+      ctxMenu !== null ||
+      deleteAsk !== null,
     hasSelection: selectedIds.size > 0,
   };
 
@@ -1212,6 +1231,54 @@ export function Library({
       if (saved === true) await setHasPassword(restored.id, true);
     },
     [saveHost],
+  );
+
+  /**
+   * Delete the machines the sidebar's trash button asked about.
+   *
+   * The same delete the tile's own menu makes, and the same toast with an
+   * Undo: the sidebar button is a second way in, not a second behaviour.
+   *
+   * One machine at a time, because each delete ends with its own refresh
+   * and the toast must not claim the work is done before any of it has been
+   * attempted. The machines that actually went are the ones the Undo
+   * restores, not the ones that were asked for: a delete that failed is
+   * still there, and restoring it would say it had been removed.
+   */
+  const deleteHosts = useCallback(
+    async (doomed: HostProfile[]): Promise<void> => {
+      const gone: HostProfile[] = [];
+      for (const h of doomed) {
+        try {
+          await deleteHost(h.id);
+          gone.push(h);
+        } catch (err) {
+          push(
+            "danger",
+            t("library.deleteFailed", { name: h.friendlyName, reason: describeError(err) }),
+          );
+        }
+      }
+      if (gone.length === 0) return;
+      clearSelection();
+      push(
+        "info",
+        gone.length === 1
+          ? t("library.deleted", { name: gone[0].friendlyName })
+          : t("library.deletedMany", { count: gone.length }),
+        {
+          label: t("library.undo"),
+          run: () => {
+            void (async () => {
+              for (const h of gone) await restoreHost(h);
+            })().catch((err: unknown) =>
+              push("danger", t("library.restoreFailed", { reason: describeError(err) })),
+            );
+          },
+        },
+      );
+    },
+    [deleteHost, restoreHost, clearSelection, push, t],
   );
 
   // ------------------------------------------------------------ hotkeys
@@ -1740,6 +1807,12 @@ export function Library({
           onGroupContextMenu={(group, x, y) => setGroupMenu({ group, x, y })}
           dragging={drag !== null}
           dropOverKey={drag?.over ?? null}
+          actions={
+            <SidebarDeleteButton
+              targets={deletion.targets}
+              onAsk={() => setDeleteAsk(deletion.targets)}
+            />
+          }
           footer={
             <div className="flex flex-col gap-2">
               <GetHelp />
@@ -1995,6 +2068,19 @@ export function Library({
             setNamePrompt(null);
           }}
           onClose={() => setNamePrompt(null)}
+        />
+      ) : null}
+      {deleteAsk ? (
+        <DeleteHostsDialog
+          hosts={deleteAsk}
+          onCancel={() => setDeleteAsk(null)}
+          onConfirm={() => {
+            // The question is closed before the work starts: the dialog is the
+            // question, and the toast is the answer.
+            const doomed = deleteAsk;
+            setDeleteAsk(null);
+            void deleteHosts(doomed);
+          }}
         />
       ) : null}
     </div>

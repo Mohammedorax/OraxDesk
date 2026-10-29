@@ -42,6 +42,7 @@ export function Sidebar({
   onGroupContextMenu,
   dragging = false,
   dropOverKey = null,
+  actions,
   footer,
 }: {
   hosts: HostProfile[];
@@ -71,6 +72,14 @@ export function Sidebar({
   dragging?: boolean;
   /** The `data-drop` key currently under the pointer, if any. */
   dropOverKey?: string | null;
+  /**
+   * Quiet actions on the current selection.
+   *
+   * They sit with the sidebar's own rows rather than among the full-width
+   * support buttons at the foot, so a destructive action never looks like
+   * one of the three big buttons above it. The Library owns what they do.
+   */
+  actions?: ReactNode;
   /** Support actions, kept at the bottom of the always-visible sidebar. */
   footer?: ReactNode;
 }): ReactNode {
@@ -230,6 +239,7 @@ export function Sidebar({
           active={false}
           onClick={onOpenPreferences}
         />
+        {actions ? <div className="mt-1 flex items-center gap-2 px-2">{actions}</div> : null}
       </div>
       {footer ? (
         <div className="mt-2 flex shrink-0 flex-col gap-2 border-t border-subtle pt-2 [&>button]:w-full [&>button]:justify-center">
