@@ -93,7 +93,19 @@ fn helper_keys() -> Result<DeviceKeys, String> {
 /// `None` when no registry is configured, and the machine then publishes to
 /// iroh's public directory exactly as it always has.
 pub fn machine_directory_options() -> Result<Option<boundary_session::DirectoryOptions>, String> {
-    let Some(url) = configured_url() else {
+    machine_directory_options_for(configured_url())
+}
+
+/// [`machine_directory_options`] for an origin the caller already resolved.
+///
+/// The device NUMBER is registered in the app's registry (stored or default),
+/// so the ADDRESS must be published there too. Publishing to n0 while the
+/// number lives in Cloudflare splits one identity across two directories and
+/// leaves a registered machine that a helper cannot find.
+pub fn machine_directory_options_for(
+    origin: Option<String>,
+) -> Result<Option<boundary_session::DirectoryOptions>, String> {
+    let Some(url) = origin else {
         return Ok(None);
     };
     let registry = registry_key(keys::ACCOUNT_MACHINE)?;
@@ -187,6 +199,15 @@ async fn stored_origin(state: &AppState) -> Result<Option<String>, String> {
     Ok(stored.or_else(|| Some(DEFAULT_REGISTRY_URL.to_string())))
 }
 
+/// The directory a helper looks a saved machine up in.
+///
+/// The same origin the device NUMBER was resolved against, and no signing
+/// key: a helper publishes nothing about itself, it only reads. `None` keeps
+/// the public n0 directory for builds with no registry at all.
+pub async fn helper_directory_url(state: &AppState) -> Option<String> {
+    stored_origin(state).await.ok().flatten()
+}
+
 /// The origin a command is allowed to use.
 ///
 /// The named origin must be the one the app has, and it must be named at
@@ -216,17 +237,26 @@ pub async fn registry_set_origin(state: State<'_, AppState>, url: String) -> Res
     let url = url.trim().to_string();
     if url.is_empty() {
         let store = state.store.clone();
-        return super::blocking(move || store.set_setting(REGISTRY_ORIGIN_KEY, ""))
+        let result = super::blocking(move || store.set_setting(REGISTRY_ORIGIN_KEY, ""))
             .await
             .map_err(|error| error.to_string());
+        // Clear the address directory too, so saved-machine lookups do not
+        // keep querying a registry this computer no longer uses.
+        state.protocols.boundary.set_directory(None);
+        return result;
     }
     // Validated the same way every other origin is, so a stored origin is
     // one the client can actually use.
     Client::new(&url).map_err(|error| error.to_string())?;
     let store = state.store.clone();
-    super::blocking(move || store.set_setting(REGISTRY_ORIGIN_KEY, &url))
+    let stored = url.clone();
+    let result = super::blocking(move || store.set_setting(REGISTRY_ORIGIN_KEY, &stored))
         .await
-        .map_err(|error| error.to_string())
+        .map_err(|error| error.to_string());
+    // The number is resolved here, so the address is looked up here: both
+    // halves of a by-number connection must read the same directory.
+    state.protocols.boundary.set_directory(Some(url));
+    result
 }
 
 /// Resolve a code through a known registry origin. Used by the connect path so

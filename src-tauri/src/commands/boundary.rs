@@ -18,18 +18,32 @@ pub fn install(app: &AppHandle, data_dir: &std::path::Path) {
         Ok(key) => state.protocols.boundary.set_identity(key),
         Err(error) => tracing::warn!("Boundary helper identity unavailable: {error:#}"),
     }
-    let app = app.clone();
+    let paired_app = app.clone();
     state
         .protocols
         .boundary
         .on_paired(Arc::new(move |machine: String, name: String| {
-            let app = app.clone();
+            let app = paired_app.clone();
             tauri::async_runtime::spawn(async move {
                 if let Err(error) = save_paired(&app, machine, name).await {
                     tracing::warn!("could not save a paired computer: {error}");
                 }
             });
         }));
+
+    // A saved machine is opened by its ID, and that ID has to be turned into
+    // an address. The number was resolved in the app's registry (or the
+    // default one), so the address is looked for in the same directory —
+    // otherwise a machine that published only there is registered and
+    // unreachable at once.
+    let directory_app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let Some(state) = directory_app.try_state::<AppState>() else {
+            return;
+        };
+        let url = crate::commands::registry::helper_directory_url(&state).await;
+        state.protocols.boundary.set_directory(url);
+    });
 }
 
 /// Paired-computer saves run one at a time.

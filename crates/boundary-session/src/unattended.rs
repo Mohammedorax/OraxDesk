@@ -748,7 +748,21 @@ async fn run_connect(
     let connection = tokio::time::timeout(Duration::from_secs(30), endpoint.connect(target, wire::ALPN))
         .await
         .context("The computer did not answer. It may be off, asleep, offline, or its unattended access may be switched off")?
-        .context("Cannot reach the computer")?;
+        .map_err(|error| {
+            // The one failure a person can act on without a support call: the
+            // device number is registered, but nothing published an address,
+            // so there is nowhere to dial. Say which switch fixes it.
+            let text = error.to_string();
+            if text.contains("addressing information") {
+                anyhow!(
+                    "{text}. This computer is registered, but it has not published an \
+                     address: switch on Unattended access there, or have the person \
+                     send an invitation instead"
+                )
+            } else {
+                anyhow!("Cannot reach the computer: {text}")
+            }
+        })?;
     let (mut send, recv) = connection.open_bi().await?;
     wire::write(
         &mut send,

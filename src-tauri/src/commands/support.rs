@@ -897,7 +897,15 @@ pub fn install(app: &AppHandle) {
         // lock, from the poll task, would freeze the whole support panel
         // while the keychain answered, and it would do it on a runtime
         // worker the rest of the app needs.
-        match crate::commands::registry::machine_directory_options_off_lock().await {
+        // The registry the device NUMBER is registered in is the directory
+        // the ADDRESS is published to. Resolving one in the app's origin and
+        // the other in n0 splits one machine across two directories, which is
+        // how a registered computer ends up unreachable by number.
+        let origin = match app.try_state::<crate::state::AppState>() {
+            Some(state) => crate::commands::registry::helper_directory_url(&state).await,
+            None => None,
+        };
+        match crate::commands::registry::machine_directory_options_for(origin) {
             Ok(directory) => {
                 support.model.lock().directory = directory;
             }

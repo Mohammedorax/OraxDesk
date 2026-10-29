@@ -70,6 +70,12 @@ to stored data and to the IPC contract between the Rust core and the frontend.
 * SSH terminal input is capped, the event window label is validated, and a
   disconnect no longer waits on a full command channel.
 * Pairing one machine twice at once no longer creates duplicate profiles.
+* A computer opened by its nine-digit number is now looked for in the SAME
+  registry the number was resolved in, and a machine publishes its address
+  there too. Resolving the number in Cloudflare and the address in n0 left a
+  registered machine unreachable behind a generic "cannot reach" message.
+* A device that is registered but has never published an address now says so,
+  with the switch that fixes it, instead of a bare connection failure.
 
 ### Security
 

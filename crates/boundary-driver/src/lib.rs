@@ -35,6 +35,16 @@ pub struct BoundaryDriver {
     identity: std::sync::Arc<Mutex<Option<SecretKey>>>,
     paired: std::sync::Arc<Mutex<Option<OnPaired>>>,
     tools: Registry,
+    /// The address directory a saved machine is looked up in, when the app has
+    /// a registry configured.
+    ///
+    /// A by-number connection resolves the NUMBER in the app's registry, so
+    /// the ADDRESS must come from the same directory: looking one up in
+    /// Cloudflare and the other up in n0 means a machine that published to
+    /// only one of them is registered and unreachable at the same time. `None`
+    /// keeps the public n0 directory, which is what every build without a
+    /// registry has always used.
+    directory: std::sync::Arc<Mutex<Option<String>>>,
 }
 impl BoundaryDriver {
     /// How to send commands and file requests to the computer behind
@@ -53,6 +63,15 @@ impl BoundaryDriver {
     /// What to do when a session tells this helper it was paired.
     pub fn on_paired(&self, paired: OnPaired) {
         *self.paired.lock() = Some(paired);
+    }
+    /// Point a saved-machine connection at the same address directory the app
+    /// registers devices in. `None` restores the public n0 directory.
+    ///
+    /// Only reads happen with this: a helper publishes nothing about itself.
+    pub fn set_directory(&self, url: Option<String>) {
+        *self.directory.lock() = url
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty());
     }
     /// Register a short lived, single use invitation without putting its secret in window URLs.
     pub fn prepare(&self, ticket: String, helper: String) -> Result<String> {
@@ -112,6 +131,8 @@ impl ProtocolDriver for BoundaryDriver {
         let identity = self.identity.lock().clone();
         let paired = self.paired.lock().clone();
         let registry = self.tools.clone();
+        // Read once, at spawn: the directory a saved machine is looked up in.
+        let directory_url = self.directory.lock().clone();
         let session_id = id.clone();
         let (commands, mut receiver) = mpsc::channel(128);
         let cancel = CancellationToken::new();
@@ -142,18 +163,28 @@ impl ProtocolDriver for BoundaryDriver {
                             .clone()
                             .filter(|n| !n.trim().is_empty())
                             .unwrap_or_else(helper_name);
+                        // The registry the number was resolved in is the first
+                        // place the address is looked for. n0 stays in place as
+                        // a second source, so a registry that is down — or a
+                        // machine that has not published there yet — does not
+                        // hide a machine that n0 can find.
+                        let host_options = match directory_url.clone() {
+                            Some(url) => boundary_session::HostOptions {
+                                directory: Some(boundary_session::DirectoryOptions {
+                                    url,
+                                    signing_key: None,
+                                }),
+                                ..boundary_session::HostOptions::default()
+                            },
+                            None => boundary_session::HostOptions::default()
+                                .with_directory_from_env(None),
+                        };
                         unattended::connect_with_tools(
                             options.host.clone(),
                             name,
                             options.credentials.password.clone().filter(|p| !p.is_empty()),
                             key,
-                            // The helper looks machines up in the registry
-                            // as well as in iroh's public directory, so a
-                            // machine that only ever published to a registry
-                            // of its own is still reachable. A helper
-                            // publishes nothing: it is not a machine anyone
-                            // connects to.
-                            HostOptions::default().with_directory_from_env(None),
+                            host_options,
                         )
                     }
                     None => bail!("This support invitation is no longer available. Paste a new invitation in the Library"),
