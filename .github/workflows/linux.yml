@@ -45,8 +45,6 @@ jobs:
 
       - name: Bundle
         run: |
-          cargo build --release -p deskvncviewer -p dvv
-          cargo tauri build --bundles deb,rpm,appimage --no-bundle-sidecar-check || true
           cargo tauri build --bundles deb,rpm,appimage
 
       - uses: actions/upload-artifact@v4
