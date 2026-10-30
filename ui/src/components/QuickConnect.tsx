@@ -26,6 +26,7 @@ import {
 } from "../lib/address";
 import { classNames, fuzzyMatch, modKeyLabel } from "../lib/util";
 import { useI18n, type MessageKey } from "../lib/i18n";
+import { enterAction, modeToggle, type QuickMode } from "../lib/quickConnect";
 import { IconArrowRight, IconClock, IconMonitor, IconSearch, IconZap } from "./icons";
 
 /** Matches the Rust side's `normalize_address`, so both agree on "same machine". */
@@ -137,20 +138,22 @@ export function QuickConnect({
   const [selected, setSelected] = useState(-1);
   /** Only red after the user actually tried to connect; typing is not an error. */
   const [attempted, setAttempted] = useState(false);
-  const [mode, setMode] = useState<"search" | "connect">("search");
+  const [mode, setMode] = useState<QuickMode>("search");
   const listRef = useRef<HTMLDivElement>(null);
   const searchMode = mode === "search";
+  const toggle = modeToggle(mode);
 
-  // Search mode is the same field, not a second one: every keystroke is the
-  // Library filter, and the mode button is how a person says "I mean an
-  // address" without being guessed at.
+  // Typing ALWAYS filters the Library, in both modes: the mode decides what
+  // Enter does, never whether this field is a search box. Flipping to connect
+  // mode used to clear the filter silently, and the only way to get it back
+  // was to notice and flip again — the field's primary job cannot be a
+  // casualty of its secondary one.
   useEffect(() => {
-    if (searchMode) onSearch?.(value);
-  }, [onSearch, searchMode, value]);
+    onSearch?.(value);
+  }, [onSearch, value]);
 
   const setConnectMode = (): void => {
     setMode("connect");
-    onSearch?.("");
     setOpen(true);
   };
   const setSearchMode = (): void => {
@@ -423,7 +426,9 @@ export function QuickConnect({
       e.preventDefault();
       const entry = showList && selected >= 0 ? suggestions[selected] : undefined;
       if (entry) entry.run();
-      else if (trimmed !== "" && (!searchMode || savedMatch)) connectTyped();
+      // The mode only ever decides THIS: connect mode dials whatever is
+      // typed, search mode dials only a saved host's exact address.
+      else if (enterAction(mode, value, savedMatch !== null) === "connect") connectTyped();
     } else if (e.key === "Escape") {
       e.preventDefault();
       // First Escape dismisses the list, a second one abandons the address.
@@ -500,12 +505,18 @@ export function QuickConnect({
           onBlur={() => setOpen(false)}
           onKeyDown={onKeyDown}
         />
+        {/*
+          A two-state toggle named for the thing it toggles: the label is
+          always "connect", and aria-pressed says whether connect mode IS on.
+          The tooltip names what clicking does. The old version showed the
+          mode you would switch TO while aria-pressed described the mode you
+          were in, so the name and the state were about two modes at once.
+        */}
         <button
           type="button"
           className="absolute end-1 top-1/2 -translate-y-1/2 rounded-sm bg-inset px-1.5 py-1 text-2xs font-medium text-secondary hover:bg-raised hover:text-primary"
-          title={searchMode ? t("quick.switchToConnect") : t("quick.switchToSearch")}
-          aria-label={searchMode ? t("quick.switchToConnect") : t("quick.switchToSearch")}
-          aria-pressed={!searchMode}
+          title={t(toggle.hintKey)}
+          aria-pressed={toggle.pressed}
           onMouseDown={(event) => event.preventDefault()}
           onClick={() => {
             if (searchMode) setConnectMode();
@@ -513,7 +524,7 @@ export function QuickConnect({
             inputRef.current?.focus();
           }}
         >
-          {searchMode ? t("quick.modeConnect") : t("quick.modeSearch")}
+          {t("quick.modeConnect")}
         </button>
         {showList ? (
           <div

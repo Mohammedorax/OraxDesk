@@ -35,6 +35,18 @@ describe("the message catalogue", () => {
     }
   });
 
+  it("writes every catalogue number in Latin digits", () => {
+    // Interpolation substitutes through String(), which always yields Latin
+    // digits, and device numbers, ports and shortcut chips are Latin too. A
+    // hard-coded Arabic-Indic ١٠ beside them is two numeral systems in one
+    // sentence, so the catalogue is not allowed any.
+    const arabicIndic = /[٠-٩]/;
+    for (const key of MESSAGE_KEYS) {
+      expect(arabicIndic.test(ar(key)), `arabic: ${key}`).toBe(false);
+      expect(arabicIndic.test(en(key)), `english: ${key}`).toBe(false);
+    }
+  });
+
   it("substitutes every placeholder it is given", () => {
     // A template that still holds a `{name}` after substitution is a broken
     // sentence, and it is invisible unless something checks for it.

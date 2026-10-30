@@ -129,7 +129,8 @@ const ar = {
   // شريط الاتصال السريع
   "quick.placeholder": "اتصل بعنوان، مثل 192.168.1.20:1 أو rdp://frontdesk  ({key}T)",
   "quick.label": "العنوان الذي تريد الاتصال به",
-  "quick.modeSearch": "بحث",
+  // زر الطريقة مفتاح ثنائي اسمه «اتصال»، وحالته المضغوطة هي الحقيقة؛
+  // فلا حاجة لصيغة «بحث» سوى اسم الحالة، وهذا اسم الشيء نفسه.
   "quick.modeConnect": "اتصال",
   "quick.switchToSearch": "بدّل إلى البحث",
   "quick.switchToConnect": "بدّل إلى الاتصال",
@@ -300,7 +301,7 @@ const ar = {
   "gethelp.loading": "جارٍ فتح نافذة المساعدة…",
   "gethelp.unavailable": "خدمة الدعم غير متاحة في هذه النسخة.",
   "gethelp.shareTitle": "شارك هذا الجهاز",
-  "gethelp.shareIntro": "امنح الشخص الذي يساعدك رمزًا واحدًا لكل جلسة. ينتهي خلال ١٠ دقائق إن لم يتصل أحد.",
+  "gethelp.shareIntro": "امنح الشخص الذي يساعدك رمزًا واحدًا لكل جلسة. ينتهي خلال 10 دقائق إن لم يتصل أحد.",
   "gethelp.statusReady": "جاهز للمساعدة",
   "gethelp.statusWaiting": "بانتظار المساعد…",
   "gethelp.statusConnected": "المساعد متصل",
@@ -371,7 +372,7 @@ const ar = {
   "gethelp.remove": "إزالة",
   "gethelp.unattendedPassword": "كلمة المرور للوصول دون حضورك",
   "gethelp.unattendedPasswordHint":
-    "اختيارية. تتيح لم مساعد لم يُقبَل هنا من قبل أن يتصل بمعرّف هذا الجهاز وبكلمة المرور. {min} حرفًا على الأقل. وخمس محاولات خاطئة توقفها ١٥ دقيقة.",
+    "اختيارية. تتيح لم مساعد لم يُقبَل هنا من قبل أن يتصل بمعرّف هذا الجهاز وبكلمة المرور. {min} حرفًا على الأقل. وخمس محاولات خاطئة توقفها 15 دقيقة.",
   "gethelp.newPassword": "كلمة مرور جديدة",
   "gethelp.repeatPassword": "أعدّها",
   "gethelp.setPassword": "تعيين كلمة المرور",
@@ -464,7 +465,7 @@ const ar = {
   "about.shortcut.toolbar": "أظهر أو أخفِ شريط الجلسة",
   "about.shortcut.fullscreen": "بدّل ملء الشاشة",
   "about.shortcut.tabs": "علامة التبويب التالية / السابقة",
-  "about.shortcut.jumpTab": "انتقل إلى علامة تبويب (١ هي المكتبة)",
+  "about.shortcut.jumpTab": "انتقل إلى علامة تبويب (1 هي المكتبة)",
   "about.shortcut.closeTab": "أغلق علامة التبويب الحالية",
   "about.shortcut.backToLibrary": "عد إلى المكتبة",
   "about.shortcut.splitRight": "قسّم اللوحة إلى اليمين",
@@ -1719,7 +1720,6 @@ const en: Record<keyof typeof ar, string> = {
   // The quick connect bar
   "quick.placeholder": "Connect to an address, e.g. 192.168.1.20:1 or rdp://frontdesk  ({key}T)",
   "quick.label": "Address to connect to",
-  "quick.modeSearch": "Search",
   "quick.modeConnect": "Connect",
   "quick.switchToSearch": "Switch to search",
   "quick.switchToConnect": "Switch to connect",
