@@ -50,10 +50,12 @@ async fn main() {
         cfg = cfg.security(&[2]).password(pw);
     }
 
-    let server = MockServer::start(cfg).await;
-    // The listener is bound on an ephemeral port by `start`; report it so the
-    // caller can connect. Re-binding on a fixed port is not supported by the
-    // test harness, so the actual address is printed instead.
+    // The usage line promises the port; honoring it is what lets a probe that
+    // dials a fixed port reach this server at all.
+    let server = MockServer::start(cfg.bind_port(port)).await;
+    // The listener is bound on the requested port (or an ephemeral one when
+    // no port was named); report the address it actually got either way, so
+    // the caller connects to what the OS accepted rather than to a guess.
     println!("mock VNC server listening on {}", server.addr());
     println!(
         "  auth: {}",
@@ -62,7 +64,7 @@ async fn main() {
             .map(|_| "VncAuth (password supplied)")
             .unwrap_or("None")
     );
-    println!("  requested port {port} is ignored; use the address above");
+    println!("  bound port: {port}");
 
     // Serve until interrupted, echoing every key event as it arrives so that
     // keyboard pass-through can be checked end to end: a shortcut the local

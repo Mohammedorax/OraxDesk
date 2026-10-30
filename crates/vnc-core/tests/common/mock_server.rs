@@ -646,6 +646,13 @@ pub struct MockConfig {
     pub flood: Option<Vec<RectSpec>>,
     /// Gap between flooded updates. Zero streams as fast as the socket takes.
     pub flood_gap: Duration,
+    /// Bind this port instead of an ephemeral one.
+    ///
+    /// The standalone example advertises a port argument and a probe that
+    /// dials 5900 cannot use an address the server never announced, so the
+    /// config owns the port rather than the example inventing a second way in.
+    /// `None` keeps the behaviour every test has always had: a random port.
+    pub bind_port: Option<u16>,
     /// Announce ContinuousUpdates support (an unsolicited
     /// EndOfContinuousUpdates right after ServerInit), the way TigerVNC does.
     pub advertise_continuous_updates: bool,
@@ -673,6 +680,7 @@ impl Default for MockConfig {
             flood: None,
             flood_gap: Duration::ZERO,
             advertise_continuous_updates: false,
+            bind_port: None,
         }
     }
 }
@@ -680,6 +688,11 @@ impl Default for MockConfig {
 impl MockConfig {
     pub fn new() -> Self {
         Self::default()
+    }
+    /// Bind a specific port instead of an ephemeral one.
+    pub fn bind_port(mut self, port: u16) -> Self {
+        self.bind_port = Some(port);
+        self
     }
     pub fn banner(mut self, b: [u8; 12]) -> Self {
         self.banner = b;
@@ -769,9 +782,13 @@ impl Drop for MockServer {
 }
 
 impl MockServer {
-    /// Bind on an ephemeral loopback port and start accepting.
+    /// Bind on a loopback port (ephemeral unless the config names one) and
+    /// start accepting.
     pub async fn start(cfg: MockConfig) -> Self {
-        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind mock");
+        let port = cfg.bind_port.unwrap_or(0);
+        let listener = TcpListener::bind(("127.0.0.1", port))
+            .await
+            .expect("bind mock");
         let addr = listener.local_addr().expect("local_addr");
         let rec = Arc::new(Mutex::new(Recorded::default()));
         let (actions, _) = broadcast::channel(64);
