@@ -44,6 +44,17 @@
    ("Follow System" simply removes the attribute).
 --------------------------------------------------------------------------- */
 
+/* Contrast floor for the text tokens.
+   Each one is measured against the surface it actually lands on, and the worst
+   of those is never white: the inset wells and the 10–15% status tints are
+   darker than a card, so a colour that clears 4.5:1 on white can still fail
+   inside a badge. Tertiary is the tight one — it is set at 11–12px in the
+   library, the file list and every placeholder, so it needs the full 4.5:1
+   there rather than the 3.3:1 it used to hold on a card. Only lightness moved
+   (OKLCH L, hue and chroma held): the three greys still read as three steps,
+   tertiary just stops disappearing. The light status colours sit a shade
+   deeper for the same reason — they are text at 11px on their own tints, and
+   as a side effect their white labels now clear the floor too. */
 :root {
   /* light */
   --bg-canvas: #f4f5f7;
@@ -54,20 +65,20 @@
   --border-strong: rgba(22, 26, 34, 0.24);
   --text-primary: #1a1d23;
   --text-secondary: #4c5361;
-  --text-tertiary: #878e9b;
-  --accent: #2f6fe4;
+  --text-tertiary: #656b77;
+  --accent: #1958cc;
   --accent-fg: #ffffff;
   /* Brand colours, from the identity pack, for the wordmark only. The rest of
      the interface keeps its own semantic accent: a UI tinted #0052FF
      everywhere stops reading as a brand and starts reading as a theme. */
   --brand-blue: #0052ff;
   --brand-red: #ff1f2d;
-  --success: #178745;
-  --success-subtle: rgba(23, 135, 69, 0.12);
-  --warning: #a06a00;
-  --warning-subtle: rgba(160, 106, 0, 0.12);
-  --danger: #cc3a30;
-  --danger-subtle: rgba(204, 58, 48, 0.1);
+  --success: #037b3c;
+  --success-subtle: rgba(3, 123, 60, 0.12);
+  --warning: #926002;
+  --warning-subtle: rgba(146, 96, 2, 0.12);
+  --danger: #bf2d25;
+  --danger-subtle: rgba(191, 45, 37, 0.1);
   --overlay-scrim: rgba(18, 20, 26, 0.55);
   --shadow-tile:
     0 1px 2px rgba(15, 18, 24, 0.06), 0 4px 14px rgba(15, 18, 24, 0.07);
@@ -96,8 +107,8 @@
     --border-strong: rgba(255, 255, 255, 0.2);
     --text-primary: #e9ebef;
     --text-secondary: #a4aab6;
-    --text-tertiary: #757c89;
-    --accent: #5b95f5;
+    --text-tertiary: #878e9c;
+    --accent: #67a1ff;
     --accent-fg: #0b1220;
     --brand-blue: #4b93ff;
     --brand-red: #ff5a63;
@@ -127,8 +138,8 @@
   --border-strong: rgba(255, 255, 255, 0.2);
   --text-primary: #e9ebef;
   --text-secondary: #a4aab6;
-  --text-tertiary: #757c89;
-  --accent: #5b95f5;
+  --text-tertiary: #878e9c;
+  --accent: #67a1ff;
   --accent-fg: #0b1220;
   --brand-blue: #4b93ff;
   --brand-red: #ff5a63;
@@ -236,11 +247,31 @@ textarea,
   font-feature-settings: "tnum";
 }
 
-/* Visible focus rings (WCAG 2.2 non-text contrast) */
+/* Visible focus (WCAG 2.2 non-text contrast and 2.4.11 focus appearance).
+ *
+ * One treatment for every interactive thing — buttons, links, inputs, tiles,
+ * tabs — instead of a per-component guess. A 2px accent band held 2px off the
+ * element. The gap is what makes it work everywhere: on an accent-filled
+ * primary button or a selected tile a ring drawn flush against the fill would
+ * disappear into it, while the 2px of surface between them keeps the band
+ * legible. It also means the cue is not colour alone — a band appears around
+ * the control, so the state survives being seen in greyscale.
+ *
+ * `outline` rather than `box-shadow`: tiles and popovers already spend
+ * box-shadow on elevation and a global shadow would overwrite it, and an
+ * outline follows the element's own radius. The `border-radius: 4px` this
+ * rule used to set forced one radius onto every focused element, so a pill
+ * briefly became a rounded rectangle as it was tabbed to; that is gone.
+ *
+ * `--accent` is the ring in both themes and clears 4.5:1 against every surface
+ * it can sit on, tints included; `outline` is direction-agnostic, so RTL needs
+ * nothing extra here. Text fields still tie their border to the accent on
+ * focus (see `.field:focus`) — the border is the field's own cue, the ring is
+ * the shared one.
+ */
 :focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
-  border-radius: 4px;
 }
 
 /* Shared control styles */
@@ -299,18 +330,16 @@ textarea,
   font-size: 13px;
   font-family: inherit;
 }
+/* Keep the accent border — it is what tells a mouse user the field is live —
+   but drop the old inner 2px halo: the shared ring now sits 2px outside the
+   border, and two accent bands with no gap between them read as one thick,
+   slightly crooked edge. The ring rule is unlayered, so it beats the
+   `outline-none` some inputs put on themselves. */
 .field:focus {
-  outline: none;
   border-color: var(--accent);
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 30%, transparent);
 }
 .field::placeholder {
   color: var(--text-tertiary);
-}
-/* `.field:focus` already draws an accent border + ring; the global
-   :focus-visible outline on top of it reads as a doubled halo. */
-.field:focus-visible {
-  outline: none;
 }
 
 /* Native <select> chrome (macOS bezel, system chevron) clashes with the rest of
