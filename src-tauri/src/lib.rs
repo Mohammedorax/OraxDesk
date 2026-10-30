@@ -8,6 +8,7 @@
 mod agent;
 mod commands;
 mod framing;
+mod logging;
 mod menu;
 mod state;
 mod thumbnail;
@@ -131,10 +132,6 @@ fn shutdown_window(window: &tauri::Window) {
 }
 
 pub fn run() {
-    let filter = tracing_subscriber::EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info,deskvncviewer_lib=debug"));
-    tracing_subscriber::fmt().with_env_filter(filter).init();
-
     let mut builder = tauri::Builder::default();
 
     #[cfg(desktop)]
@@ -183,6 +180,11 @@ pub fn run() {
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_deep_link::init())
         .setup(|app| {
+            // Logging first: it needs the same data directory the store uses,
+            // and everything below it is something a person may later have to
+            // send us a log about. The console sink has nowhere to go in a
+            // packaged build, so the file is the copy that survives.
+            logging::init(app.path().app_data_dir().ok().as_deref());
             #[cfg(desktop)]
             app.handle()
                 .plugin(tauri_plugin_updater::Builder::new().build())?;
