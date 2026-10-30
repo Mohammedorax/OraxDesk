@@ -65,21 +65,19 @@ import { BoundaryConnect } from "../components/BoundaryConnect";
 import { InboxDialog } from "../components/InboxDialog";
 import { mustInvoke } from "../lib/tauri";
 import { DeviceIdentityChip } from "../components/DeviceIdentityChip";
-import { Wordmark } from "../components/Wordmark";
 import { registry } from "../lib/support";
 import { ContextMenu, Dialog, EmptyState, Select, TileSkeleton, type MenuItem } from "../components/primitives";
 import {
   IconActivity,
   IconAlert,
   IconGrid,
-  IconHelp,
   IconList,
   IconMonitor,
   IconTabs,
   IconWindows,
   IconZap,
 } from "../components/icons";
-import { emit, listen } from "@tauri-apps/api/event";
+import { listen } from "@tauri-apps/api/event";
 import {
   AGENT_OPEN_EVENT,
   type AgentOpenRequest,
@@ -1617,17 +1615,9 @@ export function Library({
         a scan), they are simply not the first thing offered.
       */}
       <header className="flex flex-wrap items-center gap-3 border-b border-subtle bg-surface/80 px-4 py-2.5">
-        <span className="me-1 flex shrink-0 items-center gap-2">
-          <img
-            src="/brand/icon-64.png"
-            alt=""
-            aria-hidden="true"
-            className="size-5 rounded-[5px]"
-          />
-          <h1 className="text-sm text-primary">
-            <Wordmark />
-          </h1>
-        </span>
+        {/* The wordmark and the About entry point used to lead this bar; both
+            now live in Preferences → General, which is where the About dialog
+            is opened from. */}
         {/* The machine's number, beside its name: the one place a person is
             already looking when somebody asks them for it. It used to be a
             full-width card on a row of its own under this bar. */}
@@ -1716,17 +1706,6 @@ export function Library({
           onClick={() => setLivePreviews(!livePreviews)}
         >
           <IconActivity size={15} />
-        </button>
-        {/* Routed through the same event the native menu's About item emits,
-            so one listener (App.tsx) owns opening the dialog everywhere. */}
-        <button
-          type="button"
-          aria-label={t("library.aboutAndHelp")}
-          title={t("library.aboutAndHelp")}
-          className="overflow-hidden rounded-sm border border-subtle p-1.5 text-secondary hover:bg-inset"
-          onClick={() => void emit("menu://action", { id: "menu:about" })}
-        >
-          <IconHelp size={15} />
         </button>
       </header>
 

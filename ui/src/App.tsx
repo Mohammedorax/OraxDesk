@@ -534,9 +534,20 @@ function MainShell(): ReactNode {
       */}
       <AgentWall onShowSession={selectSession} />
 
+      {/*
+        About replaces Preferences rather than opening on top of it: two
+        modals at once would both answer one Escape, and the one underneath
+        would close with the one on top (InboxDialog follows the same rule).
+      */}
       {prefsOpen ? (
         <Suspense fallback={<ModalLoading />}>
-          <Preferences onClose={() => setPrefsOpen(false)} />
+          <Preferences
+            onClose={() => setPrefsOpen(false)}
+            onOpenAbout={() => {
+              setPrefsOpen(false);
+              setAboutOpen(true);
+            }}
+          />
         </Suspense>
       ) : null}
       {aboutOpen ? (

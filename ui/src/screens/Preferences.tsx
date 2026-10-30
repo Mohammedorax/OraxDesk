@@ -23,6 +23,7 @@ import {
 import { useAgentActivity } from "../state/AgentActivityContext";
 import { planeStatusLine } from "../lib/agentActivity";
 import { useT, useLang, type MessageKey } from "../lib/i18n";
+import { Wordmark } from "../components/Wordmark";
 import { readViewDefaults, writeViewDefaults, type ViewPrefs } from "../lib/viewPrefs";
 import type { QualityPreset, ScalingMode } from "../lib/types";
 import type { RdpResolution } from "../lib/rdp";
@@ -172,7 +173,14 @@ function useRdpResolutionDefault(): [RdpResolution, (v: RdpResolution) => void] 
   return [v, set];
 }
 
-export function Preferences({ onClose }: { onClose: () => void }): ReactNode {
+export function Preferences({
+  onClose,
+  onOpenAbout,
+}: {
+  onClose: () => void;
+  /** Opens the About dialog. App.tsx owns it, and closes this window first: two modals at once would both answer one Escape. */
+  onOpenAbout: () => void;
+}): ReactNode {
   const [tab, setTab] = useState<Tab>("General");
   const { settings, update } = useSettings();
   // The same toggle as the Library header, one source of truth, and flipping
@@ -289,6 +297,33 @@ export function Preferences({ onClose }: { onClose: () => void }): ReactNode {
                   value={settings.compact}
                   onChange={(v) => update({ compact: v })}
                 />
+                {/*
+                  The brand and the About entry point, which used to lead the
+                  library's top bar. The label is the same sentence the old
+                  button carried, so nothing is reworded on the way in, and
+                  the About dialog itself is opened by App.tsx, unchanged.
+                */}
+                <div className="flex items-center gap-3 border-t border-subtle pt-5">
+                  <img
+                    src="/brand/icon-64.png"
+                    alt=""
+                    aria-hidden="true"
+                    className="size-8 rounded-md"
+                  />
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-primary">
+                      <Wordmark />
+                    </p>
+                    <p className="text-xs text-tertiary">{t("brand.tagline")}</p>
+                  </div>
+                  <button
+                    type="button"
+                    className="btn-secondary ms-auto shrink-0"
+                    onClick={onOpenAbout}
+                  >
+                    {t("library.aboutAndHelp")}
+                  </button>
+                </div>
               </>
             ) : null}
             {tab === "Appearance" ? (
