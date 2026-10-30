@@ -12,7 +12,7 @@ import { useToasts, type Toast } from "../state/ToastContext";
 import { useT } from "../lib/i18n";
 import { usePaneVisible } from "./Pane";
 import { classNames } from "../lib/util";
-import { IconCheck, IconAlert, IconX, IconChevronDown } from "./icons";
+import { IconCheck, IconAlert, IconInfo, IconX, IconChevronDown } from "./icons";
 
 // ------------------------------------------------------------------- select
 
@@ -72,12 +72,22 @@ function ToastCard({ toast, onDismiss }: { toast: Toast; onDismiss: () => void }
           ? "text-danger"
           : "text-secondary";
   return (
-    <div className="toast-in pointer-events-auto flex items-center gap-2.5 rounded-md border border-subtle bg-raised px-3.5 py-2.5 shadow-(--shadow-pop)">
+    <div
+      // An error is the one kind a person must not miss, so it interrupts
+      // instead of queueing behind whatever was being read. Everything else
+      // stays polite: "copied" is not worth talking over the screen reader.
+      role={toast.kind === "danger" ? "alert" : undefined}
+      aria-live={toast.kind === "danger" ? "assertive" : undefined}
+      className="toast-in pointer-events-auto flex items-center gap-2.5 rounded-md border border-subtle bg-raised px-3.5 py-2.5 shadow-(--shadow-pop)"
+    >
       <span className={color}>
         {toast.kind === "success" ? (
           <IconCheck size={16} />
         ) : toast.kind === "info" ? (
-          <IconCheck size={16} />
+          // Not the same glyph as success: an info toast that ticks looks like
+          // something was done, and the tick is the one icon in the set that
+          // carries that meaning.
+          <IconInfo size={16} />
         ) : (
           <IconAlert size={16} />
         )}
@@ -343,7 +353,11 @@ export function Dialog({
         // the trap never fires: Tab walks out of the dialog instead.
         const focusables = Array.from(
           ref.current.querySelectorAll<HTMLElement>(
-            'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+            // `[tabindex="-1"]` is excluded from the element selectors as well
+            // as from the catch-all: an option row is a button out of the tab
+            // order on purpose, and counting it as the last stop would let Tab
+            // walk straight past the end of the dialog.
+            'button:not([disabled]):not([tabindex="-1"]), input:not([disabled]):not([tabindex="-1"]), select:not([disabled]):not([tabindex="-1"]), textarea:not([disabled]):not([tabindex="-1"]), [tabindex]:not([tabindex="-1"])',
           ),
         ).filter((element) => element.offsetParent !== null || element === document.activeElement);
         if (focusables.length === 0) return;

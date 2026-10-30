@@ -68,7 +68,7 @@ export const MOCK_HOSTS: HostProfile[] = [
     groupId: "g-home", osHint: "macos", serverHint: "macOS Screen Sharing",
     qualityPref: "auto", scalingMode: "aspect-fit",
     hasPassword: true, favorite: true, tags: ["t-media"],
-    lastConnected: now - 3600, connectCount: 42, online: true,
+    lastConnected: now - 3600, connectCount: 42,
   },
   {
     ...blankHostProfile(),
@@ -77,14 +77,13 @@ export const MOCK_HOSTS: HostProfile[] = [
     qualityPref: "high", scalingMode: "aspect-fit",
     wolMac: "aa:bb:cc:dd:ee:ff", hasPassword: true,
     tags: ["t-prod", "t-dev"], lastConnected: now - 86400,
-    connectCount: 17, online: true,
+    connectCount: 17,
   },
   {
     ...blankHostProfile(),
     id: "h-win", friendlyName: "Front-desk PC", address: "office-pc.local", port: 5900,
     groupId: "g-office", osHint: "windows", serverHint: "TightVNC",
     qualityPref: "auto", scalingMode: "fit",
-    online: false,
   },
   // One RDP profile is enough to exercise the whole of the RDP interface with
   // no backend: the protocol badge and the protocol column both appear (the
@@ -103,7 +102,7 @@ export const MOCK_HOSTS: HostProfile[] = [
     groupId: "g-office", osHint: "windows", serverHint: "Windows Remote Desktop",
     qualityPref: "auto", scalingMode: "aspect-fit",
     hasPassword: true, tags: ["t-prod"],
-    lastConnected: now - 7200, connectCount: 9, online: true,
+    lastConnected: now - 7200, connectCount: 9,
   },
   // A third protocol alongside the VNC and RDP fixtures above, so dev mode
   // exercises it too: the SSH badge on the tile, the address label hiding 22
@@ -121,7 +120,7 @@ export const MOCK_HOSTS: HostProfile[] = [
     groupId: "g-lab", osHint: "linux", serverHint: "OpenSSH",
     qualityPref: "auto", scalingMode: "fit",
     hasPassword: false, tags: ["t-dev"],
-    lastConnected: now - 1800, connectCount: 31, online: true,
+    lastConnected: now - 1800, connectCount: 31,
   },
 ];
 
@@ -296,9 +295,9 @@ export function saveMockThumbnail(
 /**
  * Thumbnail key for a machine that is not in the library.
  *
- * Mirrors `discoveredThumbKey` in `components/HostTile.tsx` and
- * `discovered_key` in `src-tauri/src/thumbnail.rs`; duplicated here so the
- * seeding below has no import cycle with the components.
+ * Mirrors `discoveredThumbKey` in `lib/types.ts` and `discovered_key` in
+ * `src-tauri/src/thumbnail.rs`; duplicated here so the seeding below has no
+ * import cycle with the components.
  */
 function discoveredKey(address: string, port: number): string {
   return `discovered:${address}:${port}`;

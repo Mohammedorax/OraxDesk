@@ -7,6 +7,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { trimToastStack } from "./toastStack";
 
 export type ToastKind = "info" | "success" | "warning" | "danger";
 
@@ -28,14 +29,15 @@ const ToastContext = createContext<ToastContextValue | null>(null);
 
 const AUTO_DISMISS_MS = 4000;
 /**
- * How long a toast offering an action stays.
+ * How long a toast that has to be read stays.
  *
  * Four seconds is fine for "copied"; it is not enough to notice that a machine
- * was deleted, decide to undo it, and reach the button. A toast with an action
- * is a question, and a question that disappears while it is being read is a
- * no. Destructive toasts all carry Undo, so this is the one that matters.
+ * was deleted, decide to undo it, and reach the button, nor to read the reason
+ * inside an error and act on it. A toast with an action is a question, and a
+ * question that disappears while it is being read is a no. Errors are the one
+ * kind whose message is the whole value, so they get the same time.
  */
-const AUTO_DISMISS_ACTION_MS = 12000;
+const AUTO_DISMISS_LONG_MS = 12000;
 const MAX_STACK = 3;
 
 export function ToastProvider({ children }: { children: ReactNode }): ReactNode {
@@ -54,9 +56,13 @@ export function ToastProvider({ children }: { children: ReactNode }): ReactNode 
           ...prev,
           { id, kind, message, actionLabel: action?.label, onAction: action?.run },
         ];
-        return next.slice(-MAX_STACK);
+        return trimToastStack(next, MAX_STACK);
       });
-      window.setTimeout(() => dismiss(id), action ? AUTO_DISMISS_ACTION_MS : AUTO_DISMISS_MS);
+      const keepReading = action !== undefined || kind === "danger";
+      window.setTimeout(
+        () => dismiss(id),
+        keepReading ? AUTO_DISMISS_LONG_MS : AUTO_DISMISS_MS,
+      );
     },
     [dismiss],
   );

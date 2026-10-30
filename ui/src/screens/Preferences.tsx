@@ -1,8 +1,8 @@
 /** Preferences: sidebar-tabbed, every setting with a one-line description (PRD/11 §3.4). */
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { LanguageSwitch } from "../components/LanguageSwitch";
 import { useSettings, type LocalCursor, type ThemeChoice } from "../state/SettingsContext";
-import { useSessions } from "../state/SessionsContext";
+import { useLivePreviews } from "../state/SessionsContext";
 import { ALLOW_MULTIPLE_SESSIONS_KEY, safeInvoke } from "../lib/tauri";
 import {
   PREF_CLIPBOARD_AUTO,
@@ -21,7 +21,7 @@ import {
 } from "../lib/prefs";
 import { useAgentActivity } from "../state/AgentActivityContext";
 import { planeStatusLine } from "../lib/agentActivity";
-import { useT, type MessageKey } from "../lib/i18n";
+import { useT, useLang, type MessageKey } from "../lib/i18n";
 import { readViewDefaults, writeViewDefaults, type ViewPrefs } from "../lib/viewPrefs";
 import type { QualityPreset, ScalingMode } from "../lib/types";
 import type { RdpResolution } from "../lib/rdp";
@@ -33,6 +33,7 @@ import {
   setRdpDefault,
 } from "../lib/rdpDefaults";
 import { classNames } from "../lib/util";
+import { radioMove } from "../lib/radioGroup";
 import { IconX } from "../components/icons";
 import { Select } from "../components/primitives";
 
@@ -40,6 +41,9 @@ const TABS = [
   "General", "Appearance", "Connections", "Session", "Input", "Clipboard", "Security", "Network", "Agents",
 ] as const;
 type Tab = (typeof TABS)[number];
+
+/** Fixed order: the arrow keys walk this list, not whatever the DOM holds. */
+const THEME_CHOICES: readonly ThemeChoice[] = ["system", "light", "dark"];
 
 /**
  * The name of each tab, in the app's language.
@@ -172,7 +176,7 @@ export function Preferences({ onClose }: { onClose: () => void }): ReactNode {
   const { settings, update } = useSettings();
   // The same toggle as the Library header, one source of truth, and flipping
   // it here broadcasts to session windows exactly the same way.
-  const { livePreviews, setLivePreviews } = useSessions();
+  const { livePreviews, setLivePreviews } = useLivePreviews();
   const [credBackend, setCredBackend] = useState<string | null>(null);
 
   const [naturalScroll, setNaturalScroll] = usePref(PREF_NATURAL_SCROLL, true);
@@ -203,6 +207,8 @@ export function Preferences({ onClose }: { onClose: () => void }): ReactNode {
   // and the live line the toggle below is about.
   const { plane } = useAgentActivity();
   const t = useT();
+  const lang = useLang();
+  const themeRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const tabs = tabsFor(plane.on);
 
   useEffect(() => {
@@ -287,12 +293,16 @@ export function Preferences({ onClose }: { onClose: () => void }): ReactNode {
                   <p className="text-sm font-medium text-primary">{t("prefs.theme")}</p>
                   <p className="mb-2 text-xs text-tertiary">{t("prefs.themeHint")}</p>
                   <div className="flex gap-2" role="radiogroup" aria-label={t("prefs.theme")}>
-                    {(["system", "light", "dark"] as ThemeChoice[]).map((choice) => (
+                    {THEME_CHOICES.map((choice, i) => (
                       <button
                         key={choice}
+                        ref={(el) => {
+                          themeRefs.current[i] = el;
+                        }}
                         type="button"
                         role="radio"
                         aria-checked={settings.theme === choice}
+                        tabIndex={settings.theme === choice ? 0 : -1}
                         className={classNames(
                           "rounded-md border px-4 py-2 text-sm capitalize",
                           settings.theme === choice
@@ -300,6 +310,18 @@ export function Preferences({ onClose }: { onClose: () => void }): ReactNode {
                             : "border-subtle text-secondary hover:border-strong",
                         )}
                         onClick={() => update({ theme: choice })}
+                        onKeyDown={(e) => {
+                          const next = radioMove(
+                            e.key,
+                            i,
+                            THEME_CHOICES.length,
+                            lang === "ar" ? "rtl" : "ltr",
+                          );
+                          if (next === null) return;
+                          e.preventDefault();
+                          update({ theme: THEME_CHOICES[next] });
+                          themeRefs.current[next]?.focus();
+                        }}
                       >
                         {choice === "system"
                           ? t("prefs.themeSystem")
@@ -641,17 +663,23 @@ function Choice<T extends string>({
   options: [T, string][];
   onChange: (value: T) => void;
 }): ReactNode {
+  const lang = useLang();
+  const refs = useRef<Array<HTMLButtonElement | null>>([]);
   return (
     <div>
       <p className="text-sm font-medium text-primary">{label}</p>
       <p className="mb-2 text-xs text-tertiary">{description}</p>
       <div className="flex flex-wrap gap-2" role="radiogroup" aria-label={label}>
-        {options.map(([key, text]) => (
+        {options.map(([key, text], i) => (
           <button
             key={key}
+            ref={(el) => {
+              refs.current[i] = el;
+            }}
             type="button"
             role="radio"
             aria-checked={value === key}
+            tabIndex={value === key ? 0 : -1}
             className={classNames(
               "rounded-md border px-3.5 py-1.5 text-sm",
               value === key
@@ -659,6 +687,13 @@ function Choice<T extends string>({
                 : "border-subtle text-secondary hover:border-strong",
             )}
             onClick={() => onChange(key)}
+            onKeyDown={(e) => {
+              const next = radioMove(e.key, i, options.length, lang === "ar" ? "rtl" : "ltr");
+              if (next === null) return;
+              e.preventDefault();
+              onChange(options[next][0]);
+              refs.current[next]?.focus();
+            }}
           >
             {text}
           </button>

@@ -314,6 +314,7 @@ const ar = {
 
   // المشاركة والإذونات في «احصل على مساعدة»
   "gethelp.copied": "تم النسخ",
+  "gethelp.copyFailed": "تعذّر النسخ",
   "gethelp.screenPermission": "يلزم إذن تسجيل الشاشة للمشاركة.",
   "gethelp.allowScreenRecording": "اسمح بتسجيل الشاشة",
   "gethelp.screenPermissionHint": "بعد منح الإذن، أغلق OraxDesk وافتحه من جديد إن فشلت المشاركة.",
@@ -770,7 +771,7 @@ const ar = {
   "library.rowSelected": "محدَّد",
 
   // المكتبة: شريط الأدوات أعلى الشاشة
-  "library.searchPlaceholder": "ابحث أو اضغط {chord}K",
+  "library.searchPlaceholder": "ابحث أو اضغط {chord}F",
   "library.searchAria": "ابحث في المضيفين",
   "library.sort": "ترتيب",
   "library.sortAria": "ترتيب المضيفين",
@@ -863,8 +864,6 @@ const ar = {
   // المكتبة: قائمة العرض
   "library.hosts": "المضيفون",
   "library.colProtocol": "البروتوكول",
-  "library.online": "متصل",
-  "library.offline": "غير متصل أو غير معروف",
 
   // المكتبة: إنشاء مجموعة أو وسم
   "library.newGroup": "مجموعة جديدة",
@@ -925,6 +924,7 @@ const ar = {
   "library.numberLookupFailed": "تعذّر البحث عن الرقم {number}. تحقّق من اتصالك بالسجل ثم أعد المحاولة.",
   "library.numberNotRegistered": "لا يوجد جهاز بهذا الرقم في السجل. اطلب من الشخص الموجود هناك فتح OraxDesk وتحديثه، ثم أعد المحاولة.",
   "library.groupEmpty": "لا يوجد في «{group}» أي مضيف بعد",
+  "library.groupEmptyBody": "أضف حاسوبًا من «مضيف جديد»، ثم اسحبه إلى المجموعة من «كل المضيفين».",
   "library.groupLayoutChanged":
     "تغيّرت «{group}» منذ حفظ ترتيبها؛ فُتح ما لا يزال مطابقًا",
   "library.openGridFirst": "افتح مجموعة كشبكة أولًا، ثم احفظ ترتيبك لها",
@@ -1535,10 +1535,24 @@ const ar = {
   "common.preferences": "التفضيلات",
   "common.alreadyOpenWindow": "«{name}» مفتوح أصلًا في نافذة مستقلة",
   "common.tabDriven": "{status}، وكيل يقود",
-  "common.online": "متصل",
-  "common.unreachable": "غير قابل للوصول",
   "common.statusUnknown": "الحالة غير معروفة",
   "common.osUnknown": "نظام التشغيل غير معروف",
+  // البطاقات: ما يُقرأ على بطاقة المضيف
+  "common.osRemote": "عن بُعد",
+  "host.tileAria": "{name}، {os}، {address}. اضغط Enter للاتصال.",
+  "host.actionConnect": "اتصال",
+  "host.connectAria": "اتصال بـ «{name}»",
+  "host.actionEdit": "تعديل",
+  "host.editAria": "تعديل «{name}»",
+  "host.actionWake": "إيقاظ",
+  "host.wakeAria": "إيقاظ «{name}»",
+  "host.securityUnencrypted": "غير مشفّر",
+  "host.securityEncrypted": "مشفّر",
+  "host.notSavedYet": "لم يُحفظ بعد",
+  "host.macTooltip": "{address}\nMAC {mac}، يُحفظ كعنوان Wake-on-LAN عند إضافة هذا المضيف",
+  "host.addressWithMacAria": "{address}، عنوان MAC {mac}",
+  "host.bandwidthAria": "النقل: تنزيل {rx}، رفع {tx}",
+  "host.liveBadge": "مباشر",
   "host.osWindowsResolved": "Windows، الاسم من {via}، ولا يجيب عليه إلا جهاز Windows",
   "host.osInferred": "{os}، مستنتج من استجابته على الشبكة",
   "common.library": "المكتبة",
@@ -1890,6 +1904,7 @@ const en: Record<keyof typeof ar, string> = {
 
   // Sharing and permissions in "Get help"
   "gethelp.copied": "Copied",
+  "gethelp.copyFailed": "Couldn't copy",
   "gethelp.screenPermission": "Screen Recording permission is needed to share.",
   "gethelp.allowScreenRecording": "Allow screen recording",
   "gethelp.screenPermissionHint":
@@ -2362,7 +2377,7 @@ const en: Record<keyof typeof ar, string> = {
   "library.rowSelected": "selected",
 
   // The library: the bar across the top
-  "library.searchPlaceholder": "Search or press {chord}K",
+  "library.searchPlaceholder": "Search or press {chord}F",
   "library.searchAria": "Search hosts",
   "library.sort": "Sort",
   "library.sortAria": "Sort hosts",
@@ -2455,8 +2470,6 @@ const en: Record<keyof typeof ar, string> = {
   // The library: the list view
   "library.hosts": "Hosts",
   "library.colProtocol": "Protocol",
-  "library.online": "Online",
-  "library.offline": "Offline or unknown",
 
   // The library: making a group or a tag
   "library.newGroup": "New Group",
@@ -2520,6 +2533,7 @@ const en: Record<keyof typeof ar, string> = {
   "library.numberNotRegistered":
     "No device is registered with that number. Ask the person there to open and update OraxDesk, then try again.",
   "library.groupEmpty": "{group} has no hosts in it yet",
+  "library.groupEmptyBody": "Add a computer with New Host, then drag it onto the group from All Hosts.",
   "library.groupLayoutChanged":
     "{group} has changed since its layout was saved; opened what still matches",
   "library.openGridFirst": "Open a group as a grid first, then save how you arranged it",
@@ -3134,10 +3148,24 @@ const en: Record<keyof typeof ar, string> = {
   "common.preferences": "Preferences",
   "common.alreadyOpenWindow": "{name} is already open in a window of its own",
   "common.tabDriven": "{status}, agent driving",
-  "common.online": "Online",
-  "common.unreachable": "Unreachable",
   "common.statusUnknown": "Status unknown",
   "common.osUnknown": "Operating system not identified",
+  // Tiles: what is read out on a host card
+  "common.osRemote": "Remote",
+  "host.tileAria": "{name}, {os}, {address}. Press Enter to connect.",
+  "host.actionConnect": "Connect",
+  "host.connectAria": "Connect to {name}",
+  "host.actionEdit": "Edit",
+  "host.editAria": "Edit {name}",
+  "host.actionWake": "Wake",
+  "host.wakeAria": "Wake {name}",
+  "host.securityUnencrypted": "Unencrypted",
+  "host.securityEncrypted": "Encrypted",
+  "host.notSavedYet": "Not saved yet",
+  "host.macTooltip": "{address}\nMAC {mac}, saved as the Wake-on-LAN address when you add this host",
+  "host.addressWithMacAria": "{address}, MAC address {mac}",
+  "host.bandwidthAria": "Bandwidth: down {rx}, up {tx}",
+  "host.liveBadge": "Live",
   "host.osWindowsResolved": "Windows, name resolved via {via}, which only a Windows machine answers",
   "host.osInferred": "{os}, inferred from what it answers on the network",
   "common.library": "Library",

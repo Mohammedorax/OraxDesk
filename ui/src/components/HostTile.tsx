@@ -1,8 +1,9 @@
 /** Host tiles for the Library grid: saved hosts and the discovered-but-unsaved band. */
-import { useEffect, useState, type ReactNode } from "react";
+import { memo, useEffect, useState, type ReactNode } from "react";
 import type { DiscoveredHost, HostProfile, OsHint } from "../lib/types";
 import {
   DEFAULT_PORT,
+  discoveredThumbKey,
   hostMac,
   hostProtocol,
   isWindowsNameSource,
@@ -10,21 +11,23 @@ import {
   protocolLabel,
   resolvedOsHint,
 } from "../lib/types";
-import { useT } from "../lib/i18n";
+import { useT, type Translate } from "../lib/i18n";
 import { classNames, colorFromId, formatBps } from "../lib/util";
 import { useHosts } from "../state/HostsContext";
-import { useSessions, type TileActivity } from "../state/SessionsContext";
+import { useLivePreviews, useTileActivity } from "../state/SessionsContext";
+import type { TileActivity } from "../state/sessionActivity";
 import { IconKey, IconMonitor, IconZap, IconEdit, IconLock, IconAlert, IconPlus } from "./icons";
 
 /**
  * The OS badge.
  *
- * "Remote" is the honest fallback: we do not know the operating system, and
- * the old fallback said "VNC", which is a protocol name standing in for one.
- * That became wrong the moment a Windows machine reached over RDP had no OS
- * hint, and the protocol has its own badge now.
+ * The fallback is "Remote": we do not know the operating system, and the old
+ * fallback said "VNC", which is a protocol name standing in for one. That
+ * became wrong the moment a Windows machine reached over RDP had no OS hint,
+ * and the protocol has its own badge now. It is a translated string because it
+ * is read, not a proper noun like the three names above it.
  */
-export function osLabel(os: OsHint | null): string {
+export function osLabel(os: OsHint | null, t: Translate): string {
   switch (os) {
     case "macos":
       return "macOS";
@@ -35,7 +38,7 @@ export function osLabel(os: OsHint | null): string {
     case "qemu":
       return "QEMU";
     default:
-      return "Remote";
+      return t("common.osRemote");
   }
 }
 
@@ -66,15 +69,23 @@ export function ProtocolBadge({ protocol }: { protocol: string }): ReactNode {
   );
 }
 
-function OnlineDot({ online }: { online: boolean | null | undefined }): ReactNode {
+/**
+ * Reachability.
+ *
+ * The backend never reports whether a saved machine is awake, so there is
+ * nothing honest to say except that. The dot used to go green from a field
+ * nothing ever populated, which promised a live machine to anyone who looked.
+ * It keeps the "unknown" wording only, one vocabulary for one fact.
+ */
+function StatusDot(): ReactNode {
   const t = useT();
-  const cls = online ? "bg-success" : "bg-tertiary/60";
-  const label = online
-    ? t("common.online")
-    : online === false
-      ? t("common.unreachable")
-      : t("common.statusUnknown");
-  return <span className={`inline-block h-2 w-2 shrink-0 rounded-full ${cls}`} role="img" aria-label={label} />;
+  return (
+    <span
+      className="inline-block h-2 w-2 shrink-0 rounded-full bg-tertiary/60"
+      role="img"
+      aria-label={t("common.statusUnknown")}
+    />
+  );
 }
 
 // ------------------------------------------------------------- live overlays
@@ -174,6 +185,7 @@ function BandwidthStrip({
   bandwidth: BandwidthInfo;
   className?: string;
 }): ReactNode {
+  const t = useT();
   return (
     <div
       className={classNames(
@@ -183,7 +195,10 @@ function BandwidthStrip({
       )}
       // NOT a live region: these values tick every second, and a role="status"
       // would have a screen reader announce each tick.
-      aria-label={`Bandwidth: down ${formatBps(bandwidth.rx)}, up ${formatBps(bandwidth.tx)}`}
+      aria-label={t("host.bandwidthAria", {
+        rx: formatBps(bandwidth.rx),
+        tx: formatBps(bandwidth.tx),
+      })}
     >
       {/* tabular figures: the values change every second and must not jitter */}
       <div className="flex min-w-0 items-center gap-2 text-2xs font-medium text-white/90 [font-variant-numeric:tabular-nums]">
@@ -211,10 +226,11 @@ function BandwidthStrip({
 
 /** Small "this picture is live" marker for tiles showing a preview stream. */
 function LiveBadge(): ReactNode {
+  const t = useT();
   return (
     <span className="pointer-events-none absolute end-1.5 top-1.5 flex items-center gap-1 rounded-pill bg-black/55 px-1.5 py-0.5 text-2xs font-semibold tracking-wide text-white/90">
       <span className="h-1.5 w-1.5 rounded-full bg-success motion-safe:animate-pulse" aria-hidden="true" />
-      LIVE
+      {t("host.liveBadge")}
     </span>
   );
 }
@@ -224,7 +240,7 @@ function livePreviewOf(activity: TileActivity, enabled: boolean): string | null 
   return enabled && activity.preview ? activity.preview.dataUrl : null;
 }
 
-export function HostTile({
+function HostTileView({
   host,
   selected,
   flash,
@@ -247,7 +263,7 @@ export function HostTile({
 }): ReactNode {
   const t = useT();
   const { thumbnailUrl, requestThumbnail } = useHosts();
-  const { forKey, livePreviews } = useSessions();
+  const { livePreviews } = useLivePreviews();
   const [hover, setHover] = useState(false);
 
   // Ask unconditionally rather than only when `thumbnailAt` is set. The PNG on
@@ -260,7 +276,9 @@ export function HostTile({
   }, [host.id, host.thumbnailAt, requestThumbnail]);
 
   const thumb = thumbnailUrl(host.id);
-  const activity = forKey(host.id);
+  // Subscribed to this host's key only: another session's stats tick, or a
+  // preview frame for another tile, no longer repaints this one.
+  const activity = useTileActivity(host.id);
   const preview = livePreviewOf(activity, livePreviews);
 
   return (
@@ -271,7 +289,11 @@ export function HostTile({
       data-host-id={host.id}
       role="button"
       tabIndex={0}
-      aria-label={`${host.friendlyName}, ${osLabel(host.osHint)}, ${host.address}. Press Enter to connect.`}
+      aria-label={t("host.tileAria", {
+        name: host.friendlyName,
+        os: osLabel(host.osHint, t),
+        address: host.address,
+      })}
       className={classNames(
         "group relative cursor-default select-none overflow-hidden rounded-md border bg-surface text-start outline-none",
         "transition-[transform,box-shadow,border-color] duration-120 motion-reduce:transition-none",
@@ -324,15 +346,15 @@ export function HostTile({
             "group-hover:translate-y-0 group-hover:opacity-100 group-focus-within:translate-y-0 group-focus-within:opacity-100",
           )}
         >
-          <QuickAction label={`Connect to ${host.friendlyName}`} onClick={onConnect}>
-            <IconZap size={14} /> Connect
+          <QuickAction label={t("host.connectAria", { name: host.friendlyName })} onClick={onConnect}>
+            <IconZap size={14} /> {t("host.actionConnect")}
           </QuickAction>
-          <QuickAction label={`Edit ${host.friendlyName}`} onClick={onEdit}>
-            <IconEdit size={14} /> Edit
+          <QuickAction label={t("host.editAria", { name: host.friendlyName })} onClick={onEdit}>
+            <IconEdit size={14} /> {t("host.actionEdit")}
           </QuickAction>
           {host.wolMac ? (
-            <QuickAction label={`Wake ${host.friendlyName}`} onClick={onWake}>
-              <IconZap size={14} /> Wake
+            <QuickAction label={t("host.wakeAria", { name: host.friendlyName })} onClick={onWake}>
+              <IconZap size={14} /> {t("host.actionWake")}
             </QuickAction>
           ) : null}
         </div>
@@ -340,7 +362,7 @@ export function HostTile({
 
       <div className="space-y-0.5 px-3 py-2.5">
         <div className="flex items-center gap-2">
-          <OnlineDot online={host.online} />
+          <StatusDot />
           <span
             className="min-w-0 flex-1 truncate text-sm font-medium text-primary"
             title={host.friendlyName}
@@ -355,7 +377,7 @@ export function HostTile({
         </div>
         <div className="flex items-center gap-1.5 text-xs text-secondary">
           <span className="shrink-0 rounded-sm bg-inset px-1.5 py-px text-2xs font-medium text-tertiary">
-            {osLabel(host.osHint)}
+            {osLabel(host.osHint, t)}
           </span>
           {showProtocol ? <ProtocolBadge protocol={host.protocol} /> : null}
           {/* Non-default ports are shown here as they are in the list view, two hosts on one machine are otherwise indistinguishable. */}
@@ -365,6 +387,71 @@ export function HostTile({
         </div>
       </div>
     </div>
+  );
+}
+
+/**
+ * The tile, memoized on the fields it renders and the fields its own actions
+ * read.
+ *
+ * Every preview frame and every stats sample used to change the session
+ * context's identity, and the Library re-renders for its own reasons too
+ * (selection, search, a host save), so an un-memoized tile was rebuilt for all
+ * of them. Comparing values rather than the `host` object keeps a refreshed
+ * list from repainting tiles whose content did not move.
+ *
+ * The callback props are not compared: the Library builds them from the same
+ * `host` on every render, so a skipped re-render keeps a callback that is
+ * still correct. That is only true while every field those callbacks read is
+ * part of this comparison, which is why the editor's input fields are here
+ * too and not just the ones painted on the tile.
+ */
+export const HostTile = memo(HostTileView, sameTile);
+
+function sameTile(
+  prev: {
+    host: HostProfile;
+    selected: boolean;
+    flash?: boolean;
+    showProtocol?: boolean;
+  },
+  next: {
+    host: HostProfile;
+    selected: boolean;
+    flash?: boolean;
+    showProtocol?: boolean;
+  },
+): boolean {
+  if (
+    prev.selected !== next.selected ||
+    prev.flash !== next.flash ||
+    prev.showProtocol !== next.showProtocol
+  ) {
+    return false;
+  }
+  const a = prev.host;
+  const b = next.host;
+  return (
+    a.id === b.id &&
+    a.friendlyName === b.friendlyName &&
+    a.address === b.address &&
+    a.port === b.port &&
+    a.protocol === b.protocol &&
+    a.osHint === b.osHint &&
+    a.hasPassword === b.hasPassword &&
+    a.wolMac === b.wolMac &&
+    a.thumbnailAt === b.thumbnailAt &&
+    // What the editor copies into its draft.
+    a.groupId === b.groupId &&
+    a.tags === b.tags &&
+    a.securityPref === b.securityPref &&
+    a.qualityPref === b.qualityPref &&
+    a.scalingMode === b.scalingMode &&
+    a.keyboardMode === b.keyboardMode &&
+    a.passthrough === b.passthrough &&
+    a.sshTunnel === b.sshTunnel &&
+    a.rdpSettings === b.rdpSettings &&
+    a.sshSettings === b.sshSettings
   );
 }
 
@@ -397,19 +484,6 @@ function QuickAction({
 }
 
 /**
- * Thumbnail key for a host that is not in the library.
- *
- * MUST match `discovered_key` in `src-tauri/src/thumbnail.rs`: connecting to a
- * machine straight from the Nearby list is an ad-hoc session with no profile
- * UUID, so its screenshot is stored against the endpoint instead. Without this
- * the tile you most need to recognise, an unfamiliar machine, is the one that
- * never gets a picture.
- */
-export function discoveredThumbKey(address: string, port: number): string {
-  return `discovered:${address}:${port}`;
-}
-
-/**
  * Discovered-but-unsaved host: dashed border, distinct band (PRD/11 §3.1).
  *
  * Shows the screenshot from an earlier ad-hoc connect when there is one, and
@@ -437,7 +511,7 @@ export function DiscoveredTile({
 }): ReactNode {
   const t = useT();
   const { thumbnailUrl, requestThumbnail } = useHosts();
-  const { forKey, livePreviews } = useSessions();
+  const { livePreviews } = useLivePreviews();
   const key = discoveredThumbKey(host.address, host.port);
 
   // The tile asks for its own image. Leaving this to the Library was the
@@ -449,13 +523,13 @@ export function DiscoveredTile({
   }, [key, requestThumbnail]);
 
   const image = thumb ?? thumbnailUrl(key);
-  const activity = forKey(key);
+  const activity = useTileActivity(key);
   const preview = livePreviewOf(activity, livePreviews);
 
   // What the machine actually is, and why we believe it: a name answered over
   // NetBIOS / MS-RPC / RDP is proof of Windows and outranks the `osHint`
   // substring guess. Both inputs may be missing entirely (older event, mDNS-only
-  // host), which resolves to the neutral "Remote" badge rather than crashing.
+  // host), which resolves to the neutral fallback badge rather than crashing.
   const os = resolvedOsHint(host);
   const proven = isWindowsNameSource(host.nameSource);
   const via = nameSourceLabel(host.nameSource);
@@ -463,7 +537,7 @@ export function DiscoveredTile({
     ? t("host.osWindowsResolved", { via: via ?? "" })
     : os === "unknown"
       ? t("common.osUnknown")
-      : t("host.osInferred", { os: osLabel(os) ?? "" });
+      : t("host.osInferred", { os: osLabel(os, t) });
 
   // The MAC is not tile furniture: it is unreadable at a glance and only
   // matters at the moment you save the host (it becomes the Wake-on-LAN
@@ -471,18 +545,16 @@ export function DiscoveredTile({
   // wondering "can I wake this?" will look, and nowhere else.
   const mac = hostMac(host);
   const address = addressLabel(host);
-  const addressTitle = mac
-    ? `${address}\nMAC ${mac}, saved as the Wake-on-LAN address when you add this host`
-    : address;
+  const addressTitle = mac ? t("host.macTooltip", { address, mac }) : address;
 
   const secIcon =
     host.security === "unencrypted" ? (
       <span className="flex shrink-0 items-center gap-1 whitespace-nowrap text-warning">
-        <IconAlert size={13} className="shrink-0" /> {host.securityHint ?? "Unencrypted"}
+        <IconAlert size={13} className="shrink-0" /> {host.securityHint ?? t("host.securityUnencrypted")}
       </span>
     ) : (
       <span className="flex shrink-0 items-center gap-1 whitespace-nowrap text-secondary">
-        <IconLock size={13} className="shrink-0" /> {host.securityHint ?? "Encrypted"}
+        <IconLock size={13} className="shrink-0" /> {host.securityHint ?? t("host.securityEncrypted")}
       </span>
     );
   return (
@@ -515,7 +587,7 @@ export function DiscoveredTile({
             className="shrink-0 rounded-sm bg-inset px-1.5 py-px text-2xs font-medium text-tertiary"
             title={osTitle}
           >
-            {osLabel(os)}
+            {osLabel(os, t)}
           </span>
           {host.protocol && host.protocol !== "vnc" ? (
             <ProtocolBadge protocol={host.protocol} />
@@ -527,12 +599,12 @@ export function DiscoveredTile({
             to find that heading.
           */}
           <span className="shrink-0 rounded-sm bg-inset px-1.5 py-px text-2xs font-medium text-tertiary">
-            Not saved yet
+            {t("host.notSavedYet")}
           </span>
           <span
             className="mono min-w-0 flex-1 truncate text-secondary"
             title={addressTitle}
-            aria-label={mac ? `${address}, MAC address ${mac}` : address}
+            aria-label={mac ? t("host.addressWithMacAria", { address, mac }) : address}
             dir="ltr"
           >
             {address}

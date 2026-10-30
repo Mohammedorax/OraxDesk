@@ -397,7 +397,7 @@ export function HostsProvider({ children }: { children: ReactNode }): ReactNode 
       }
       // UI-local fields are not columns on the Rust struct; drop them so the
       // payload is exactly the backend contract.
-      const { favorite: _favorite, online: _online, ...profile } = full;
+      const { favorite: _favorite, ...profile } = full;
       // `mustInvoke`, not `safeInvoke`: a swallowed failure used to reach the
       // caller as `null`, which the editor read as "the host has no id yet",
       // skipped the password write entirely, and then told the user the host

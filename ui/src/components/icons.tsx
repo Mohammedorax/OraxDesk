@@ -139,6 +139,10 @@ export const IconLock = (p: IconProps): ReactNode => (
 export const IconAlert = (p: IconProps): ReactNode => (
   <Icon {...p}><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z" /><path d="M12 9v4M12 17h.01" /></Icon>
 );
+/** Information, told apart from a completed action: a tick means "done". */
+export const IconInfo = (p: IconProps): ReactNode => (
+  <Icon {...p}><circle cx="12" cy="12" r="9" /><path d="M12 11v5M12 7.5h.01" /></Icon>
+);
 export const IconChevronsUp = (p: IconProps): ReactNode => (
   <Icon {...p}><path d="m17 11-5-5-5 5M17 18l-5-5-5 5" /></Icon>
 );

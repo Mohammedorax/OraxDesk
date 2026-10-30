@@ -37,7 +37,7 @@ import {
   type SessionWindowOutcome,
 } from "../lib/tauri";
 import { seedMockThumbnails, useMockData } from "../lib/mock";
-import { useSessions } from "../state/SessionsContext";
+import { useLivePreviews, useTileActivity } from "../state/SessionsContext";
 import { useTabs } from "../state/TabsContext";
 import { gridLayout } from "../lib/layout";
 import {
@@ -47,7 +47,8 @@ import {
   saveGroupLayout,
 } from "../lib/groupLayout";
 import { classNames, describeError, formatBps, fuzzyMatch, modKeyLabel, timeAgo } from "../lib/util";
-import { useI18n, useT } from "../lib/i18n";
+import { radioMove } from "../lib/radioGroup";
+import { useI18n, useLang, useT } from "../lib/i18n";
 import { formatTarget } from "../lib/address";
 import { Sidebar, type SidebarSelection } from "../components/Sidebar";
 import { SidebarDeleteButton } from "../components/SidebarDeleteButton";
@@ -137,7 +138,7 @@ export function Library({
   const { hosts, groups, tags, loading, loadFailed, saveHost, deleteHost, saveGroup, saveTag, setHostTags, setHostsGroup, addTagToHosts, removeTagFromHosts, savePassword, saveSshPassphrase, saveRdpCredentials, wakeHost, toggleFavorite, refresh, reload, refreshThumbnail } = useHosts();
   const { discovered, scan, startScan } = useDiscovery();
   const { settings, update } = useSettings();
-  const { livePreviews, setLivePreviews } = useSessions();
+  const { livePreviews, setLivePreviews } = useLivePreviews();
   const {
     summaries, open: openTab, select: selectTab, selectSession, has: hasTab,
     activeId: activeTabId, openArranged, adopt, serializeActive,
@@ -1859,6 +1860,22 @@ export function Library({
                         setHostDialog(draftFromHost(null, { address: search.trim(), friendlyName: search.trim() })),
                     }}
                   />
+                ) : visibleHosts.length === 0 && selection.kind === "group" && activeTagIds.size === 0 ? (
+                  /*
+                    A group with no members used to render as a blank pane:
+                    the grid was simply empty, with nothing saying whether the
+                    group was empty, the read had failed or the tiles were
+                    still loading. The tag filter is excluded because with it
+                    on, "this group is empty" may be false: the hosts exist and
+                    are filtered out.
+                  */
+                  <EmptyState
+                    icon={<IconMonitor size={48} />}
+                    title={t("library.groupEmpty", {
+                      group: groups.find((g) => g.id === selection.id)?.name ?? "",
+                    })}
+                    body={t("library.groupEmptyBody")}
+                  />
                 ) : settings.libraryView === "grid" ? (
                   <div className={gridClass} style={gridCap(visibleHosts.length, settings.compact)}>
                     {visibleHosts.map((h) => (
@@ -1870,14 +1887,19 @@ export function Library({
                         onConnect={() => connectHost(h)}
                         onEdit={() => editHost(h)}
                         onWake={() =>
-                          void wakeHost(h.id).catch((err: unknown) =>
-                            push(
-                              "danger",
-                              t("library.wakeFailed", {
-                                name: h.friendlyName,
-                                reason: describeError(err),
-                              }),
-                            ),
+                          // The context menu reports both outcomes, and the
+                          // tile is the same gesture: silence on success reads
+                          // as a button that did nothing.
+                          void wakeHost(h.id).then(
+                            () => push("info", t("library.magicPacketSent", { name: h.friendlyName })),
+                            (err: unknown) =>
+                              push(
+                                "danger",
+                                t("library.wakeFailed", {
+                                  name: h.friendlyName,
+                                  reason: describeError(err),
+                                }),
+                              ),
                           )
                         }
                         onContextMenu={(e) => {
@@ -2179,8 +2201,7 @@ function HostListView({
   /** The library holds more than one protocol, so the column earns its width. */
   showProtocol?: boolean;
 }): ReactNode {
-  const { forKey } = useSessions();
-  const { t, lang } = useI18n();
+  const { t } = useI18n();
   return (
     <div className="select-none overflow-x-auto rounded-md border border-subtle bg-surface">
       <table className="w-full border-collapse text-sm">
@@ -2197,78 +2218,117 @@ function HostListView({
         </thead>
         <tbody>
           {hosts.map((h) => (
-            <tr
+            <HostRow
               key={h.id}
-              data-host-id={h.id}
-              tabIndex={0}
-              /*
-                No `aria-selected` on this row.
-
-                `aria-selected` is only valid inside a grid or a treegrid, and
-                this is a plain table: the attribute meant nothing to a screen
-                reader and meant something FALSE to a validator. The table
-                keeps its table semantics rather than pretending to be a grid
-                it does not implement the keyboard model of, and the state is
-                carried by the row's own name instead, so a selected row says
-                so. `aria-current` is the state that IS valid on a row.
-              */
-              aria-current={selectedIds.has(h.id) ? "true" : undefined}
-              className={classNames(
-                "cursor-default border-b border-subtle last:border-b-0",
-                selectedIds.has(h.id) ? "bg-accent/12" : "hover:bg-inset/60",
-              )}
-              onDoubleClick={() => onConnect(h)}
-              onContextMenu={(e) => onContextMenu(e, h)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") onConnect(h);
-              }}
-            >
-              <td className="px-3 py-2">
-                <span className="flex items-center gap-2">
-                  <span
-                    className={classNames("h-2 w-2 rounded-full", h.online ? "bg-success" : "bg-tertiary/60")}
-                    role="img"
-                    aria-label={h.online ? t("library.online") : t("library.offline")}
-                  />
-                  <span className="font-medium text-primary">{h.friendlyName}</span>
-                  {selectedIds.has(h.id) ? (
-                    <span className="sr-only"> {t("library.rowSelected")}</span>
-                  ) : null}
-                </span>
-              </td>
-              <td className="mono px-3 py-2 text-secondary">
-                {addressLabel(h)}
-                <RowBandwidth bandwidth={forKey(h.id).bandwidth} />
-              </td>
-              <td className="px-3 py-2 text-secondary">
-                {groups.find((g) => g.id === h.groupId)?.name ?? "-"}
-              </td>
-              <td className="px-3 py-2">
-                <span className="flex gap-1">
-                  {h.tags.map((tid) => {
-                    const tag = tags.find((x) => x.id === tid);
-                    return tag ? (
-                      <span
-                        key={tid}
-                        className="rounded-pill px-1.5 py-px text-2xs font-medium text-white"
-                        style={{ background: tag.color }}
-                      >
-                        {tag.name}
-                      </span>
-                    ) : null;
-                  })}
-                </span>
-              </td>
-              {showProtocol ? (
-                <td className="px-3 py-2 text-secondary">{protocolLabel(h.protocol)}</td>
-              ) : null}
-              <td className="px-3 py-2 text-secondary">{osLabel(h.osHint)}</td>
-              <td className="px-3 py-2 text-secondary">{timeAgo(h.lastConnected, t, lang)}</td>
-            </tr>
+              host={h}
+              groups={groups}
+              tags={tags}
+              selected={selectedIds.has(h.id)}
+              showProtocol={showProtocol}
+              onConnect={onConnect}
+              onContextMenu={onContextMenu}
+            />
           ))}
         </tbody>
       </table>
     </div>
+  );
+}
+
+/**
+ * One table row.
+ *
+ * Its own component so the live-session hook can follow this host's key only;
+ * a hook cannot be called inside the map, and reading the whole session
+ * registry here would have re-rendered every row on every stats tick.
+ */
+function HostRow({
+  host: h,
+  groups,
+  tags,
+  selected,
+  showProtocol,
+  onConnect,
+  onContextMenu,
+}: {
+  host: HostProfile;
+  groups: { id: string; name: string }[];
+  tags: { id: string; name: string; color: string }[];
+  selected: boolean;
+  showProtocol?: boolean;
+  onConnect: (h: HostProfile) => void;
+  onContextMenu: (e: React.MouseEvent, h: HostProfile) => void;
+}): ReactNode {
+  const activity = useTileActivity(h.id);
+  const { t, lang } = useI18n();
+  return (
+    <tr
+      data-host-id={h.id}
+      tabIndex={0}
+      /*
+        No `aria-selected` on this row.
+
+        `aria-selected` is only valid inside a grid or a treegrid, and
+        this is a plain table: the attribute meant nothing to a screen
+        reader and meant something FALSE to a validator. The table
+        keeps its table semantics rather than pretending to be a grid
+        it does not implement the keyboard model of, and the state is
+        carried by the row's own name instead, so a selected row says
+        so. `aria-current` is the state that IS valid on a row.
+      */
+      aria-current={selected ? "true" : undefined}
+      className={classNames(
+        "cursor-default border-b border-subtle last:border-b-0",
+        selected ? "bg-accent/12" : "hover:bg-inset/60",
+      )}
+      onDoubleClick={() => onConnect(h)}
+      onContextMenu={(e) => onContextMenu(e, h)}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") onConnect(h);
+      }}
+    >
+      <td className="px-3 py-2">
+        <span className="flex items-center gap-2">
+          {/* The backend never reports reachability, so the row says only what
+              is known: nothing. See `StatusDot` in HostTile for the tile. */}
+          <span
+            className="h-2 w-2 rounded-full bg-tertiary/60"
+            role="img"
+            aria-label={t("common.statusUnknown")}
+          />
+          <span className="font-medium text-primary">{h.friendlyName}</span>
+          {selected ? <span className="sr-only"> {t("library.rowSelected")}</span> : null}
+        </span>
+      </td>
+      <td className="mono px-3 py-2 text-secondary">
+        {addressLabel(h)}
+        <RowBandwidth bandwidth={activity.bandwidth} />
+      </td>
+      <td className="px-3 py-2 text-secondary">
+        {groups.find((g) => g.id === h.groupId)?.name ?? "-"}
+      </td>
+      <td className="px-3 py-2">
+        <span className="flex gap-1">
+          {h.tags.map((tid) => {
+            const tag = tags.find((x) => x.id === tid);
+            return tag ? (
+              <span
+                key={tid}
+                className="rounded-pill px-1.5 py-px text-2xs font-medium text-white"
+                style={{ background: tag.color }}
+              >
+                {tag.name}
+              </span>
+            ) : null;
+          })}
+        </span>
+      </td>
+      {showProtocol ? (
+        <td className="px-3 py-2 text-secondary">{protocolLabel(h.protocol)}</td>
+      ) : null}
+      <td className="px-3 py-2 text-secondary">{osLabel(h.osHint, t)}</td>
+      <td className="px-3 py-2 text-secondary">{timeAgo(h.lastConnected, t, lang)}</td>
+    </tr>
   );
 }
 
@@ -2302,6 +2362,8 @@ function NamePromptDialog({
   const [name, setName] = useState("");
   const [color, setColor] = useState(TAG_COLORS[3]);
   const t = useT();
+  const lang = useLang();
+  const colorRefs = useRef<Array<HTMLButtonElement | null>>([]);
   return (
     <Dialog
       title={kind === "group" ? t("library.newGroup") : t("library.newTag")}
@@ -2325,12 +2387,16 @@ function NamePromptDialog({
         />
         {kind === "tag" ? (
           <div className="flex gap-2" role="radiogroup" aria-label={t("library.tagColorAria")}>
-            {TAG_COLORS.map((c) => (
+            {TAG_COLORS.map((c, i) => (
               <button
                 key={c}
+                ref={(el) => {
+                  colorRefs.current[i] = el;
+                }}
                 type="button"
                 role="radio"
                 aria-checked={color === c}
+                tabIndex={color === c ? 0 : -1}
                 aria-label={t("library.colorAria", { color: c })}
                 className={classNames(
                   "h-6 w-6 rounded-full border-2",
@@ -2338,6 +2404,13 @@ function NamePromptDialog({
                 )}
                 style={{ background: c }}
                 onClick={() => setColor(c)}
+                onKeyDown={(e) => {
+                  const next = radioMove(e.key, i, TAG_COLORS.length, lang === "ar" ? "rtl" : "ltr");
+                  if (next === null) return;
+                  e.preventDefault();
+                  setColor(TAG_COLORS[next]);
+                  colorRefs.current[next]?.focus();
+                }}
               />
             ))}
           </div>

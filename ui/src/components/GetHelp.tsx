@@ -114,19 +114,31 @@ type Run = (action: () => Promise<unknown>) => void;
 
 function Copy({ text, label }: { text: string; label: string }): ReactNode {
   const t = useT();
-  const [done, setDone] = useState(false);
+  /**
+   * A failed copy used to look exactly like a successful one: the button just
+   * stayed as it was, and the person pasted whatever was already on the
+   * clipboard. The label now says which of the two happened, and a failure
+   * stays long enough to read.
+   */
+  const [state, setState] = useState<"idle" | "copied" | "failed">("idle");
   return (
     <button
       type="button"
       className="btn-secondary px-3 py-1 text-xs"
       onClick={() => {
         void writeClipboard(text).then((ok) => {
-          setDone(ok);
-          if (ok) setTimeout(() => setDone(false), 1500);
+          setState(ok ? "copied" : "failed");
+          window.setTimeout(() => setState("idle"), ok ? 1500 : 3000);
         });
       }}
     >
-      {done ? t("gethelp.copied") : label}
+      <span aria-live="polite">
+        {state === "copied"
+          ? t("gethelp.copied")
+          : state === "failed"
+            ? t("gethelp.copyFailed")
+            : label}
+      </span>
     </button>
   );
 }

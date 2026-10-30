@@ -13,7 +13,14 @@
  *
  * Tiles look themselves up by the SAME key the thumbnail store uses: a saved
  * host's profile id, or `discovered:<address>:<port>` for an ad-hoc session
- * (`discoveredThumbKey` in components/HostTile.tsx).
+ * (see `sessionKeyOf` in `state/sessionActivity.ts`).
+ *
+ * The registry is a per-key subscription store rather than a plain context
+ * value. A context value has to change for any consumer to see new data, so
+ * one session's stats tick used to re-render the whole Library grid, and one
+ * preview frame used to re-render every tile in it. Here a tile subscribes to
+ * its own key and wakes only when its own answer changed; the frames for keys
+ * nobody is watching are dropped at the door.
  */
 import {
   createContext,
@@ -29,7 +36,14 @@ import { emit } from "@tauri-apps/api/event";
 import type { ProtocolKind, SessionStats } from "../lib/types";
 import { isProtocolKind } from "../lib/types";
 import { inTauri, safeInvoke, safeListen } from "../lib/tauri";
-import { discoveredThumbKey } from "../components/HostTile";
+import {
+  EMPTY_ACTIVITY,
+  buildActivityLookup,
+  sameActivity,
+  type ActivityPreview,
+  type BandwidthSample,
+  type TileActivity,
+} from "./sessionActivity";
 
 // ---------------------------------------------------------------- contracts
 
@@ -43,8 +57,6 @@ export const PREVIEW_EVENT = "library://preview";
 const SESSIONS_EVENT = "sessions://event";
 const SESSIONS_STATS_EVENT = "sessions://stats";
 
-/** No stats sample for this long ⇒ the bandwidth overlay is hidden. */
-const STALE_MS = 3000;
 /** Ring buffer length: ~60 s of 1 Hz samples per session. */
 const MAX_SAMPLES = 60;
 
@@ -88,13 +100,6 @@ interface ActiveSessionRow {
 
 // ------------------------------------------------------------------- state
 
-interface BandwidthSample {
-  /** RX bits/sec (`throughput_bps`). */
-  rx: number;
-  /** TX bits/sec (`throughput_up_bps`). */
-  tx: number;
-}
-
 interface LiveSession {
   sessionId: string;
   profileId: string | null;
@@ -111,41 +116,34 @@ interface LiveSession {
   lastStatsAt: number;
 }
 
-interface PreviewFrame {
+interface PreviewFrame extends ActivityPreview {
   sessionId: string;
-  dataUrl: string;
-  width: number;
-  height: number;
 }
 
-/** What a tile gets back for its key. */
-export interface TileActivity {
-  /** Fresh bandwidth (a stats sample within the last 3 s), else null. */
-  bandwidth: { rx: number; tx: number; samples: readonly BandwidthSample[] } | null;
-  /** Latest live preview frame for this key, else null. Toggle-independent, * the tile combines it with `livePreviews` before showing it. */
-  preview: { dataUrl: string; width: number; height: number } | null;
+/**
+ * The subscription surface a tile uses.
+ *
+ * `read` is a snapshot and `subscribe` hears only about this key; the event
+ * intake asks the same registry which keys are on screen.
+ */
+interface SessionStore {
+  read: (key: string) => TileActivity;
+  subscribe: (key: string, listener: () => void) => () => void;
 }
 
-interface SessionsContextValue {
-  /** Lookup by tile key: `host.id` or `discoveredThumbKey(address, port)`. */
-  forKey: (key: string) => TileActivity;
+const SessionStoreContext = createContext<SessionStore | null>(null);
+
+interface LivePreviewsValue {
   /** The persisted Library toggle (default off). */
   livePreviews: boolean;
   /** Flip the toggle: persists it and broadcasts `library://live-previews`. */
   setLivePreviews: (enabled: boolean) => void;
 }
 
-const SessionsContext = createContext<SessionsContextValue | null>(null);
-
-const EMPTY_ACTIVITY: TileActivity = { bandwidth: null, preview: null };
+const LivePreviewsContext = createContext<LivePreviewsValue | null>(null);
 
 const num = (v: unknown): number =>
   typeof v === "number" && Number.isFinite(v) ? v : 0;
-
-/** The tile key a session's data lands under, same convention as thumbnails. */
-function sessionKeyOf(s: { profileId: string | null; address: string; port: number }): string {
-  return s.profileId ?? discoveredThumbKey(s.address, s.port);
-}
 
 function blankSession(row: ActiveSessionRow, state: string): LiveSession {
   return {
@@ -211,6 +209,11 @@ export function SessionsProvider({ children }: { children: ReactNode }): ReactNo
       });
     }
   }, []);
+
+  const livePreviewsValue = useMemo(
+    () => ({ livePreviews, setLivePreviews }),
+    [livePreviews, setLivePreviews],
+  );
 
   // ------------------------------------------------------------ event intake
 
@@ -284,12 +287,31 @@ export function SessionsProvider({ children }: { children: ReactNode }): ReactNo
     });
   }, []);
 
+  // ------------------------------------------------------------ subscriptions
+
+  const watchers = useRef(new Map<string, Set<() => void>>());
+  /**
+   * The switch, read by the event intake.
+   *
+   * With live previews off a tile does not render a frame, so storing one would
+   * wake every subscribed tile for a picture nobody is showing. The session
+   * windows stop publishing anyway; this is the second half of the same rule.
+   */
+  const previewsWanted = useRef(livePreviews);
+  previewsWanted.current = livePreviews;
+  const lookupRef = useRef<Map<string, TileActivity>>(new Map());
+
   const onPreview = useCallback((ev: PreviewPayload): void => {
     if (!ev || typeof ev !== "object") return;
     if (typeof ev.key !== "string" || !ev.key) return;
     // The data URL is rendered as an <img src>; accept only what the publisher
     // actually produces, never an arbitrary string from a stray event.
     if (typeof ev.dataUrl !== "string" || !ev.dataUrl.startsWith("data:image/")) return;
+    if (!previewsWanted.current) return;
+    // Nobody has this key on screen, so there is nothing to repaint and
+    // nothing worth keeping: dropping the frame here is what stops a preview
+    // for a host in a filtered-out group from re-rendering the grid.
+    if (!watchers.current.has(ev.key)) return;
     setPreviews((prev) => ({
       // One stored frame per key, each publish replaces the last.
       ...prev,
@@ -340,67 +362,113 @@ export function SessionsProvider({ children }: { children: ReactNode }): ReactNo
     };
   }, [onEvent, onStats, onPreview]);
 
-  // ------------------------------------------------------------- staleness
-
-  // Freshness is judged at read time, so a session whose stats stop (window
-  // closing, backend hiccup) needs a re-render to actually disappear from the
-  // tiles. Tick only while a fresh→stale transition is still possible; once
-  // everything is stale there is nothing left to hide.
-  const sessionsRef = useRef(sessions);
-  sessionsRef.current = sessions;
-  const [staleTick, setStaleTick] = useState(0);
-  useEffect(() => {
-    const iv = window.setInterval(() => {
-      const now = Date.now();
-      const pending = Object.values(sessionsRef.current).some(
-        (s) => s.lastStatsAt > 0 && now - s.lastStatsAt <= STALE_MS + 1500,
-      );
-      if (pending) setStaleTick((t) => t + 1);
-    }, 1000);
-    return () => window.clearInterval(iv);
-  }, []);
-
   // -------------------------------------------------------------- lookups
 
-  const forKey = useCallback(
-    (key: string): TileActivity => {
-      if (!key) return EMPTY_ACTIVITY;
-      // More than one session can map to one key (the "several windows per
-      // computer" preference); the one with the newest stats speaks for the tile.
-      let best: LiveSession | null = null;
-      for (const s of Object.values(sessions)) {
-        if (sessionKeyOf(s) !== key) continue;
-        if (!best || s.lastStatsAt > best.lastStatsAt) best = s;
-      }
-      const now = Date.now();
-      let bandwidth: TileActivity["bandwidth"] = null;
-      if (best && best.latest && now - best.lastStatsAt <= STALE_MS) {
-        bandwidth = { rx: best.latest.rx, tx: best.latest.tx, samples: best.samples };
-      }
-      // A preview is only live while its session still exists, `ended` (and
-      // the guard here, for a missed event) keeps closed sessions off tiles.
-      const frame = best ? previews[key] : undefined;
-      const preview = frame
-        ? { dataUrl: frame.dataUrl, width: frame.width, height: frame.height }
-        : null;
-      return bandwidth || preview ? { bandwidth, preview } : EMPTY_ACTIVITY;
-    },
-    // `staleTick` is not read in the body, it exists to re-evaluate the
-    // Date.now() freshness checks above after stats stop arriving.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [sessions, previews, staleTick],
+  // Built once per data change: the grid used to scan every session once per
+  // tile per render, which is O(sessions × tiles) every second.
+  const activities = useMemo(
+    () => buildActivityLookup(Object.values(sessions), previews, Date.now()),
+    [sessions, previews],
+  );
+  // Assigned during render, not in an effect, so a tile that mounts in the
+  // same commit as a data change reads the new answer on its first render.
+  lookupRef.current = activities;
+
+  const store = useMemo<SessionStore>(
+    () => ({
+      read: (key) => {
+        const entry = lookupRef.current.get(key);
+        if (!entry) return EMPTY_ACTIVITY;
+        // Freshness is judged at read time: the map was built a moment ago,
+        // and a reading that has just gone stale must stop being shown without
+        // waiting for another event from the session.
+        if (entry.bandwidth !== null && entry.bandwidth.expiresAt <= Date.now()) {
+          return entry.preview ? { bandwidth: null, preview: entry.preview } : EMPTY_ACTIVITY;
+        }
+        return entry;
+      },
+      subscribe: (key, listener) => {
+        let set = watchers.current.get(key);
+        if (!set) {
+          set = new Set();
+          watchers.current.set(key, set);
+        }
+        set.add(listener);
+        return () => {
+          const current = watchers.current.get(key);
+          if (!current) return;
+          current.delete(listener);
+          if (current.size === 0) watchers.current.delete(key);
+        };
+      },
+    }),
+    [],
   );
 
-  const value = useMemo(
-    () => ({ forKey, livePreviews, setLivePreviews }),
-    [forKey, livePreviews, setLivePreviews],
-  );
+  // Wake only the keys whose own answer changed. A stats tick for one session
+  // must not repaint the other nineteen tiles, and a preview frame must not
+  // repaint anything but the tile it belongs to.
+  const previousActivities = useRef(activities);
+  useEffect(() => {
+    const before = previousActivities.current;
+    previousActivities.current = activities;
+    if (before === activities) return;
+    const keys = new Set([...before.keys(), ...activities.keys()]);
+    for (const key of keys) {
+      if (sameActivity(before.get(key), activities.get(key))) continue;
+      const set = watchers.current.get(key);
+      if (!set) continue;
+      for (const notify of set) notify();
+    }
+  }, [activities]);
 
-  return <SessionsContext.Provider value={value}>{children}</SessionsContext.Provider>;
+  return (
+    <SessionStoreContext.Provider value={store}>
+      <LivePreviewsContext.Provider value={livePreviewsValue}>
+        {children}
+      </LivePreviewsContext.Provider>
+    </SessionStoreContext.Provider>
+  );
 }
 
-export function useSessions(): SessionsContextValue {
-  const ctx = useContext(SessionsContext);
+function useSessionStore(): SessionStore {
+  const ctx = useContext(SessionStoreContext);
   if (!ctx) throw new Error("useSessions outside SessionsProvider");
   return ctx;
+}
+
+/** The Library's live-previews switch; separate so a frame cannot wake it. */
+export function useLivePreviews(): LivePreviewsValue {
+  const ctx = useContext(LivePreviewsContext);
+  if (!ctx) throw new Error("useLivePreviews outside SessionsProvider");
+  return ctx;
+}
+
+/**
+ * What is happening on one tile, re-rendering only when its own answer changes.
+ *
+ * A reading that stops arriving expires on a timer this hook owns, so the
+ * provider no longer has to tick once a second for everyone to notice.
+ */
+export function useTileActivity(key: string): TileActivity {
+  const store = useSessionStore();
+  const [activity, setActivity] = useState<TileActivity>(() => store.read(key));
+
+  useEffect(() => {
+    // Re-read on mount and on a key change, then follow only this key.
+    setActivity(store.read(key));
+    return store.subscribe(key, () => setActivity(store.read(key)));
+  }, [store, key]);
+
+  const expiresAt = activity.bandwidth?.expiresAt;
+  useEffect(() => {
+    if (expiresAt === undefined) return;
+    const id = window.setTimeout(
+      () => setActivity(store.read(key)),
+      Math.max(0, expiresAt - Date.now()),
+    );
+    return () => window.clearTimeout(id);
+  }, [store, key, expiresAt]);
+
+  return activity;
 }

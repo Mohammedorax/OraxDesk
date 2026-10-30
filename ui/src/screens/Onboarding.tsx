@@ -1,10 +1,14 @@
 /** Onboarding: 3 lightweight skippable steps, no account, ends in live discovery (PRD/11 §5). */
-import { useState, type ReactNode } from "react";
+import { useRef, useState, type ReactNode } from "react";
 import { useSettings, type ThemeChoice } from "../state/SettingsContext";
 import { useDiscovery } from "../state/DiscoveryContext";
 import { classNames } from "../lib/util";
-import { useT } from "../lib/i18n";
+import { radioMove } from "../lib/radioGroup";
+import { useLang, useT } from "../lib/i18n";
 import { IconMonitor, IconZap, IconLock } from "../components/icons";
+
+/** Fixed order: the arrow keys walk this list, not whatever the DOM holds. */
+const THEMES: readonly ThemeChoice[] = ["system", "light", "dark"];
 
 export function Onboarding({
   onDone,
@@ -14,7 +18,9 @@ export function Onboarding({
   onAddDiscovered: (id: string) => void;
 }): ReactNode {
   const t = useT();
+  const lang = useLang();
   const [step, setStep] = useState(0);
+  const themeRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const { settings, update } = useSettings();
   const { discovered, scan, startScan } = useDiscovery();
   const [ranDiscovery, setRanDiscovery] = useState(false);
@@ -82,12 +88,16 @@ export function Onboarding({
             <div>
               <p className="mb-2 text-xs font-medium text-secondary">{t("onboarding.appearance")}</p>
               <div className="flex gap-2" role="radiogroup" aria-label={t("onboarding.themeAria")}>
-                {(["system", "light", "dark"] as ThemeChoice[]).map((theme) => (
+                {THEMES.map((theme, i) => (
                   <button
                     key={theme}
+                    ref={(el) => {
+                      themeRefs.current[i] = el;
+                    }}
                     type="button"
                     role="radio"
                     aria-checked={settings.theme === theme}
+                    tabIndex={settings.theme === theme ? 0 : -1}
                     className={classNames(
                       "flex-1 rounded-md border px-3 py-2 text-sm capitalize",
                       settings.theme === theme
@@ -95,6 +105,15 @@ export function Onboarding({
                         : "border-subtle text-secondary hover:border-strong",
                     )}
                     onClick={() => update({ theme })}
+                    onKeyDown={(e) => {
+                      // Selection and focus move together; Left/Right follow
+                      // the document direction, see `radioMove`.
+                      const next = radioMove(e.key, i, THEMES.length, lang === "ar" ? "rtl" : "ltr");
+                      if (next === null) return;
+                      e.preventDefault();
+                      update({ theme: THEMES[next] });
+                      themeRefs.current[next]?.focus();
+                    }}
                   >
                     {theme === "system" ? t("onboarding.themeSystem") : theme}
                   </button>

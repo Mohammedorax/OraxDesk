@@ -23,6 +23,19 @@ export type ProtocolKind = "vnc" | "rdp" | "ssh" | "boundary";
  */
 export const DEFAULT_PORT: Record<ProtocolKind, number> = { vnc: 5900, rdp: 3389, ssh: 22, boundary: 0 };
 
+/**
+ * Thumbnail key for a host that is not in the library.
+ *
+ * MUST match `discovered_key` in `src-tauri/src/thumbnail.rs`: connecting to a
+ * machine straight from the Nearby list is an ad-hoc session with no profile
+ * UUID, so its screenshot is stored against the endpoint instead. Without this
+ * the tile you most need to recognise, an unfamiliar machine, is the one that
+ * never gets a picture.
+ */
+export function discoveredThumbKey(address: string, port: number): string {
+  return `discovered:${address}:${port}`;
+}
+
 /** The three protocols, in the order the UI offers them. */
 export const PROTOCOLS: readonly ProtocolKind[] = ["vnc", "rdp", "ssh"];
 /**
@@ -170,8 +183,6 @@ export interface HostProfile {
   // ---- UI-local only: NOT columns in the hosts table, NOT sent by Rust ----
   /** Client-side flag; the backend has no `favorite` column yet. */
   favorite?: boolean;
-  /** Client-side reachability guess; the backend never sets it. */
-  online?: boolean | null;
 }
 
 /**

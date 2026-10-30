@@ -5,6 +5,7 @@ import {
   useEffect,
   useId,
   useMemo,
+  useRef,
   useState,
   type ReactElement,
   type ReactNode,
@@ -57,7 +58,8 @@ import { addressErrorText, parseConnectTarget } from "../lib/address";
 import { Dialog, Select } from "./primitives";
 import { IconChevronDown, IconChevronRight } from "./icons";
 import { classNames } from "../lib/util";
-import { useT, type MessageKey, type Translate } from "../lib/i18n";
+import { radioMove } from "../lib/radioGroup";
+import { useLang, useT, type MessageKey, type Translate } from "../lib/i18n";
 
 export interface HostDraft {
   id?: string;
@@ -294,6 +296,7 @@ export function HostDialog({
   onClose: () => void;
 }): ReactNode {
   const t = useT();
+  const lang = useLang();
   const [d, setD] = useState<HostDraft>(initial);
   /**
    * A save is in flight.
@@ -321,6 +324,31 @@ export function HostDialog({
   const [touched, setTouched] = useState(false);
 
   const set = (patch: Partial<HostDraft>): void => setD((prev) => ({ ...prev, ...patch }));
+
+  /**
+   * Move through a radio group with the arrow keys.
+   *
+   * `role="radiogroup"` alone told a screen reader this was one group and
+   * nothing else: the arrows did nothing, and every option sat in the tab
+   * order. Selection and focus move together, only the chosen option is
+   * tabbable, and Left/Right follow `dir` so the arrows point the way the
+   * options are laid out on screen.
+   */
+  const onRadioKey = (
+    e: React.KeyboardEvent<HTMLButtonElement>,
+    index: number,
+    count: number,
+    select: (index: number) => void,
+    refs: React.RefObject<Array<HTMLButtonElement | null>>,
+  ): void => {
+    const next = radioMove(e.key, index, count, lang === "ar" ? "rtl" : "ltr");
+    if (next === null) return;
+    e.preventDefault();
+    select(next);
+    refs.current?.[next]?.focus();
+  };
+  const protocolRefs = useRef<Array<HTMLButtonElement | null>>([]);
+  const sshAuthRefs = useRef<Array<HTMLButtonElement | null>>([]);
 
   // A saved host shows the account names it signs in with. They start blank
   // in the draft and arrive a moment later from the keychain; a box the user
@@ -512,12 +540,16 @@ export function HostDialog({
             role="radiogroup"
             aria-label={t("host.protocolAria")}
           >
-            {HOST_PROTOCOLS.map((p) => (
+            {HOST_PROTOCOLS.map((p, i) => (
               <button
                 key={p}
+                ref={(el) => {
+                  protocolRefs.current[i] = el;
+                }}
                 type="button"
                 role="radio"
                 aria-checked={d.protocol === p}
+                tabIndex={d.protocol === p ? 0 : -1}
                 title={t(PROTOCOL_NAME_KEYS[p])}
                 className={classNames(
                   "flex-1 rounded-sm px-3 py-1.5 text-sm",
@@ -526,6 +558,15 @@ export function HostDialog({
                     : "text-secondary hover:text-primary",
                 )}
                 onClick={() => changeProtocol(p)}
+                onKeyDown={(e) =>
+                  onRadioKey(
+                    e,
+                    i,
+                    HOST_PROTOCOLS.length,
+                    (next) => changeProtocol(HOST_PROTOCOLS[next]),
+                    protocolRefs,
+                  )
+                }
               >
                 {t(PROTOCOL_SHORT_NAME_KEYS[p])}
               </button>
@@ -722,12 +763,16 @@ export function HostDialog({
               role="radiogroup"
               aria-label={t("host.sshAuthAria")}
             >
-              {SSH_AUTH_CHOICES.map(([kind, label]) => (
+              {SSH_AUTH_CHOICES.map(([kind, label], i) => (
                 <button
                   key={kind}
+                  ref={(el) => {
+                    sshAuthRefs.current[i] = el;
+                  }}
                   type="button"
                   role="radio"
                   aria-checked={ssh.auth === kind}
+                  tabIndex={ssh.auth === kind ? 0 : -1}
                   className={classNames(
                     "flex-1 rounded-sm px-3 py-1.5 text-sm",
                     ssh.auth === kind
@@ -735,6 +780,15 @@ export function HostDialog({
                       : "text-secondary hover:text-primary",
                   )}
                   onClick={() => setSsh({ auth: kind })}
+                  onKeyDown={(e) =>
+                    onRadioKey(
+                      e,
+                      i,
+                      SSH_AUTH_CHOICES.length,
+                      (next) => setSsh({ auth: SSH_AUTH_CHOICES[next][0] }),
+                      sshAuthRefs,
+                    )
+                  }
                 >
                   {t(label)}
                 </button>
