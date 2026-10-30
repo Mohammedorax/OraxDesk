@@ -1414,6 +1414,85 @@ const ar = {
     "تعذّرت قراءة حالة الإعداد. أعد فتح هذه النافذة للاتصال من جديد.",
   "provider.verifyNote":
     "يتبع فحص اتصال محلي جلسة Boundary فعلية للتحقق من المسار كاملًا. والدعوات الخاصة تعطّل الترحيل العام.",
+
+  // وصفات التشغيل: أوامر تُنسخ، لا أزرار تُنفّذ
+
+  "runbooks.title": "وصفات التشغيل",
+  "runbooks.intro":
+    "هذه الوصفات أوامر جاهزة للنسخ، وليست أزرارًا تُنفّذها. ينفّذ الوكيل الأمر على ذلك الجهاز عبر أداة dvv_job، أو تلصقه أنت في طرفية على الجهاز نفسه.",
+  "runbooks.noRunNote":
+    "لا يوجد زر «تشغيل» هنا، لأن هذه الشاشة لا تستطيع إرسال أمر إلى الجهاز البعيد.",
+  "runbooks.recipeList": "الوصفات",
+  "runbooks.parameters": "المعاملات",
+  "runbooks.command": "الأمر",
+  "runbooks.elevationLabel": "الصلاحيات",
+  "runbooks.secretValue": "محجوب",
+  "runbooks.secretNote":
+    "كلمة المرور لا تُطلب هنا ولا تُكتب في الأمر: الأمر يحمل <password>، وتستبدلها بنفسك على الجهاز.",
+  "runbooks.copy": "نسخ الأمر",
+  "runbooks.copied": "نُسخ",
+  "runbooks.copyFailed": "تعذّر النسخ",
+  "runbooks.copyFailedNote": "لم تأخذ الحافظة النص. حدّد الأمر وانسخه يدويًا.",
+  "runbooks.missing": "أكمل هذه المعاملات أولًا: {params}. لا يُعرض أمر ناقص.",
+  "runbooks.invalid": "قيمة غير صالحة في: {params}.",
+  "runbooks.unknown": "معامل غير معروف: {params}.",
+  "runbooks.preflight.name": "فحص أولي للجهاز",
+  "runbooks.preflight.purpose":
+    "اقرأ نظام التشغيل والمساحة الحرة وصلاحية المسؤول قبل أي تثبيت.",
+  "runbooks.preflight.elevation":
+    "لا تحتاج رفع صلاحيات: فهي تقرأ نظام التشغيل والقرص وحالة حساب المستخدم الحالي فقط.",
+  "runbooks.office.name": "Office بإصدار ولغة",
+  "runbooks.office.purpose":
+    "ثبّت Office بإصدار ولغة وبنية محددة عبر Office Deployment Tool.",
+  "runbooks.office.elevation":
+    "مثبّت Office يطلب UAC إن لم تكن الجلسة مرفوعة، ويتوقف هناك. لا سبيل لتجاوز ذلك من جلسة.",
+  "runbooks.office.note":
+    "يجب أن يكون Office Deployment Tool مستخرجًا في المجلد أعلاه، وsetup.exe موجودًا فيه.",
+  "runbooks.msi.name": "حزمة MSI بصمت",
+  "runbooks.msi.purpose":
+    "ثبّت حزمة MSI بصمت مع سجل كامل، مثل Crystal Reports runtime.",
+  "runbooks.msi.elevation":
+    "يطلب msiexec موافقة UAC للتثبيت على مستوى الجهاز؛ إن ظهرت النافذة على الجهاز توقّف الأمر حتى يوافق من أمامه.",
+  "runbooks.msi.note": "رمز الخروج 0 أو 3010 نجاح، و1603 فشل سببه في السجل.",
+  "runbooks.sql.name": "تثبيت SQL Server",
+  "runbooks.sql.purpose":
+    "ثبّت SQL Server بصمت بمثيل وميزات وحساب خدمة محدد.",
+  "runbooks.sql.elevation":
+    "مثبّت SQL Server يحتاج صلاحيات مسؤول؛ تظهر نافذة UAC على الجهاز وينتظر التثبيت حتى يوافق من أمامه.",
+  "runbooks.sql.note":
+    "افتح صورة ISO أو استخرجها أولًا، واضبط مسار setup.exe على الملف داخل الصورة.",
+  "runbooks.restore.name": "استعادة قاعدة بيانات",
+  "runbooks.restore.purpose":
+    "استعد قاعدة بيانات من نسخة .bak إلى مجلد بيانات المثيل.",
+  "runbooks.restore.elevation":
+    "تحتاج الاستعادة صلاحية sa أو صلاحية استعادة على الخادم؛ وهي لا ترفع UAC بنفسها.",
+  "runbooks.restore.note":
+    "الأمر الأول يطبع الأسماء المنطقية للملفات؛ إن اختلفت عن اسم القاعدة أعلاه فعدّل أمر الاستعادة قبل تشغيله.",
+  "runbooks.param.officeProduct": "المنتج والإصدار",
+  "runbooks.param.officeLanguage": "اللغة",
+  "runbooks.param.officeBitness": "البنية",
+  "runbooks.param.officeDir": "مجلد Office Deployment Tool",
+  "runbooks.param.msiPath": "مسار ملف .msi",
+  "runbooks.param.msiLog": "مسار السجل",
+  "runbooks.param.sqlSetup": "مسار setup.exe",
+  "runbooks.param.sqlInstance": "اسم المثيل",
+  "runbooks.param.sqlFeatures": "الميزات",
+  "runbooks.param.sqlService": "حساب الخدمة",
+  "runbooks.param.sqlPassword": "كلمة مرور sa",
+  "runbooks.param.restoreBackup": "مسار النسخة الاحتياطية",
+  "runbooks.param.restoreDatabase": "اسم قاعدة البيانات",
+  "runbooks.param.restoreDataDir": "مجلد البيانات",
+  "runbooks.choice.office2021": "Office 2021 — ProPlus (ترخيص حجمي)",
+  "runbooks.choice.office2019": "Office 2019 — ProPlus (ترخيص حجمي)",
+  "runbooks.choice.office365": "Microsoft 365 — ProPlus",
+  "runbooks.choice.langAr": "العربية (ar-sa)",
+  "runbooks.choice.langEn": "الإنجليزية (en-us)",
+  "runbooks.choice.langFr": "الفرنسية (fr-fr)",
+  "runbooks.choice.bit64": "64 بت",
+  "runbooks.choice.bit32": "32 بت",
+  "runbooks.choice.sqlEngine": "محرك SQL فقط",
+  "runbooks.choice.sqlFullText": "محرك SQL والبحث النصي الكامل",
+  "runbooks.choice.sqlReplication": "محرك SQL والتكرار",
   "common.done": "تم",
   "common.close": "إغلاق",
   "common.tryAgain": "أعد المحاولة",
@@ -1452,6 +1531,7 @@ const ar = {
   "common.tagFilterMode": "وضع تصفية الوسوم: {mode}. انقر للتبديل.",
   "common.tagFilterTitle": "بدّل بين مطابقة المضيفين كل الوسوم المحددة (AND) أو أي وسم منها (OR)",
   "common.aiAgents": "وكلاء الذكاء الاصطناعي",
+  "common.runbooks": "وصفات التشغيل",
   "common.preferences": "التفضيلات",
   "common.alreadyOpenWindow": "«{name}» مفتوح أصلًا في نافذة مستقلة",
   "common.tabDriven": "{status}، وكيل يقود",
@@ -2933,6 +3013,85 @@ const en: Record<keyof typeof ar, string> = {
     "Could not read setup status. Reopen this dialog to reconnect.",
   "provider.verifyNote":
     "A local connection check is followed by an actual Boundary session to verify the complete route. Private invitations disable public relay fallback.",
+
+  // Runbooks: commands to copy, not buttons that run
+
+  "runbooks.title": "Runbooks",
+  "runbooks.intro":
+    "These recipes are commands ready to copy, not buttons that run them. The agent runs one on that machine through the dvv_job tool, or you paste it into a terminal on the machine itself.",
+  "runbooks.noRunNote":
+    "There is no Run button here, because this view cannot send a command to the remote machine.",
+  "runbooks.recipeList": "Recipes",
+  "runbooks.parameters": "Parameters",
+  "runbooks.command": "Command",
+  "runbooks.elevationLabel": "Elevation",
+  "runbooks.secretValue": "Hidden",
+  "runbooks.secretNote":
+    "The password is not asked for here and never written into the command: the command carries <password>, and you replace it on the machine.",
+  "runbooks.copy": "Copy command",
+  "runbooks.copied": "Copied",
+  "runbooks.copyFailed": "Copy failed",
+  "runbooks.copyFailedNote": "The clipboard refused the text. Select the command and copy it by hand.",
+  "runbooks.missing": "Fill these in first: {params}. A half command is not offered.",
+  "runbooks.invalid": "Invalid value for: {params}.",
+  "runbooks.unknown": "Unknown parameter: {params}.",
+  "runbooks.preflight.name": "Preflight",
+  "runbooks.preflight.purpose":
+    "Read the OS, free disk and admin state before an install.",
+  "runbooks.preflight.elevation":
+    "No elevation needed: it only reads the OS, the disk and the current user's admin state.",
+  "runbooks.office.name": "Office version and language",
+  "runbooks.office.purpose":
+    "Install Office at a chosen version, language and architecture through the Office Deployment Tool.",
+  "runbooks.office.elevation":
+    "The Office installer raises UAC unless the session is already elevated, and stops there. There is no way around that from a session.",
+  "runbooks.office.note":
+    "The Office Deployment Tool must already be extracted into the folder above, with setup.exe inside it.",
+  "runbooks.msi.name": "Silent MSI package",
+  "runbooks.msi.purpose":
+    "Install an MSI package silently with a full log, such as the Crystal Reports runtime.",
+  "runbooks.msi.elevation":
+    "msiexec asks for UAC to install for all users; if that prompt appears on the machine, the command waits until somebody there accepts it.",
+  "runbooks.msi.note": "Exit code 0 or 3010 is success; 1603 is a failure whose reason is in the log.",
+  "runbooks.sql.name": "Install SQL Server",
+  "runbooks.sql.purpose":
+    "Install SQL Server silently with a chosen instance, features and service account.",
+  "runbooks.sql.elevation":
+    "The SQL Server installer needs administrator rights; UAC appears on the machine and setup waits until someone there accepts it.",
+  "runbooks.sql.note":
+    "Mount or extract the ISO first, and point setup.exe at the file inside it.",
+  "runbooks.restore.name": "Restore a database",
+  "runbooks.restore.purpose":
+    "Restore a database from a .bak into the instance's data directory.",
+  "runbooks.restore.elevation":
+    "A restore needs sa or restore rights on the server; it does not raise UAC by itself.",
+  "runbooks.restore.note":
+    "The first command prints the logical file names; if they differ from the database name above, edit the restore command before running it.",
+  "runbooks.param.officeProduct": "Product and version",
+  "runbooks.param.officeLanguage": "Language",
+  "runbooks.param.officeBitness": "Architecture",
+  "runbooks.param.officeDir": "Office Deployment Tool folder",
+  "runbooks.param.msiPath": "Path to the .msi file",
+  "runbooks.param.msiLog": "Log path",
+  "runbooks.param.sqlSetup": "Path to setup.exe",
+  "runbooks.param.sqlInstance": "Instance name",
+  "runbooks.param.sqlFeatures": "Features",
+  "runbooks.param.sqlService": "Service account",
+  "runbooks.param.sqlPassword": "sa password",
+  "runbooks.param.restoreBackup": "Backup path",
+  "runbooks.param.restoreDatabase": "Database name",
+  "runbooks.param.restoreDataDir": "Data folder",
+  "runbooks.choice.office2021": "Office 2021 — ProPlus (volume)",
+  "runbooks.choice.office2019": "Office 2019 — ProPlus (volume)",
+  "runbooks.choice.office365": "Microsoft 365 — ProPlus",
+  "runbooks.choice.langAr": "Arabic (ar-sa)",
+  "runbooks.choice.langEn": "English (en-us)",
+  "runbooks.choice.langFr": "French (fr-fr)",
+  "runbooks.choice.bit64": "64-bit",
+  "runbooks.choice.bit32": "32-bit",
+  "runbooks.choice.sqlEngine": "SQL engine only",
+  "runbooks.choice.sqlFullText": "SQL engine and full-text search",
+  "runbooks.choice.sqlReplication": "SQL engine and replication",
   "common.done": "Done",
   "common.close": "Close",
   "common.tryAgain": "Try again",
@@ -2971,6 +3130,7 @@ const en: Record<keyof typeof ar, string> = {
   "common.tagFilterMode": "Tag filter mode: {mode}. Click to toggle.",
   "common.tagFilterTitle": "Toggle whether hosts must match ALL selected tags (AND) or ANY (OR)",
   "common.aiAgents": "AI Agents",
+  "common.runbooks": "Runbooks",
   "common.preferences": "Preferences",
   "common.alreadyOpenWindow": "{name} is already open in a window of its own",
   "common.tabDriven": "{status}, agent driving",

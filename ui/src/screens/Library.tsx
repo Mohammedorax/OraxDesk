@@ -1235,10 +1235,13 @@ export function Library({
   );
 
   /**
-   * Delete the machines the sidebar's trash button asked about.
+   * Delete the machines a confirmation asked about.
    *
-   * The same delete the tile's own menu makes, and the same toast with an
-   * Undo: the sidebar button is a second way in, not a second behaviour.
+   * Every route that deletes more than nothing now arrives here: the sidebar's
+   * trash button, the tile's own Delete, and a multi-selection's context menu.
+   * One contract — name the machines and the saved passwords, ask, then
+   * delete — rather than a destructive gesture that depends on where it was
+   * started from.
    *
    * One machine at a time, because each delete ends with its own refresh
    * and the toast must not claim the work is done before any of it has been
@@ -1446,63 +1449,22 @@ export function Library({
           label: t.plural("library.menuDelete", ids.length),
           danger: true,
           separatorAbove: true,
-          onSelect: () => {
-            const doomed = ids
-              .map((id) => hostById.get(id))
-              .filter((h): h is HostProfile => h !== undefined);
-            clearSelection();
-            // Awaited, and one at a time: each delete ends with its own
-            // refresh, and the toast must not claim the work is done before
-            // any of it has been attempted.
-            void (async () => {
-              // One host failing to delete does not stop the rest, and the
-              // count in the message is the count that actually went. The
-              // hosts themselves are kept, not just the count, so the
-              // one-host sentence can still name the machine it deleted.
-              const gone: HostProfile[] = [];
-              for (const h of doomed) {
-                try {
-                  await deleteHost(h.id);
-                  gone.push(h);
-                } catch (err) {
-                  push(
-                    "danger",
-                    t("library.deleteFailed", {
-                      name: h.friendlyName,
-                      reason: describeError(err),
-                    }),
-                  );
-                }
-              }
-              if (gone.length === 0) return;
-              // Undo restores the profiles and their tags. It cannot bring
-              // back the saved passwords: `delete_host` drops the keychain
-              // entry, the history rows and the thumbnail, and none of those
-              // are recoverable from here. Say so rather than promise more
-              // than the button delivers.
-              push(
-                "info",
-                t.plural("library.deleted", gone.length, { name: gone[0].friendlyName }),
-                {
-                  label: t("library.undo"),
-                  run: () => {
-                    void (async () => {
-                      for (const h of doomed) await restoreHost(h);
-                    })().catch((err: unknown) =>
-                      push(
-                        "danger",
-                        t("library.restoreFailed", { reason: describeError(err) }),
-                      ),
-                    );
-                  },
-                },
-              );
-            })();
-          },
+          /*
+            One destructive contract. This route used to delete on the click
+            and offer an Undo that could not bring back a saved password, while
+            the sidebar's trash button asked first. Both now ask the same
+            question, and the delete itself lives in `deleteHosts`.
+          */
+          onSelect: () =>
+            setDeleteAsk(
+              ids
+                .map((id) => hostById.get(id))
+                .filter((h): h is HostProfile => h !== undefined),
+            ),
         },
       ];
     },
-    [hostById, groups, tags, dropOnTarget, deleteHost, restoreHost, clearSelection, push, t],
+    [hostById, groups, tags, dropOnTarget, t],
   );
 
   const menuItemsFor = useCallback(

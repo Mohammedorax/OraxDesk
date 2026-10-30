@@ -11,11 +11,13 @@ import {
   IconFolder,
   IconMonitor,
   IconStar,
+  IconTerminal,
   IconZap,
   IconGear,
   IconPlus,
 } from "./icons";
 import { AgentConnect } from "./AgentConnect";
+import { RunbooksDialog } from "./RunbooksDialog";
 
 export type SidebarSelection =
   | { kind: "all" }
@@ -101,6 +103,14 @@ export function Sidebar({
    * too; this has no second way in.
    */
   const [agentsOpen, setAgentsOpen] = useState(false);
+
+  /**
+   * Runbooks, owned here for the same reason as the connect modal above: one
+   * row opens it, it closes itself, and no other surface needs to know. The
+   * dialog does not run anything — it composes a command and explains who can
+   * (an agent through `dvv_job`, or the person in a terminal on the machine).
+   */
+  const [runbooksOpen, setRunbooksOpen] = useState(false);
 
   return (
     <>
@@ -228,6 +238,12 @@ export function Sidebar({
       */}
       <div className="mt-auto pt-2">
         <SidebarRow
+          icon={<IconTerminal size={16} />}
+          label={translate("common.runbooks")}
+          active={runbooksOpen}
+          onClick={() => setRunbooksOpen(true)}
+        />
+        <SidebarRow
           icon={<IconAgent size={16} />}
           label={translate("common.aiAgents")}
           active={agentsOpen}
@@ -248,6 +264,7 @@ export function Sidebar({
       ) : null}
     </nav>
     {agentsOpen ? <AgentConnect onClose={() => setAgentsOpen(false)} /> : null}
+    {runbooksOpen ? <RunbooksDialog onClose={() => setRunbooksOpen(false)} /> : null}
     </>
   );
 }
