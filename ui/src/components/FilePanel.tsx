@@ -621,11 +621,9 @@ function FilePane({
       </div>
 
       <footer className="border-t border-subtle px-3 py-1 text-2xs text-tertiary">
-        {visible.length === 1
-          ? t("files.itemOne")
-          : t("files.itemMany", { count: visible.length })}
+        {t.plural("files.item", visible.length)}
         {state.selected.length > 0
-          ? ` · ${t("files.selectedCount", { count: state.selected.length })}`
+          ? ` · ${t.plural("files.selectedCount", state.selected.length)}`
           : ""}
       </footer>
     </section>
@@ -933,9 +931,7 @@ function ConfirmDelete({
     <div className="fixed inset-0 z-40 flex items-center justify-center bg-scrim">
       <div className="w-96 max-w-[calc(100vw-32px)] rounded-lg border border-danger bg-surface p-4 shadow-(--shadow-pop)">
         <p className="text-sm font-semibold text-primary">
-          {count === 1
-            ? t("files.deleteOne", { where })
-            : t("files.deleteMany", { count, where })}
+          {t.plural("files.deleteConfirm", count, { where })}
         </p>
         <p className="mt-1 text-xs text-secondary">
           {t("files.deleteWarn")}
@@ -982,9 +978,7 @@ export function DropOverlay({
     >
       <div className="rounded-lg border-2 border-dashed border-(--accent) bg-raised/95 px-8 py-6 text-center shadow-(--shadow-pop)">
         <p className="text-base font-semibold text-primary">
-          {count === 1
-            ? t("files.dropOne", { host: hostName })
-            : t("files.dropMany", { count, host: hostName })}
+          {t.plural("files.drop", count, { host: hostName })}
         </p>
         <p className="mono mt-1 text-xs text-secondary">→ {remoteDir}</p>
       </div>

@@ -43,6 +43,17 @@ describe("the message catalogue", () => {
     expect(line).toContain("4");
   });
 
+  it("resolves a plural base with the language's own rules", () => {
+    // The catalogue keys are flat (`library.hostsCount.two`), but a caller
+    // names only the base and the count. The count is substituted too, so the
+    // sentence does not have to repeat it in the replacement map.
+    expect(ar.plural("library.hostsCount", 1)).toBe("مضيف واحد");
+    expect(ar.plural("library.hostsCount", 2)).toBe("مضيفان");
+    expect(ar.plural("library.hostsCount", 3)).toBe("3 مضيفين");
+    expect(en.plural("library.hostsCount", 1)).toBe("1 host");
+    expect(en.plural("library.hostsCount", 2)).toBe("2 hosts");
+  });
+
   it("says the plane's line in Arabic, not in English", () => {
     const plane: PlaneView = {
       on: true,

@@ -6,6 +6,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { pluralKey, type PluralCategory } from "./plural";
 import { safeInvoke } from "./tauri";
 
 /**
@@ -809,26 +810,54 @@ const ar = {
   "library.addManually": "أضف يدويًا",
 
   // المكتبة: شريط التحديد
-  "library.selectedCount": "{count} مضيف محدَّد",
+  // كل صيغة مفتاح مستقل، و`t.plural` تختار الصيغة من قواعد اللغة نفسها:
+  // العربية تستعمل الستّ، فلا تكفي صيغتان كما في الإنجليزية.
+  "library.selectedCount.zero": "لا مضيف محدَّد",
+  "library.selectedCount.one": "مضيف واحد محدَّد",
+  "library.selectedCount.two": "مضيفان محدَّدان",
+  "library.selectedCount.few": "{count} مضيفين محدَّدين",
+  "library.selectedCount.many": "{count} مضيفًا محدَّدًا",
+  "library.selectedCount.other": "{count} مضيف محدَّد",
   "library.dragHint": "اسحب إلى مجموعة أو وسم في الشريط الجانبي، أو:",
   "library.moveToGroupAria": "انقل المضيفين المحدَّدين إلى مجموعة",
   "library.moveTo": "انقل إلى…",
   "library.addTagAria": "أضف وسمًا إلى المضيفين المحدَّدين",
   "library.addTag": "أضف وسمًا…",
   "library.clearSelection": "امسح التحديد",
-  "library.hostsCount": "{count} مضيف",
+  "library.hostsCount.zero": "لا مضيف",
+  "library.hostsCount.one": "مضيف واحد",
+  "library.hostsCount.two": "مضيفان",
+  "library.hostsCount.few": "{count} مضيفين",
+  "library.hostsCount.many": "{count} مضيفًا",
+  "library.hostsCount.other": "{count} مضيف",
   "library.hostWord": "مضيف",
 
   // المكتبة: حذف المحدَّد من الشريط الجانبي
-  "library.deleteSelectedTitle": "احذف «{name}»",
-  "library.deleteSelectedTitleMany": "احذف {count} جهازًا محدَّدًا",
-  "library.deleteSelectedMany": "{count} جهاز محدَّد",
-  "library.deleteConfirmTitle": "احذف الجهاز؟",
-  "library.deleteConfirmTitleMany": "احذف {count} جهازًا؟",
-  "library.deleteConfirmBody":
+  // صيغة الواحد في العنوان تسمّي الجهاز، فيُمرَّر لها {name}؛ وبقية الصيغ
+  // تعدّ، ويكفيها {count} التي تضيفها `t.plural` من تلقاء نفسها.
+  "library.deleteSelectedTitle.zero": "احذف المضيفين المحدَّدين",
+  "library.deleteSelectedTitle.one": "احذف «{name}»",
+  "library.deleteSelectedTitle.two": "احذف المضيفين المحدَّدين",
+  "library.deleteSelectedTitle.few": "احذف {count} مضيفين محدَّدين",
+  "library.deleteSelectedTitle.many": "احذف {count} مضيفًا محدَّدًا",
+  "library.deleteSelectedTitle.other": "احذف {count} مضيف محدَّد",
+  "library.deleteConfirmTitle.zero": "احذف الأجهزة المحدَّدة؟",
+  "library.deleteConfirmTitle.one": "احذف الجهاز؟",
+  "library.deleteConfirmTitle.two": "احذف الجهازين؟",
+  "library.deleteConfirmTitle.few": "احذف {count} أجهزة؟",
+  "library.deleteConfirmTitle.many": "احذف {count} جهازًا؟",
+  "library.deleteConfirmTitle.other": "احذف {count} جهاز؟",
+  "library.deleteConfirmBody.zero": "لن يُحذف أي جهاز من المكتبة.",
+  "library.deleteConfirmBody.one":
     "سيُحذف «{name}» من المكتبة، ومعه كلمة مروره المحفوظة إن وُجدت.",
-  "library.deleteConfirmBodyMany":
+  "library.deleteConfirmBody.two":
+    "سيُحذف الجهازان من المكتبة، ومعهما كلمتا المرور المحفوظتان إن وُجدتا.",
+  "library.deleteConfirmBody.few":
     "ستُحذف {count} أجهزة من المكتبة، ومعها كلمات مرورها المحفوظة إن وُجدت.",
+  "library.deleteConfirmBody.many":
+    "سيُحذف {count} جهازًا من المكتبة، ومعه كلمة مروره المحفوظة إن وُجدت.",
+  "library.deleteConfirmBody.other":
+    "سيُحذف {count} جهاز من المكتبة، ومعه كلمة مروره المحفوظة إن وُجدت.",
   "library.deleteConfirmList": "الأجهزة التي ستُحذف",
   "library.deleteConfirmAction": "احذف",
 
@@ -860,15 +889,24 @@ const ar = {
   "library.menuWake": "إيقاظ (Wake-on-LAN)",
   "library.menuReloadThumbnail": "أعد تحميل الصورة المصغّرة",
   "library.menuForgetKey": "أنسِ المفتاح المحفوظ…",
-  "library.menuDelete": "احذف…",
+  "library.menuDelete.zero": "احذف…",
+  "library.menuDelete.one": "احذف…",
+  "library.menuDelete.two": "احذف المضيفين…",
+  "library.menuDelete.few": "احذف {count} مضيفين…",
+  "library.menuDelete.many": "احذف {count} مضيفًا…",
+  "library.menuDelete.other": "احذف {count} مضيف…",
   "library.menuOpenGrid": "افتح كشبكة",
   "library.menuOpenGridSaved": "افتح كشبكة (بترتيب محفوظ)",
   "library.menuSaveLayout": "احفظ هذا الترتيب في المجموعة",
   "library.menuForgetLayout": "أنسِ الترتيب المحفوظ",
-  "library.menuRemoveFromGroup": "أزل {count} مضيفًا من مجموعتها",
+  "library.menuRemoveFromGroup.zero": "أزل المضيفين من مجموعتهم",
+  "library.menuRemoveFromGroup.one": "أزل المضيف من مجموعته",
+  "library.menuRemoveFromGroup.two": "أزل المضيفين من مجموعتهما",
+  "library.menuRemoveFromGroup.few": "أزل {count} مضيفين من مجموعتهم",
+  "library.menuRemoveFromGroup.many": "أزل {count} مضيفًا من مجموعته",
+  "library.menuRemoveFromGroup.other": "أزل {count} مضيف من مجموعته",
   "library.menuMoveTo": "انقل إلى {group}",
   "library.menuTagWith": "وسم بـ {tag}",
-  "library.menuDeleteMany": "احذف {count} مضيفًا…",
 
   // المكتبة: لوحة الأوامر
   "library.paletteGoTo": "انتقل إلى {title}",
@@ -909,7 +947,13 @@ const ar = {
   "library.savedWithoutPassword": "حُفظ {name}، لكن كلمة مروره لم تُحفظ: {reason}",
   "library.hostUpdated": "حُدِّث المضيف",
   "library.deleteFailed": "تعذّر حذف {name}: {reason}",
-  "library.deletedMany": "حُذف {count} مضيف. وكلمات المرور المحفوظة لم تعد موجودة.",
+  "library.deleted.zero": "لم يُحذف أي مضيف.",
+  "library.deleted.one": "حُذف {name}. وكلمة مروره المحفوظة لم تعد موجودة.",
+  "library.deleted.two":
+    "حُذف المضيفان. وكلمتا المرور المحفوظتان لم تعودا موجودتين.",
+  "library.deleted.few": "حُذف {count} مضيفين. وكلمات المرور المحفوظة لم تعد موجودة.",
+  "library.deleted.many": "حُذف {count} مضيفًا. وكلمات المرور المحفوظة لم تعد موجودة.",
+  "library.deleted.other": "حُذف {count} مضيف. وكلمات المرور المحفوظة لم تعد موجودة.",
   "library.restoreFailed": "تعذّر استعادة المضيفين: {reason}",
   "library.duplicateFailed": "تعذّرت نسخة {name}: {reason}",
   "library.magicPacketSent": "أُرسلت حزمة سحرية إلى {name}",
@@ -921,7 +965,6 @@ const ar = {
   "library.selectOneToConnect": "اختر جهازًا واحدًا للاتصال به.",
   "library.selectOneToWake": "اختر جهازًا واحدًا لإيقاظه.",
   "library.hostGone": "هذا الجهاز لم يعد في المكتبة.",
-  "library.deleted": "حُذف {name}. وكلمة مروره المحفوظة لم تعد موجودة.",
   "library.groupCreated": "أُنشئت المجموعة «{name}»",
   "library.tagCreated": "أُنشئ الوسم «{name}»",
   "library.groupCreateFailed": "تعذّر إنشاء المجموعة: {reason}",
@@ -949,8 +992,12 @@ const ar = {
   "files.newFolderRemote": "مجلد جديد في المجلد البعيد",
   "files.rename": "إعادة تسمية",
   "files.badName": "لا يمكن أن يكون الاسم فارغًا، أو يحتوي على شرطة مائلة، أو يكون «.» أو «..».",
-  "files.deleteOne": "حذف عنصر واحد على {where}؟",
-  "files.deleteMany": "حذف {count} عناصر على {where}؟",
+  "files.deleteConfirm.zero": "لا عناصر لحذفها على {where}.",
+  "files.deleteConfirm.one": "حذف عنصر واحد على {where}؟",
+  "files.deleteConfirm.two": "حذف عنصرين على {where}؟",
+  "files.deleteConfirm.few": "حذف {count} عناصر على {where}؟",
+  "files.deleteConfirm.many": "حذف {count} عنصرًا على {where}؟",
+  "files.deleteConfirm.other": "حذف {count} عنصر على {where}؟",
   "files.deleteWhereLocal": "هذا الجهاز",
   "files.deleteWarn": "تُحذف المجلدات بما فيها من محتويات. ولا يمكن التراجع عن ذلك.",
   "files.colName": "الاسم",
@@ -963,9 +1010,18 @@ const ar = {
   "files.notConnected": "قناة نقل الملفات غير متصلة.",
   "files.loading": "جارٍ التحميل…",
   "files.emptyFolder": "هذا المجلد فارغ.",
-  "files.itemOne": "عنصر واحد",
-  "files.itemMany": "{count} عناصر",
-  "files.selectedCount": "{count} محدَّد",
+  "files.item.zero": "لا عناصر",
+  "files.item.one": "عنصر واحد",
+  "files.item.two": "عنصران",
+  "files.item.few": "{count} عناصر",
+  "files.item.many": "{count} عنصرًا",
+  "files.item.other": "{count} عنصر",
+  "files.selectedCount.zero": "لا شيء محدَّد",
+  "files.selectedCount.one": "عنصر واحد محدَّد",
+  "files.selectedCount.two": "عنصران محدَّدان",
+  "files.selectedCount.few": "{count} عناصر محدَّدة",
+  "files.selectedCount.many": "{count} عنصرًا محدَّدًا",
+  "files.selectedCount.other": "{count} عنصر محدَّد",
   "files.transfers": "النقل",
   "files.activeCount": " ({count} نشط)",
   "files.clearCompleted": "امسح المكتملة",
@@ -982,8 +1038,12 @@ const ar = {
   "files.transferBlocked":
     "نقل الملفات موقوف. إما أن الخادم أُعيد تثبيته أو أن أحدًا يعترض على الاتصال، ولا يوجد «متابعة رغم ذلك». تحقّق من المفتاح الجديد خارج الاتصال، واحذف المحفوظ قبل أن تعيد الاتصال.",
   "files.expected": "المتوقَّع",
-  "files.dropOne": "أفلت لإرسال ملف واحد إلى {host}",
-  "files.dropMany": "أفلت لإرسال {count} ملفات إلى {host}",
+  "files.drop.zero": "أفلت لإرسال ملفات إلى {host}",
+  "files.drop.one": "أفلت لإرسال ملف واحد إلى {host}",
+  "files.drop.two": "أفلت لإرسال ملفين إلى {host}",
+  "files.drop.few": "أفلت لإرسال {count} ملفات إلى {host}",
+  "files.drop.many": "أفلت لإرسال {count} ملفًا إلى {host}",
+  "files.drop.other": "أفلت لإرسال {count} ملف إلى {host}",
 
   // نافذة المضيف
   "host.new": "مضيف جديد",
@@ -2286,25 +2346,53 @@ const en: Record<keyof typeof ar, string> = {
   "library.addManually": "Add manually",
 
   // The library: the selection bar
-  "library.selectedCount": "{count} hosts selected",
+  // English selects only `one` and `other`; the other four categories repeat
+  // `other` because both catalogues keep one key set, and that type relation
+  // is what turns a missing English string into a compile error.
+  "library.selectedCount.zero": "{count} hosts selected",
+  "library.selectedCount.one": "{count} host selected",
+  "library.selectedCount.two": "{count} hosts selected",
+  "library.selectedCount.few": "{count} hosts selected",
+  "library.selectedCount.many": "{count} hosts selected",
+  "library.selectedCount.other": "{count} hosts selected",
   "library.dragHint": "Drag onto a group or tag in the sidebar, or:",
   "library.moveToGroupAria": "Move selected hosts to a group",
   "library.moveTo": "Move to…",
   "library.addTagAria": "Add a tag to the selected hosts",
   "library.addTag": "Add tag…",
   "library.clearSelection": "Clear selection",
-  "library.hostsCount": "{count} hosts",
+  "library.hostsCount.zero": "{count} hosts",
+  "library.hostsCount.one": "{count} host",
+  "library.hostsCount.two": "{count} hosts",
+  "library.hostsCount.few": "{count} hosts",
+  "library.hostsCount.many": "{count} hosts",
+  "library.hostsCount.other": "{count} hosts",
   "library.hostWord": "host",
 
   // The library: deleting the selection from the sidebar
-  "library.deleteSelectedTitle": "Delete “{name}”",
-  "library.deleteSelectedTitleMany": "Delete {count} selected computers",
-  "library.deleteSelectedMany": "{count} selected",
-  "library.deleteConfirmTitle": "Delete this computer?",
-  "library.deleteConfirmTitleMany": "Delete {count} computers?",
-  "library.deleteConfirmBody":
+  "library.deleteSelectedTitle.zero": "Delete {count} selected computers",
+  "library.deleteSelectedTitle.one": "Delete “{name}”",
+  "library.deleteSelectedTitle.two": "Delete {count} selected computers",
+  "library.deleteSelectedTitle.few": "Delete {count} selected computers",
+  "library.deleteSelectedTitle.many": "Delete {count} selected computers",
+  "library.deleteSelectedTitle.other": "Delete {count} selected computers",
+  "library.deleteConfirmTitle.zero": "Delete {count} computers?",
+  "library.deleteConfirmTitle.one": "Delete this computer?",
+  "library.deleteConfirmTitle.two": "Delete {count} computers?",
+  "library.deleteConfirmTitle.few": "Delete {count} computers?",
+  "library.deleteConfirmTitle.many": "Delete {count} computers?",
+  "library.deleteConfirmTitle.other": "Delete {count} computers?",
+  "library.deleteConfirmBody.zero":
+    "{count} computers will be removed from the Library, along with any passwords saved for them.",
+  "library.deleteConfirmBody.one":
     "“{name}” will be removed from the Library, along with any password saved for it.",
-  "library.deleteConfirmBodyMany":
+  "library.deleteConfirmBody.two":
+    "{count} computers will be removed from the Library, along with any passwords saved for them.",
+  "library.deleteConfirmBody.few":
+    "{count} computers will be removed from the Library, along with any passwords saved for them.",
+  "library.deleteConfirmBody.many":
+    "{count} computers will be removed from the Library, along with any passwords saved for them.",
+  "library.deleteConfirmBody.other":
     "{count} computers will be removed from the Library, along with any passwords saved for them.",
   "library.deleteConfirmList": "The computers that will be deleted",
   "library.deleteConfirmAction": "Delete",
@@ -2337,15 +2425,24 @@ const en: Record<keyof typeof ar, string> = {
   "library.menuWake": "Wake (Wake-on-LAN)",
   "library.menuReloadThumbnail": "Reload thumbnail",
   "library.menuForgetKey": "Forget saved key…",
-  "library.menuDelete": "Delete…",
+  "library.menuDelete.zero": "Delete {count} hosts…",
+  "library.menuDelete.one": "Delete…",
+  "library.menuDelete.two": "Delete {count} hosts…",
+  "library.menuDelete.few": "Delete {count} hosts…",
+  "library.menuDelete.many": "Delete {count} hosts…",
+  "library.menuDelete.other": "Delete {count} hosts…",
   "library.menuOpenGrid": "Open as grid",
   "library.menuOpenGridSaved": "Open as grid (saved layout)",
   "library.menuSaveLayout": "Save this layout to group",
   "library.menuForgetLayout": "Forget saved layout",
-  "library.menuRemoveFromGroup": "Remove {count} hosts from their group",
+  "library.menuRemoveFromGroup.zero": "Remove {count} hosts from their group",
+  "library.menuRemoveFromGroup.one": "Remove the host from its group",
+  "library.menuRemoveFromGroup.two": "Remove {count} hosts from their group",
+  "library.menuRemoveFromGroup.few": "Remove {count} hosts from their group",
+  "library.menuRemoveFromGroup.many": "Remove {count} hosts from their group",
+  "library.menuRemoveFromGroup.other": "Remove {count} hosts from their group",
   "library.menuMoveTo": "Move to {group}",
   "library.menuTagWith": "Tag with {tag}",
-  "library.menuDeleteMany": "Delete {count} hosts…",
 
   // The library: the command palette
   "library.paletteGoTo": "Go to {title}",
@@ -2389,7 +2486,12 @@ const en: Record<keyof typeof ar, string> = {
   "library.savedWithoutPassword": "{name} was saved, but its password was not: {reason}",
   "library.hostUpdated": "Host updated",
   "library.deleteFailed": "Could not delete {name}: {reason}",
-  "library.deletedMany": "Deleted {count} hosts. Saved passwords are gone.",
+  "library.deleted.zero": "Deleted {count} hosts. Saved passwords are gone.",
+  "library.deleted.one": "Deleted {name}. Its saved password is gone.",
+  "library.deleted.two": "Deleted {count} hosts. Saved passwords are gone.",
+  "library.deleted.few": "Deleted {count} hosts. Saved passwords are gone.",
+  "library.deleted.many": "Deleted {count} hosts. Saved passwords are gone.",
+  "library.deleted.other": "Deleted {count} hosts. Saved passwords are gone.",
   "library.restoreFailed": "Could not restore those hosts: {reason}",
   "library.duplicateFailed": "Could not duplicate {name}: {reason}",
   "library.magicPacketSent": "Magic packet sent to {name}",
@@ -2401,7 +2503,6 @@ const en: Record<keyof typeof ar, string> = {
   "library.selectOneToConnect": "Select one machine to connect to.",
   "library.selectOneToWake": "Select one machine to wake.",
   "library.hostGone": "That machine is no longer in your library.",
-  "library.deleted": "Deleted {name}. Its saved password is gone.",
   "library.groupCreated": "Created the group {name}",
   "library.tagCreated": "Created the tag {name}",
   "library.groupCreateFailed": "Could not create the group: {reason}",
@@ -2431,8 +2532,12 @@ const en: Record<keyof typeof ar, string> = {
   "files.rename": "Rename",
   "files.badName":
     "A name cannot be empty, contain a slash, or be “.” or “..”.",
-  "files.deleteOne": "Delete 1 item on {where}?",
-  "files.deleteMany": "Delete {count} items on {where}?",
+  "files.deleteConfirm.zero": "Delete {count} items on {where}?",
+  "files.deleteConfirm.one": "Delete {count} item on {where}?",
+  "files.deleteConfirm.two": "Delete {count} items on {where}?",
+  "files.deleteConfirm.few": "Delete {count} items on {where}?",
+  "files.deleteConfirm.many": "Delete {count} items on {where}?",
+  "files.deleteConfirm.other": "Delete {count} items on {where}?",
   "files.deleteWhereLocal": "this computer",
   "files.deleteWarn":
     "Folders are removed with everything inside them. This cannot be undone.",
@@ -2446,9 +2551,18 @@ const en: Record<keyof typeof ar, string> = {
   "files.notConnected": "The file-transfer channel is not connected.",
   "files.loading": "Loading…",
   "files.emptyFolder": "This folder is empty.",
-  "files.itemOne": "1 item",
-  "files.itemMany": "{count} items",
-  "files.selectedCount": "{count} selected",
+  "files.item.zero": "{count} items",
+  "files.item.one": "{count} item",
+  "files.item.two": "{count} items",
+  "files.item.few": "{count} items",
+  "files.item.many": "{count} items",
+  "files.item.other": "{count} items",
+  "files.selectedCount.zero": "{count} selected",
+  "files.selectedCount.one": "{count} selected",
+  "files.selectedCount.two": "{count} selected",
+  "files.selectedCount.few": "{count} selected",
+  "files.selectedCount.many": "{count} selected",
+  "files.selectedCount.other": "{count} selected",
   "files.transfers": "Transfers",
   "files.activeCount": " ({count} active)",
   "files.clearCompleted": "Clear completed",
@@ -2465,8 +2579,12 @@ const en: Record<keyof typeof ar, string> = {
   "files.transferBlocked":
     "File transfer is blocked. This is either a reinstalled server or someone intercepting the connection, there is no “continue anyway”. Verify the new key out of band and remove the stored pin before reconnecting.",
   "files.expected": "expected",
-  "files.dropOne": "Drop to send 1 file to {host}",
-  "files.dropMany": "Drop to send {count} files to {host}",
+  "files.drop.zero": "Drop to send {count} files to {host}",
+  "files.drop.one": "Drop to send {count} file to {host}",
+  "files.drop.two": "Drop to send {count} files to {host}",
+  "files.drop.few": "Drop to send {count} files to {host}",
+  "files.drop.many": "Drop to send {count} files to {host}",
+  "files.drop.other": "Drop to send {count} files to {host}",
 
   // The host dialog
   "host.new": "New Host",
@@ -2969,6 +3087,21 @@ export type MessageKey = keyof typeof ar;
  */
 export const MESSAGE_KEYS = Object.keys(ar) as MessageKey[];
 
+/** What a sentence substitutes: `{name}`, `{count}`, `{reason}`, … */
+export type TranslateVars = Record<string, string | number | boolean>;
+
+/**
+ * A base key whose catalogue entries are split by plural category.
+ *
+ * Derived from the catalogue rather than declared by hand: the base exists if
+ * and only if some `base.<category>` key does, so a caller cannot ask for a
+ * pluralised sentence that no one translated, and a base that has no plural
+ * entries is not in this union at all.
+ */
+export type PluralBase = {
+  [K in MessageKey]: K extends `${infer Base}.${PluralCategory}` ? Base : never;
+}[MessageKey];
+
 /**
  * The translator, as a value.
  *
@@ -2976,18 +3109,23 @@ export const MESSAGE_KEYS = Object.keys(ar) as MessageKey[];
  * down to a helper that is not a component. The keys are checked at the type
  * level: a helper that asks for a key the catalogue does not have will not
  * compile.
+ *
+ * `t.plural` is the same translator for a count: the caller names the BASE
+ * key, and the language's own plural rules pick the suffix. The count is
+ * substituted as `{count}`, so a caller never repeats it in the replacement
+ * map and never has to know whether this sentence uses a dual.
  */
-export type Translate = (
-  key: MessageKey,
-  vars?: Record<string, string | number | boolean>,
-) => string;
+export interface Translate {
+  (key: MessageKey, vars?: TranslateVars): string;
+  plural(base: PluralBase, count: number, vars?: TranslateVars): string;
+}
 
 const dictionaries: Record<Lang, Record<MessageKey, string>> = { ar, en };
 
 export interface I18n {
   lang: Lang;
   dir: "rtl" | "ltr";
-  t: (key: MessageKey, vars?: Record<string, string | number | boolean>) => string;
+  t: Translate;
   setLang: (lang: Lang) => void;
 }
 
@@ -3003,8 +3141,11 @@ const Context = createContext<I18n | null>(null);
  * so the interpolation cannot drift between the app and its tests.
  */
 export function translatorFor(lang: Lang): Translate {
-  const table = dictionaries[lang];
-  return (key, vars) => {
+  // Read through `string` keys: the plural suffix is chosen at runtime, and
+  // the public signature is what keeps a misspelling a compile error.
+  const table: Record<string, string> = dictionaries[lang];
+
+  const phrase = (key: string, vars?: TranslateVars): string => {
     let text = table[key] ?? key;
     if (vars) {
       for (const [name, replacement] of Object.entries(vars)) {
@@ -3013,6 +3154,19 @@ export function translatorFor(lang: Lang): Translate {
     }
     return text;
   };
+
+  const translate = (key: MessageKey, vars?: TranslateVars): string => phrase(key, vars);
+
+  return Object.assign(translate, {
+    plural: (base: PluralBase, count: number, vars?: TranslateVars): string => {
+      const wanted = pluralKey(base, lang, count);
+      // Only a category this language has is asked for, and every language
+      // has `other`; the fallback is for a catalogue that lost a form, not
+      // for a language that never needed it.
+      const key = table[wanted] === undefined ? `${base}.other` : wanted;
+      return phrase(key, { ...vars, count });
+    },
+  });
 }
 
 /**

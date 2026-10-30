@@ -25,11 +25,7 @@ export function DeleteHostsDialog({
   const one = hosts.length === 1 ? hosts[0] : null;
   return (
     <Dialog
-      title={
-        one
-          ? t("library.deleteConfirmTitle")
-          : t("library.deleteConfirmTitleMany", { count: hosts.length })
-      }
+      title={t.plural("library.deleteConfirmTitle", hosts.length)}
       onClose={onCancel}
       danger
       width={440}
@@ -37,9 +33,9 @@ export function DeleteHostsDialog({
     >
       <div className="space-y-3">
         <p className="text-sm text-primary">
-          {one
-            ? t("library.deleteConfirmBody", { name: one.friendlyName })
-            : t("library.deleteConfirmBodyMany", { count: hosts.length })}
+          {t.plural("library.deleteConfirmBody", hosts.length, {
+            name: one?.friendlyName ?? "",
+          })}
         </p>
         {/*
           The names are listed rather than counted alone: "three computers"

@@ -58,7 +58,7 @@ import {
   type PrefChanged,
 } from "../lib/prefs";
 import { useAgentActivity } from "../state/AgentActivityContext";
-import { useI18n, type Lang, type MessageKey } from "../lib/i18n";
+import { useI18n, type Lang, type Translate } from "../lib/i18n";
 import { IconMonitor, IconStop, IconTerminal, IconX } from "./icons";
 
 /**
@@ -141,8 +141,8 @@ function ageInWords(from: number, now: number, lang: Lang): string {
   return `${unit(Math.floor(m / 60), "hour")} ${unit(m % 60, "minute")}`;
 }
 
-/** The subset of the translator the wall needs. */
-type WallTranslate = (key: MessageKey, vars?: Record<string, string | number | boolean>) => string;
+/** The translator the wall hands to the activity helpers. */
+type WallTranslate = Translate;
 
 /**
  * The chip that says what became of the intent.

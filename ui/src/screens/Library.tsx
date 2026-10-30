@@ -686,7 +686,7 @@ export function Library({
   /** "3 hosts" / "Studio", for toasts about a dropped selection. */
   const describe = useCallback(
     (ids: string[]): string =>
-      ids.length === 1 ? hostName(ids[0]) : t("library.hostsCount", { count: ids.length }),
+      ids.length === 1 ? hostName(ids[0]) : t.plural("library.hostsCount", ids.length),
     [hostName, t],
   );
 
@@ -1264,9 +1264,9 @@ export function Library({
       clearSelection();
       push(
         "info",
-        gone.length === 1
-          ? t("library.deleted", { name: gone[0].friendlyName })
-          : t("library.deletedMany", { count: gone.length }),
+        t.plural("library.deleted", gone.length, {
+          name: gone[0].friendlyName,
+        }),
         {
           label: t("library.undo"),
           run: () => {
@@ -1429,7 +1429,7 @@ export function Library({
       const grouped = ids.filter((id) => hosts.find((h) => h.id === id)?.groupId);
       return [
         {
-          label: t("library.menuRemoveFromGroup", { count: ids.length }),
+          label: t.plural("library.menuRemoveFromGroup", ids.length),
           disabled: grouped.length === 0,
           onSelect: () => dropOnTarget(ids, { kind: "ungroup" }),
         },
@@ -1443,7 +1443,7 @@ export function Library({
           onSelect: () => dropOnTarget(ids, { kind: "tag", id: tag.id }),
         })),
         {
-          label: t("library.menuDeleteMany", { count: ids.length }),
+          label: t.plural("library.menuDelete", ids.length),
           danger: true,
           separatorAbove: true,
           onSelect: () => {
@@ -1456,12 +1456,14 @@ export function Library({
             // any of it has been attempted.
             void (async () => {
               // One host failing to delete does not stop the rest, and the
-              // count in the message is the count that actually went.
-              let deleted = 0;
+              // count in the message is the count that actually went. The
+              // hosts themselves are kept, not just the count, so the
+              // one-host sentence can still name the machine it deleted.
+              const gone: HostProfile[] = [];
               for (const h of doomed) {
                 try {
                   await deleteHost(h.id);
-                  deleted += 1;
+                  gone.push(h);
                 } catch (err) {
                   push(
                     "danger",
@@ -1472,25 +1474,29 @@ export function Library({
                   );
                 }
               }
-              if (deleted === 0) return;
+              if (gone.length === 0) return;
               // Undo restores the profiles and their tags. It cannot bring
               // back the saved passwords: `delete_host` drops the keychain
               // entry, the history rows and the thumbnail, and none of those
               // are recoverable from here. Say so rather than promise more
               // than the button delivers.
-              push("info", t("library.deletedMany", { count: deleted }), {
-                label: t("library.undo"),
-                run: () => {
-                  void (async () => {
-                    for (const h of doomed) await restoreHost(h);
-                  })().catch((err: unknown) =>
-                    push(
-                      "danger",
-                      t("library.restoreFailed", { reason: describeError(err) }),
-                    ),
-                  );
+              push(
+                "info",
+                t.plural("library.deleted", gone.length, { name: gone[0].friendlyName }),
+                {
+                  label: t("library.undo"),
+                  run: () => {
+                    void (async () => {
+                      for (const h of doomed) await restoreHost(h);
+                    })().catch((err: unknown) =>
+                      push(
+                        "danger",
+                        t("library.restoreFailed", { reason: describeError(err) }),
+                      ),
+                    );
+                  },
                 },
-              });
+              );
             })();
           },
         },
@@ -1597,7 +1603,7 @@ export function Library({
         },
       },
       {
-        label: t("library.menuDelete"),
+        label: t.plural("library.menuDelete", 1),
         danger: true,
         separatorAbove: true,
         // The same question the sidebar's trash button asks. Deleting from
@@ -2011,7 +2017,7 @@ export function Library({
           style={{ left: drag.x + 14, top: drag.y + 14 }}
         >
           <IconMonitor size={13} className="text-tertiary" />
-          {drag.ids.length === 1 ? hostName(drag.ids[0]) : t("library.hostsCount", { count: drag.ids.length })}
+          {drag.ids.length === 1 ? hostName(drag.ids[0]) : t.plural("library.hostsCount", drag.ids.length)}
         </div>
       ) : null}
       {ctxMenu ? (
@@ -2136,7 +2142,7 @@ function SelectionBar({
           have a screen reader re-read every control each time the count
           changed, which during a marquee is constantly. */}
       <span className="font-medium text-primary" role="status">
-        {t("library.selectedCount", { count })}
+        {t.plural("library.selectedCount", count)}
       </span>
       <span className="hidden text-xs text-tertiary lg:inline">
         {t("library.dragHint")}

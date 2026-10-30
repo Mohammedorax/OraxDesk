@@ -43,12 +43,12 @@ export function SidebarDeleteButton({
    * does not say which machine is in question, and a machine's name on its
    * own does not say that the icon next to it is the thing that removes it.
    */
-  const name = one
-    ? t("library.deleteSelectedTitle", { name: one.friendlyName })
-    : t("library.deleteSelectedTitleMany", { count: targets.length });
+  const name = t.plural("library.deleteSelectedTitle", targets.length, {
+    name: one?.friendlyName ?? "",
+  });
   const hint = one
     ? one.friendlyName
-    : t("library.deleteSelectedMany", { count: targets.length });
+    : t.plural("library.selectedCount", targets.length);
 
   return (
     <>
