@@ -93,7 +93,6 @@ const SHORTCUTS: Array<[string, MessageKey]> = [
   // pairs already mean something and a near miss here costs a connection.
   [`${modKeyLabel}⌥D`, "about.shortcut.splitRight"],
   [`${modKeyLabel}⌥⇧D`, "about.shortcut.splitDown"],
-  [`${modKeyLabel}⌥←↑↓→`, "about.shortcut.movePane"],
   [`${modKeyLabel}⌥[ / ]`, "about.shortcut.prevPane"],
   [`${modKeyLabel}⌥Z`, "about.shortcut.maximise"],
   [`${modKeyLabel}⌥=`, "about.shortcut.equal"],

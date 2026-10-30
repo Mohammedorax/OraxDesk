@@ -462,7 +462,6 @@ const ar = {
   "about.shortcut.backToLibrary": "عد إلى المكتبة",
   "about.shortcut.splitRight": "قسّم اللوحة إلى اليمين",
   "about.shortcut.splitDown": "قسّم اللوحة إلى الأسفل",
-  "about.shortcut.movePane": "انتقل إلى اللوحة في ذلك الاتجاه",
   "about.shortcut.prevPane": "اللوحة السابقة / التالية",
   "about.shortcut.maximise": "كبّر اللوحة الحالية أو استعدّها",
   "about.shortcut.equal": "امنح كل لوحة حصة متساوية",
@@ -1272,19 +1271,13 @@ const ar = {
   "prefs.tabSession": "الجلسة",
   "prefs.tabInput": "الإدخال",
   "prefs.tabClipboard": "الحافظة",
-  "prefs.tabFiles": "الملفات",
   "prefs.tabSecurity": "الأمان",
   "prefs.tabNetwork": "الشبكة",
   "prefs.tabAgents": "الوكلاء",
 
   // التفضيلات: عام
-  "prefs.confirmDisconnect": "أكّد قبل الفصل",
-  "prefs.confirmDisconnectHint": "اسأل قبل إنهاء جلسة من شريط الأدوات",
-  "prefs.captureThumbs": "التقط صورًا مصغّرة",
   "prefs.livePreviewsHint":
     "أثناء وجود جلسة متصلة، تعرض بطاقتها في المكتبة صورة حيّة (نحو إطارين في الثانية) بدل الصورة المحفوظة",
-  "prefs.captureThumbsHint":
-    "احفظ لقطة صغيرة لكل مضيف بعد الاتصال، لتظهر في شبكة المكتبة",
   "prefs.compactDensity": "كثافة مضغوطة للمكتبة",
   "prefs.compactDensityHint": "بطاقات أصغر وتباعد أقرب، للمكتبات الكبيرة",
 
@@ -1319,11 +1312,6 @@ const ar = {
   "prefs.playRemoteSoundHint": "يُحوَّل صوت الجهاز البعيد إلى هنا بدل أن يبقى يُشغَّل هناك.",
   "prefs.shareClipboardRdp": "شارك حافظتي مع اتصالات سطح المكتب البعيد",
   "prefs.shareClipboardRdpHint": "انسخ النص والصقه في الاتجاهين.",
-  "prefs.reconnectForever": "أعد الاتصال حتى أُغلق النافذة",
-  "prefs.reconnectForeverHint": "واصل إعادة محاولة الجلسات المنقطعة بتباعد متصاعد",
-  "prefs.wolDuringRetry": "أرسل Wake-on-LAN أثناء المحاولات",
-  "prefs.wolDuringRetryHint":
-    "إن بدا مضيف بعنوان MAC محفوظ متوقفًا، فأرسل حزمة سحرية أثناء إعادة الاتصال",
 
   // التفضيلات: الجلسة
   "prefs.hideToolbar": "أخفِ شريط الأدوات الطائر",
@@ -1376,18 +1364,11 @@ const ar = {
   "prefs.clipboardOnPasteHint":
     "يُرسل Cmd/Ctrl+V حافظتك المحلية أولًا، فيلصق البعيد ما نسخته أخيرًا",
 
-  // التفضيلات: الملفات
-  "prefs.confirmOverwrite": "أكّد قبل الكتابة فوق الملفات",
-  "prefs.confirmOverwriteHint": "اسأل حين يستبدل النقل ملفًا موجودًا",
-
   // التفضيلات: الأمان
   "prefs.credentialStorage": "تخزين بيانات الاعتماد",
   "prefs.credentialsIn": "تُحفظ كلمات المرور في: {backend}",
   "prefs.credentialsKeychain":
     "تُحفظ كلمات المرور في خزنة مفاتيح نظامك، لا في ملف.",
-  "prefs.strictPinning": "تثبيت صارم للشهادات",
-  "prefs.strictPinningHint":
-    "ارفض الاتصال حين تتغير شهادة الخادم، حتى تعيد الوثوق بها صراحةً",
 
   // التفضيلات: الشبكة
   "prefs.deepNames": "ابحث عن الأسماء في خدمات أخرى",
@@ -1396,11 +1377,6 @@ const ar = {
   "prefs.probeRdp": "ابحث عن سطح المكتب البعيد أثناء الفحص",
   "prefs.probeRdpHint":
     "يجرّب المنفذ 3389 على كل عنوان أيضًا، فيظهر جهاز ويندوز الذي لا يشغّل خادم VNC. واتصال إضافي واحد لكل عنوان، بالمعدل اللطيف نفسه.",
-  "prefs.mdns": "اكتشف الأجهزة تلقائيًا (mDNS/Bonjour)",
-  "prefs.mdnsHint": "استمع لخوادم VNC التي تعلن عن نفسها على شبكتك المحلية",
-  "prefs.probeOnline": "افحص المضيفين المحفوظين لمعرفة حالتهم",
-  "prefs.probeOnlineHint":
-    "فحص TCP خفيف ومنظَّم يسند النقطة الخضراء على البطاقات",
 
   // التفضيلات: الوكلاء
   "prefs.hideAgentCounts": "أخفِ أعداد الوكلاء",
@@ -1989,7 +1965,6 @@ const en: Record<keyof typeof ar, string> = {
   "about.shortcut.backToLibrary": "Back to the library",
   "about.shortcut.splitRight": "Split the pane to the right",
   "about.shortcut.splitDown": "Split the pane downwards",
-  "about.shortcut.movePane": "Move to the pane in that direction",
   "about.shortcut.prevPane": "Previous / next pane",
   "about.shortcut.maximise": "Maximise the current pane, or restore it",
   "about.shortcut.equal": "Give every pane an equal share",
@@ -2813,19 +2788,13 @@ const en: Record<keyof typeof ar, string> = {
   "prefs.tabSession": "Session",
   "prefs.tabInput": "Input",
   "prefs.tabClipboard": "Clipboard",
-  "prefs.tabFiles": "Files",
   "prefs.tabSecurity": "Security",
   "prefs.tabNetwork": "Network",
   "prefs.tabAgents": "Agents",
 
   // Preferences: general
-  "prefs.confirmDisconnect": "Confirm before disconnecting",
-  "prefs.confirmDisconnectHint": "Ask before ending a session from the toolbar",
-  "prefs.captureThumbs": "Capture thumbnails",
   "prefs.livePreviewsHint":
     "While a session is connected, its library tile shows a live picture (about 2 frames per second) instead of the saved thumbnail",
-  "prefs.captureThumbsHint":
-    "Save a small screenshot of each host after connecting, for the library grid",
   "prefs.compactDensity": "Compact library density",
   "prefs.compactDensityHint": "Smaller tiles and tighter spacing for large libraries",
 
@@ -2861,11 +2830,6 @@ const en: Record<keyof typeof ar, string> = {
     "Sound from the remote computer is redirected here rather than left playing there.",
   "prefs.shareClipboardRdp": "Share my clipboard with Remote Desktop connections",
   "prefs.shareClipboardRdpHint": "Copy and paste text in both directions.",
-  "prefs.reconnectForever": "Reconnect until I close the window",
-  "prefs.reconnectForeverHint": "Keep retrying dropped sessions with exponential backoff",
-  "prefs.wolDuringRetry": "Send Wake-on-LAN during retries",
-  "prefs.wolDuringRetryHint":
-    "If a host with a saved MAC address looks down, send a magic packet while reconnecting",
 
   // Preferences: session
   "prefs.hideToolbar": "Hide the floating toolbar",
@@ -2919,18 +2883,11 @@ const en: Record<keyof typeof ar, string> = {
   "prefs.clipboardOnPasteHint":
     "Cmd/Ctrl+V sends your local clipboard first, so the remote pastes what you copied most recently",
 
-  // Preferences: files
-  "prefs.confirmOverwrite": "Confirm before overwriting files",
-  "prefs.confirmOverwriteHint": "Ask when a transfer would replace an existing file",
-
   // Preferences: security
   "prefs.credentialStorage": "Credential storage",
   "prefs.credentialsIn": "Passwords are stored in: {backend}",
   "prefs.credentialsKeychain":
     "Passwords are stored in your operating system keychain, never in a file.",
-  "prefs.strictPinning": "Strict certificate pinning",
-  "prefs.strictPinningHint":
-    "Refuse to connect when a server's certificate changes, until you explicitly re-trust it",
 
   // Preferences: network
   "prefs.deepNames": "Look up names from other services",
@@ -2939,11 +2896,6 @@ const en: Record<keyof typeof ar, string> = {
   "prefs.probeRdp": "Look for Remote Desktop while scanning",
   "prefs.probeRdpHint":
     "Also tries port 3389 on each address, so a Windows machine that runs no VNC server still appears. One extra connection per address, at the same polite rate as the rest of the scan.",
-  "prefs.mdns": "Discover computers automatically (mDNS/Bonjour)",
-  "prefs.mdnsHint": "Listen for VNC servers advertising themselves on your local network",
-  "prefs.probeOnline": "Probe saved hosts for online status",
-  "prefs.probeOnlineHint":
-    "A lightweight, throttled TCP check that powers the green dot on tiles",
 
   // Preferences: agents
   "prefs.hideAgentCounts": "Hide the agent counts",

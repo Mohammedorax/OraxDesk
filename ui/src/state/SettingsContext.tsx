@@ -35,7 +35,6 @@ export interface Settings {
   sortKey: SortKey;
   compact: boolean;
   onboarded: boolean;
-  probeOnline: boolean;
   /**
    * Draw the remote machine's own pointer.
    *
@@ -82,7 +81,6 @@ export const DEFAULTS: Settings = {
   sortKey: "name",
   compact: false,
   onboarded: false,
-  probeOnline: true,
   showRemoteCursor: true,
   localCursor: "standard",
   windowMode: "tabs",

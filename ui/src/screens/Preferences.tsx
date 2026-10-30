@@ -37,7 +37,7 @@ import { IconX } from "../components/icons";
 import { Select } from "../components/primitives";
 
 const TABS = [
-  "General", "Appearance", "Connections", "Session", "Input", "Clipboard", "Files", "Security", "Network", "Agents",
+  "General", "Appearance", "Connections", "Session", "Input", "Clipboard", "Security", "Network", "Agents",
 ] as const;
 type Tab = (typeof TABS)[number];
 
@@ -55,7 +55,6 @@ const TAB_LABELS: Record<Tab, MessageKey> = {
   Session: "prefs.tabSession",
   Input: "prefs.tabInput",
   Clipboard: "prefs.tabClipboard",
-  Files: "prefs.tabFiles",
   Security: "prefs.tabSecurity",
   Network: "prefs.tabNetwork",
   Agents: "prefs.tabAgents",
@@ -176,10 +175,6 @@ export function Preferences({ onClose }: { onClose: () => void }): ReactNode {
   const { livePreviews, setLivePreviews } = useSessions();
   const [credBackend, setCredBackend] = useState<string | null>(null);
 
-  const [confirmDisconnect, setConfirmDisconnect] = usePref("confirmDisconnect", true);
-  const [reconnectForever, setReconnectForever] = usePref("reconnectForever", true);
-  const [wolDuringRetry, setWolDuringRetry] = usePref("wolDuringRetry", false);
-  const [captureThumbs, setCaptureThumbs] = usePref("captureThumbs", true);
   const [naturalScroll, setNaturalScroll] = usePref(PREF_NATURAL_SCROLL, true);
   const [matchLocalLayout, setMatchLocalLayout] = usePref(PREF_MATCH_LOCAL_LAYOUT, false);
   // Store-backed (not localStorage): Rust reads these at connect time.
@@ -199,9 +194,6 @@ export function Preferences({ onClose }: { onClose: () => void }): ReactNode {
   const [clipboardOnPaste, setClipboardOnPaste] = usePref(PREF_CLIPBOARD_ON_PASTE, true);
   const [forwardInsertedText, setForwardInsertedText] = usePref(PREF_FORWARD_INSERTED_TEXT, true);
   const [typeLocalPaste, setTypeLocalPaste] = usePref(PREF_TYPE_LOCAL_PASTE, true);
-  const [confirmFileOverwrite, setConfirmFileOverwrite] = usePref("confirmFileOverwrite", true);
-  const [strictTofu, setStrictTofu] = usePref("strictTofu", true);
-  const [mdnsEnabled, setMdnsEnabled] = usePref("mdnsEnabled", true);
   const [hideToolbar, setHideToolbar] = usePref(PREF_HIDE_TOOLBAR, false);
   const [zoomLocked, setZoomLocked] = usePref(PREF_ZOOM_LOCKED, false);
   const [edgePan, setEdgePan] = usePref(PREF_EDGE_PAN, true);
@@ -275,18 +267,6 @@ export function Preferences({ onClose }: { onClose: () => void }): ReactNode {
           <div className="flex-1 space-y-5 overflow-y-auto p-5">
             {tab === "General" ? (
               <>
-                <Toggle
-                  label={t("prefs.confirmDisconnect")}
-                  description={t("prefs.confirmDisconnectHint")}
-                  value={confirmDisconnect}
-                  onChange={setConfirmDisconnect}
-                />
-                <Toggle
-                  label={t("prefs.captureThumbs")}
-                  description={t("prefs.captureThumbsHint")}
-                  value={captureThumbs}
-                  onChange={setCaptureThumbs}
-                />
                 <Toggle
                   label={t("library.livePreviews")}
                   description={t("prefs.livePreviewsHint")}
@@ -416,18 +396,6 @@ export function Preferences({ onClose }: { onClose: () => void }): ReactNode {
                     setRdpDefault("clipboard", on);
                     setRdpClipboard(on);
                   }}
-                />
-                <Toggle
-                  label={t("prefs.reconnectForever")}
-                  description={t("prefs.reconnectForeverHint")}
-                  value={reconnectForever}
-                  onChange={setReconnectForever}
-                />
-                <Toggle
-                  label={t("prefs.wolDuringRetry")}
-                  description={t("prefs.wolDuringRetryHint")}
-                  value={wolDuringRetry}
-                  onChange={setWolDuringRetry}
                 />
               </>
             ) : null}
@@ -593,16 +561,6 @@ export function Preferences({ onClose }: { onClose: () => void }): ReactNode {
                 />
               </>
             ) : null}
-            {tab === "Files" ? (
-              <>
-                <Toggle
-                  label={t("prefs.confirmOverwrite")}
-                  description={t("prefs.confirmOverwriteHint")}
-                  value={confirmFileOverwrite}
-                  onChange={setConfirmFileOverwrite}
-                />
-              </>
-            ) : null}
             {tab === "Security" ? (
               <>
                 <div>
@@ -613,12 +571,6 @@ export function Preferences({ onClose }: { onClose: () => void }): ReactNode {
                       : t("prefs.credentialsKeychain")}
                   </p>
                 </div>
-                <Toggle
-                  label={t("prefs.strictPinning")}
-                  description={t("prefs.strictPinningHint")}
-                  value={strictTofu}
-                  onChange={setStrictTofu}
-                />
               </>
             ) : null}
             {tab === "Network" ? (
@@ -634,20 +586,6 @@ export function Preferences({ onClose }: { onClose: () => void }): ReactNode {
                   description={t("prefs.probeRdpHint")}
                   value={probeRdp}
                   onChange={setProbeRdp}
-                />
-                <Toggle
-                  label={t("prefs.mdns")}
-                  // Unchanged, and deliberately: mDNS discovery really is VNC
-                  // only. There is no Bonjour service for Remote Desktop.
-                  description={t("prefs.mdnsHint")}
-                  value={mdnsEnabled}
-                  onChange={setMdnsEnabled}
-                />
-                <Toggle
-                  label={t("prefs.probeOnline")}
-                  description={t("prefs.probeOnlineHint")}
-                  value={settings.probeOnline}
-                  onChange={(v) => update({ probeOnline: v })}
                 />
               </>
             ) : null}
