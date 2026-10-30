@@ -44,6 +44,12 @@ tokio = { version = "1", features = ["full", "test-util"] }
 # Integration tests build real zlib/Tight/ZRLE wire data in the mock RFB server.
 flate2 = { workspace = true }
 criterion = { version = "0.5", features = ["html_reports"] }
+# The trust-gate tests (`src/session/connection/trust_gate.rs`) drive a real
+# TLS handshake against a mock VeNCrypt X509None server, the only
+# credential-less first-contact path. Both crates are already in the tree
+# through `vnc-transport`; this is a test-only edge, not a new dependency.
+rustls = { workspace = true }
+tokio-rustls = { workspace = true }
 
 [[bench]]
 name = "decode"

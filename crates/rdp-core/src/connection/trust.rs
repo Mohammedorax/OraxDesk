@@ -17,12 +17,15 @@
 //!
 //! # The ordering, and why it differs from the VNC path
 //!
-//! The prompt completes **before** CredSSP starts. `vnc-core` emits its
-//! prompt and carries straight on
+//! The prompt completes **before** CredSSP starts. `vnc-core` used to emit
+//! its prompt and carry straight on
 //! (`crates/vnc-core/src/session/connection.rs:257` sends
-//! `SessionEvent::CertificatePrompt` and the next statement is
+//! `SessionEvent::CertificatePrompt` and the next statement was
 //! `emit_state(Negotiating)`), which that file records as a pre existing bug.
-//! For RDP the ordering is not a nicety: CredSSP hands the user's plaintext
+//! That side now parks too: the credential-less VeNCrypt path raises its own
+//! trust question and waits for the answer before `Negotiating`, so both
+//! clients hold this invariant. For RDP the ordering is not a nicety:
+//! CredSSP hands the user's plaintext
 //! password, encrypted under the session key, to whoever holds the private
 //! key of the certificate we accepted (MS-CSSP 3.1.5). Accepting afterwards
 //! would be accepting a fact.

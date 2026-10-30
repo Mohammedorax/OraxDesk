@@ -4,7 +4,7 @@
 use std::time::{Duration, Instant};
 
 use tokio::io::{AsyncReadExt, BufReader};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 
 use crate::error::{Result, VncError};
@@ -12,8 +12,8 @@ use crate::proto::{self, messages, version::NegotiatedVersion, ProtocolVersion};
 use crate::quality::QualityResolve;
 use crate::security::{CredentialAsk, CredentialSource, MAX_CREDENTIAL_ATTEMPTS};
 use crate::types::{
-    ClientCommand, ColorDepth, ConnectOptions, Credentials, PixelFormat, QualityPreset, Rect,
-    SecurityType, SessionEvent, SessionState,
+    ClientCommand, ColorDepth, ConnectOptions, Credentials, PinScheme, PixelFormat, QualityPreset,
+    Rect, SecurityType, SessionEvent, SessionState,
 };
 use vnc_transport::BoxedStream;
 
@@ -201,6 +201,7 @@ async fn establish(
     settings: &SessionSettings,
     events: &mpsc::Sender<SessionEvent>,
     creds: &CredentialSource<'_>,
+    trust_ask: &mpsc::Sender<TrustAsk>,
 ) -> Result<Established> {
     let mut tcp = open_stream(options, events).await?;
 
@@ -250,6 +251,20 @@ async fn establish(
     // Skip the handshake that ALREADY asked: a key the credentials were gated
     // on was approved before anything was sent, and asking for it again here
     // would be the same dialog twice for one connection.
+    //
+    // What is left is the credential-less first contact (VeNCrypt's `*None`
+    // subtypes: a server key and nothing else on the wire). It used to EMIT
+    // the prompt and carry straight on to `Negotiating`, which is the
+    // pre-existing bug `rdp-core` names at
+    // `crates/rdp-core/src/connection/trust.rs:20-24`: emitting a prompt is
+    // not asking a question. The RDP path parks on the answer because CredSSP
+    // would otherwise hand the password to whoever holds the key; here the
+    // secret is smaller (only ClientInit and the format negotiation) but the
+    // invariant is the same one — nothing that depends on the server's
+    // identity leaves the client until the person has approved that identity.
+    // So the handshake raises the question on `trust_ask` and PARKS on the
+    // reply; a refusal unwinds the attempt as an untrusted certificate rather
+    // than continuing over an unapproved stream.
     if let Some(crate::security::ServerIdentity {
         scheme,
         decision:
@@ -260,16 +275,31 @@ async fn establish(
         surfaced: false,
     }) = trust
     {
-        emit(
-            events,
-            SessionEvent::CertificatePrompt {
-                fingerprint,
+        let (reply, answer) = oneshot::channel();
+        if trust_ask
+            .send(TrustAsk {
+                fingerprint: fingerprint.clone(),
                 subject,
-                is_change: false,
                 scheme,
-            },
-        )
-        .await?;
+                reply,
+            })
+            .await
+            .is_err()
+        {
+            // Nobody left to answer (the attempt is already unwinding): the
+            // key cannot be approved, so it is refused.
+            return Err(VncError::CertificateUntrusted(format!(
+                "{fingerprint} has not been approved and there is nobody to ask"
+            )));
+        }
+        // The served side classifies every refusal and pauses the connect
+        // budget while the dialog is open; a reply that never comes means the
+        // question lost its answer and the key stays unapproved.
+        if !answer.await.unwrap_or(false) {
+            return Err(VncError::CertificateUntrusted(format!(
+                "{fingerprint} was not approved"
+            )));
+        }
     }
 
     emit_state(events, SessionState::Negotiating).await?;
@@ -321,6 +351,22 @@ async fn establish(
 type ApprovedKeys = std::sync::Arc<
     parking_lot::Mutex<std::collections::HashSet<(crate::types::PinScheme, String)>>,
 >;
+
+/// Whether an answer to a certificate prompt names the question that was
+/// asked.
+///
+/// The fingerprint goes through [`vnc_transport::normalize_fingerprint`]
+/// (strip separators, uppercase) so an answer that round tripped through a UI
+/// that dropped the colons still matches, and the scheme has to be the one the
+/// prompt was raised under: an approval for the VeNCrypt key must not vouch
+/// for the RA2 key of the same host, or the other way round. One function,
+/// shared by the credential gate's trust branch below and the credential-less
+/// one in [`serve_trust_ask`], so the two comparisons cannot drift apart.
+fn approval_matches(asked: (PinScheme, &str), answered: (PinScheme, &str)) -> bool {
+    answered.0 == asked.0
+        && vnc_transport::normalize_fingerprint(answered.1)
+            == vnc_transport::normalize_fingerprint(asked.1)
+}
 /// Answer one [`CredentialAsk`] by asking the user.
 ///
 /// Emits [`SessionEvent::CredentialsRequired`] and then pumps `commands`, the
@@ -401,9 +447,10 @@ async fn serve_credential_ask(
                         // The answer must name the key question and the scheme
                         // asked under. A stale approval from an earlier dialog,
                         // or one for the other protocol's key, approves nothing.
-                        let same = answered_scheme == *scheme
-                            && vnc_transport::normalize_fingerprint(&answered)
-                                == vnc_transport::normalize_fingerprint(fingerprint);
+                        let same = approval_matches(
+                            (*scheme, fingerprint.as_str()),
+                            (answered_scheme, answered.as_str()),
+                        );
                         if same {
                             tracing::info!(permanent, %fingerprint, "the user approved the server key");
                             approved.lock().insert(key);
@@ -467,6 +514,107 @@ async fn serve_credential_ask(
     }
 }
 
+/// A pending certificate-approval question raised from inside `establish`,
+/// for a first contact that carries no credential exchange at all.
+///
+/// The session answers it by sending `true` on [`reply`](Self::reply) once the
+/// person has approved the key the prompt showed. Every other outcome (a
+/// dismissal, a disconnect, a gone shell) is an error from
+/// [`serve_trust_ask`], which unwinds the attempt — the same split
+/// `rdp-core`'s `connection::trust` module holds, where no path can approve a
+/// key without an explicit answer.
+#[derive(Debug)]
+struct TrustAsk {
+    fingerprint: String,
+    subject: String,
+    scheme: PinScheme,
+    reply: oneshot::Sender<bool>,
+}
+
+/// Emit the certificate prompt for a credential-less first contact and pump
+/// `commands` until the person answers.
+///
+/// This is the credential-less half of the gate [`serve_credential_ask`]
+/// already runs for the subtypes that put credentials on the wire: VeNCrypt's
+/// `*None` subtypes authenticate the server key and nothing else, so nothing
+/// carried the question and `establish` used to emit the prompt and move on —
+/// the bug `rdp-core` names at `crates/rdp-core/src/connection/trust.rs:20-24`.
+/// Same shape as both existing gates: emit [`SessionEvent::CertificatePrompt`], then pump
+/// the command channel, answering only an approval that names this key under
+/// this scheme ([`approval_matches`], the same comparison the credential
+/// branch uses). Refusal, dismissal, disconnect, teardown and a closed
+/// channel all unwind the attempt; nothing is sent over the unapproved
+/// stream, because `establish` does not resume until this returns `Ok`.
+async fn serve_trust_ask(
+    ask: TrustAsk,
+    events: &mpsc::Sender<SessionEvent>,
+    commands: &mut mpsc::Receiver<ClientCommand>,
+    cancel: &CancellationToken,
+) -> Result<()> {
+    let TrustAsk {
+        fingerprint,
+        subject,
+        scheme,
+        reply,
+    } = ask;
+
+    tracing::warn!(%fingerprint, "asking the user to approve the server key");
+    emit(
+        events,
+        SessionEvent::CertificatePrompt {
+            fingerprint: fingerprint.clone(),
+            subject,
+            is_change: false,
+            scheme,
+        },
+    )
+    .await?;
+
+    loop {
+        let cmd = tokio::select! {
+            biased;
+            () = cancel.cancelled() => return Err(VncError::Cancelled),
+            cmd = commands.recv() => cmd,
+        };
+        match cmd {
+            // The shell dropped the handle: nobody can answer, so the key
+            // stays unapproved and the attempt unwinds.
+            None => return Err(VncError::Cancelled),
+            Some(ClientCommand::TrustCertificate {
+                fingerprint: answered,
+                permanent,
+                scheme: answered_scheme,
+            }) => {
+                if approval_matches((scheme, fingerprint.as_str()), (answered_scheme, &answered)) {
+                    tracing::info!(permanent, %fingerprint, "the user approved the server key");
+                    let _ = reply.send(true);
+                    return Ok(());
+                }
+                // An answer to a different question — a stale dialog, or the
+                // other protocol's key for this host — approves nothing, and
+                // this attempt ends rather than continuing over a key nobody
+                // approved.
+                tracing::warn!("an approval arrived for a different key or scheme; refusing it");
+                return Err(VncError::CertificateUntrusted(format!(
+                    "{fingerprint} was not approved"
+                )));
+            }
+            // The dialog's cancel button, and the disconnect a user who
+            // closes the window instead produces. Both mean the same thing:
+            // the key was not approved, so nothing more may be sent.
+            Some(ClientCommand::CancelCredentials) | Some(ClientCommand::Disconnect) => {
+                return Err(VncError::CertificateUntrusted(format!(
+                    "{fingerprint} was not approved"
+                )));
+            }
+            // Input, clipboard and quality commands are meaningless
+            // mid-handshake; drop them and keep waiting, as the credential
+            // path does.
+            Some(_) => continue,
+        }
+    }
+}
+
 /// Establish a connection, asking the user for credentials when the handshake
 /// needs them and re-asking when the server rejects what they typed.
 ///
@@ -499,6 +647,13 @@ async fn establish_interactive(
     loop {
         // One in-flight question at a time; the handshake is linear.
         let (ask_tx, mut ask_rx) = mpsc::channel::<CredentialAsk>(1);
+        // The certificate question rides a channel of its own rather than
+        // widening `CredentialAsk`: a credential-less first contact (VeNCrypt
+        // `*None`) must raise ONLY `SessionEvent::CertificatePrompt`, and a
+        // credential-shaped ask with no credentials under it would make the
+        // served side raise `CredentialsRequired` for a subtype that needs
+        // none. See `serve_trust_ask`.
+        let (trust_tx, mut trust_rx) = mpsc::channel::<TrustAsk>(1);
         let source = CredentialSource::interactive(
             &ask_tx,
             attempt,
@@ -507,7 +662,7 @@ async fn establish_interactive(
         );
 
         let result = {
-            let attempt_fut = establish(options, settings, events, &source);
+            let attempt_fut = establish(options, settings, events, &source, &trust_tx);
             tokio::pin!(attempt_fut);
             // The budget for the WHOLE connect, not for one step of it.
             //
@@ -517,10 +672,12 @@ async fn establish_interactive(
             // for ever. No error, no timeout, no reconnect attempt, and
             // nothing on screen but the word "Authenticating".
             //
-            // The budget is PAUSED while the person is typing a password.
-            // Their minute is not the connect stalling, and a connect that
-            // gave up on a slow typist would be the worst possible answer
-            // to a prompt that asked for one.
+            // The budget is PAUSED while the person is typing a password,
+            // and while they are reading a server certificate: their minute
+            // is not the connect stalling, and a connect that gave up on a
+            // slow typist would be the worst possible answer to a prompt that
+            // asked for one. The same holds for a fingerprint being compared
+            // against the host's docs before it is approved.
             let mut deadline = tokio::time::Instant::now() + options.connect_deadline;
             loop {
                 tokio::select! {
@@ -532,6 +689,14 @@ async fn establish_interactive(
                     Some(ask) = ask_rx.recv() => {
                         let asked = tokio::time::Instant::now();
                         serve_credential_ask(ask, events, commands, cancel, &approved).await?;
+                        deadline += tokio::time::Instant::now() - asked;
+                    }
+                    // The credential-less trust question: same pause, same
+                    // parking. `establish` does not resume (and ClientInit
+                    // does not leave the client) until it is answered.
+                    Some(ask) = trust_rx.recv() => {
+                        let asked = tokio::time::Instant::now();
+                        serve_trust_ask(ask, events, commands, cancel).await?;
                         deadline += tokio::time::Instant::now() - asked;
                     }
                     _ = tokio::time::sleep_until(deadline) => {
@@ -687,3 +852,8 @@ mod tests {
         assert_eq!(pixel_format_for(ColorDepth::Rgb111), PixelFormat::rgb222());
     }
 }
+
+// The credential-less trust gate, driven end to end against a mock VeNCrypt
+// X509None server; test-only, and large enough for its own file.
+#[cfg(test)]
+mod trust_gate;
