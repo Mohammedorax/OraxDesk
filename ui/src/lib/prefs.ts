@@ -64,14 +64,59 @@ export const PREF_ZOOM_LOCKED = "zoomLocked";
  */
 export const PREF_EDGE_PAN = "edgePan";
 /**
- * Take the floating toolbar out of the session view altogether.
+ * Start the session view with the floating toolbar put away.
  *
- * Everything it offers is also on the View and Session menus, which is what
- * makes switching it off a real choice rather than a loss: some people would
- * rather have nothing at all over the remote desktop, and a bar that fades to
- * a chevron still leaves the chevron. Off by default.
+ * Put away means the bar is folded to its chevron, not gone: the chevron is
+ * the way back, and so is the show/hide chord. That distinction is the whole
+ * point of the setting — an earlier build took the bar away completely, and
+ * with it went every control that could bring it back from inside the
+ * session, which is how a person ends up with a session that has no toolbar
+ * and no way to find one. Off by default.
  */
 export const PREF_HIDE_TOOLBAR = "hideToolbar";
+
+/**
+ * Marker for the one-time repair of that older "gone completely" state.
+ *
+ * Kept apart from {@link PREF_HIDE_TOOLBAR} because writing that value is also
+ * how a person hides the bar now: a repair that keyed off "the value is 1"
+ * would undo the choice every single session.
+ */
+const PREF_TOOLBAR_REPAIRED = "toolbarVisibilityRepaired";
+
+/**
+ * Is the session toolbar put away?
+ *
+ * Every read goes through here rather than through [`readBoolPref`] so the
+ * repair below cannot be missed by one call site out of four: the session
+ * view, the library shell, the native menu and the Preferences switch all ask
+ * the same question and all have to give the same answer.
+ *
+ * The repair itself runs once per install, on the first read. Installs that
+ * arrived from the build that removed the bar outright stored "hidden", and
+ * honouring that stored answer is exactly what leaves them with no toolbar:
+ * the menu item that shows it again was disabled while it was hidden and the
+ * chord went with it. So that stored answer is discarded once, and from then
+ * on the switch the user now has on the bar itself is the last word — it is
+ * written straight back to the same key.
+ */
+export function readToolbarHidden(): boolean {
+  try {
+    if (localStorage.getItem(prefStorageKey(PREF_TOOLBAR_REPAIRED)) === null) {
+      // Written straight to storage rather than through `writeBoolPref`: this
+      // runs while the session view is building its first state, and a change
+      // event dispatched from inside a render is a state update in someone
+      // else's render. Nothing is listening for this key that has to hear it
+      // here; every reader calls this function.
+      localStorage.setItem(prefStorageKey(PREF_HIDE_TOOLBAR), "0");
+      localStorage.setItem(prefStorageKey(PREF_TOOLBAR_REPAIRED), "1");
+    }
+  } catch {
+    /* storage unavailable: there is nothing stored to repair either way */
+  }
+  return readBoolPref(PREF_HIDE_TOOLBAR, false);
+}
+
 /**
  * Take the agent counts out of the activity strip.
  *

@@ -17,6 +17,7 @@ import {
   PREF_NATURAL_SCROLL,
   PREF_ZOOM_LOCKED,
   readBoolPref,
+  readToolbarHidden,
   writeBoolPref,
 } from "../lib/prefs";
 import { useAgentActivity } from "../state/AgentActivityContext";
@@ -198,7 +199,10 @@ export function Preferences({ onClose }: { onClose: () => void }): ReactNode {
   const [clipboardOnPaste, setClipboardOnPaste] = usePref(PREF_CLIPBOARD_ON_PASTE, true);
   const [forwardInsertedText, setForwardInsertedText] = usePref(PREF_FORWARD_INSERTED_TEXT, true);
   const [typeLocalPaste, setTypeLocalPaste] = usePref(PREF_TYPE_LOCAL_PASTE, true);
-  const [hideToolbar, setHideToolbar] = usePref(PREF_HIDE_TOOLBAR, false);
+  // `readToolbarHidden` rather than the key's plain default: the switch has to
+  // show what the session window will actually do, which for an install that
+  // lost its toolbar to the old "hide it for good" behaviour is "shown".
+  const [hideToolbar, setHideToolbar] = usePref(PREF_HIDE_TOOLBAR, readToolbarHidden());
   const [zoomLocked, setZoomLocked] = usePref(PREF_ZOOM_LOCKED, false);
   const [edgePan, setEdgePan] = usePref(PREF_EDGE_PAN, true);
   const [hideAgentStatus, setHideAgentStatus] = usePref(PREF_HIDE_AGENT_STATUS, false);

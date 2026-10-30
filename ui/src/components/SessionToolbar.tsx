@@ -1,9 +1,10 @@
 /** Floating pill session toolbar (PRD/05 §2): draggable anywhere in the window
  *  and docking flush when dropped near an edge, never able to leave the
  *  viewport, auto-fades to a chevron after 3s of pointer OR key idle or when
- *  collapsed by hand, recalled by hover-at-edge or Ctrl/Cmd+Shift+M, which
- *  also puts it away again. Its position is remembered and shared by every
- *  mounted toolbar. */
+ *  put away by hand (which is remembered for the next session, unlike the
+ *  idle fade), recalled by its chevron or Ctrl/Cmd+Shift+M, which also puts it
+ *  away again. Its position is remembered and shared by every mounted
+ *  toolbar. */
 import {
   useCallback,
   useEffect,
@@ -144,6 +145,18 @@ export interface SessionToolbarProps {
   captureStatus: CaptureStatus;
   viewOnly: boolean;
   recallSignal: number;
+  /**
+   * The bar is put away: folded to its chevron, which is also the control
+   * that brings it back. Not "not rendered" — a bar that is not there cannot
+   * offer the way back, which is the bug this state exists to fix.
+   */
+  hidden: boolean;
+  /**
+   * A deliberate show/hide, reported so the choice outlives this session.
+   * The idle timer's own folding never comes through here: that is the bar
+   * getting out of the way, not the person putting it away.
+   */
+  onHiddenChange: (hidden: boolean) => void;
   onScalingMode: (m: ScalingMode) => void;
   onZoom: (z: number) => void;
   zoomLocked: boolean;
@@ -232,7 +245,22 @@ export function SessionToolbar(props: SessionToolbarProps): ReactNode {
     };
   }, []);
 
-  const [collapsed, setCollapsed] = useState(false);
+  /**
+   * Folded to the chevron. It starts folded when the stored choice says so,
+   * and follows that choice when the View menu or Preferences changes it
+   * underneath a mounted bar.
+   *
+   * Kept as its own state rather than derived from the prop because the idle
+   * timer folds the bar without that being a choice: deriving would put a
+   * bar that folded itself back out on the next render.
+   */
+  const [collapsed, setCollapsed] = useState(props.hidden);
+  useEffect(() => {
+    setCollapsed(props.hidden);
+  }, [props.hidden]);
+  /** Through a ref: the parent rebuilds this callback on every render. */
+  const onHiddenChangeRef = useRef(props.onHiddenChange);
+  onHiddenChangeRef.current = props.onHiddenChange;
   const [openMenu, setOpenMenu] = useState<string | null>(null);
   const idleTimer = useRef(0);
   const dragging = useRef(false);
@@ -339,14 +367,37 @@ export function SessionToolbar(props: SessionToolbarProps): ReactNode {
     );
   });
 
-  const collapse = useCallback((): void => {
+  /**
+   * Fold to the chevron because nobody is using it.
+   *
+   * Auto-hide is not a choice, so it never reaches `onHiddenChange`: a bar
+   * that folded itself while the person was away must be out again on the
+   * next connect, the same way it was before they looked away.
+   */
+  const fold = useCallback((): void => {
     if (collapsedRef.current) return;
     window.clearTimeout(idleTimer.current);
     setOpenMenu(null);
     setCollapsed(true);
   }, []);
 
-  const expand = useCallback((): void => setCollapsed(false), []);
+  /**
+   * Put the bar away by hand, and say so: this one is remembered.
+   *
+   * The chevron drawn in its place is the way back, and the chord is the
+   * other; both end in `show`. Reaching this from the idle timer would make
+   * every unattended session start collapsed next time, which is why the
+   * timer uses `fold` instead.
+   */
+  const hide = useCallback((): void => {
+    fold();
+    onHiddenChangeRef.current(true);
+  }, [fold]);
+
+  const show = useCallback((): void => {
+    setCollapsed(false);
+    onHiddenChangeRef.current(false);
+  }, []);
 
   /**
    * True while the pointer is over the toolbar.
@@ -364,9 +415,9 @@ export function SessionToolbar(props: SessionToolbarProps): ReactNode {
       // where it is. Activity re-arms this, and so does the timer below when
       // the grace period ends.
       if (freshRef.current) return;
-      if (!pinned && !dragging.current && !hovering.current) collapse();
+      if (!pinned && !dragging.current && !hovering.current) fold();
     }, IDLE_MS);
-  }, [pinned, collapse]);
+  }, [pinned, fold]);
 
   // The grace period ends on its own, and the bar starts behaving normally
   // from there whether the person has touched anything or not.
@@ -404,20 +455,23 @@ export function SessionToolbar(props: SessionToolbarProps): ReactNode {
   /**
    * Show/hide via the hotkey (the parent bumps `recallSignal`). It toggles, so
    * the chord that calls the toolbar back also puts it away; the effect has to
-   * act only on a genuine bump, since `armIdle` and `collapsed` change its
+   * act only on a genuine bump, since `fold` and `collapsed` change its
    * identity too and re-running on those would flip the toolbar unbidden.
+   *
+   * Both directions are the remembered kind: the chord is as deliberate as the
+   * button, and a bar called back this way is still there next session.
    */
   const lastRecall = useRef(props.recallSignal);
   useEffect(() => {
     if (props.recallSignal === lastRecall.current) return;
     lastRecall.current = props.recallSignal;
     if (collapsed) {
-      expand();
+      show();
       armIdle();
     } else {
-      collapse();
+      hide();
     }
-  }, [props.recallSignal, collapsed, expand, collapse, armIdle]);
+  }, [props.recallSignal, collapsed, show, hide, armIdle]);
 
   useEffect(() => {
     if (openMenu === null) return;
@@ -613,7 +667,7 @@ export function SessionToolbar(props: SessionToolbarProps): ReactNode {
             // A drag that began here also ends in a click; only a real one
             // reopens the toolbar. Keyboard activation fires no pointer
             // events, so the flag is false and Enter/Space still work.
-            if (!draggedRef.current) expand();
+            if (!draggedRef.current) show();
           }}
         >
           <IconChevronDown size={14} className={menuBelow ? "" : "rotate-180"} />
@@ -831,8 +885,13 @@ export function SessionToolbar(props: SessionToolbarProps): ReactNode {
         </ToolButton>
 
         {/* Auto-hide only ever arrives on its own schedule, and a pinned
-            toolbar never hides at all, so put it away by hand from here. */}
-        <ToolButton label={t("session.collapseToolbar", { chord: `${modKeyLabel}⇧M` })} onClick={collapse}>
+            toolbar never hides at all, so put it away by hand from here.
+
+            This one is the remembered show/hide: the chevron it leaves behind
+            is the way back, and the chord does the same thing. It is the only
+            control on the bar whose state outlives the session, which is why
+            its label says so rather than repeating "collapse". */}
+        <ToolButton label={t("session.hideToolbar", { chord: `${modKeyLabel}⇧M` })} onClick={hide}>
           <IconChevronDown size={15} className={menuBelow ? "rotate-180" : ""} />
         </ToolButton>
 

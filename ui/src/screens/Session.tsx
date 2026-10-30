@@ -72,6 +72,7 @@ import {
   PREF_EDGE_PAN,
   PREF_ZOOM_LOCKED,
   readBoolPref,
+  readToolbarHidden,
   writeBoolPref,
 } from "../lib/prefs";
 import {
@@ -363,12 +364,29 @@ function SessionView({
    */
   const [menuNonce, setMenuNonce] = useState(0);
   /**
-   * Preferences ▸ Session can take the floating toolbar away entirely, in
-   * which case the View and Session menus are the only way to any of it. Read
-   * on mount and re-read on focus, the same way the input preferences are: the
-   * window that changed it is not this one.
+   * The bar is put away rather than gone.
+   *
+   * Everything the toolbar offers is also on the View and Session menus, so
+   * folding it was always meant to be a choice rather than a loss. It is a
+   * `hidden` state on the bar itself, not an unmount, because a bar that is
+   * not there cannot offer the one control that brings it back — which is
+   * how an install that had switched it off ended up with no toolbar and no
+   * way to find one. Read on mount and re-read on focus, the same way the
+   * input preferences are: the window that changed it is not this one.
    */
-  const [hideToolbar, setHideToolbar] = useState(() => readBoolPref(PREF_HIDE_TOOLBAR, false));
+  const [hideToolbar, setHideToolbar] = useState(readToolbarHidden);
+  /**
+   * Show or hide the bar, and remember it.
+   *
+   * The pref is written before the state so the next session starts the way
+   * this one was left, and so the other window (Preferences, or the native
+   * menu of a session in another window) reads the new answer rather than the
+   * one it had. Read back by whoever asks next; nothing here caches.
+   */
+  const setToolbarHidden = useCallback((hidden: boolean): void => {
+    writeBoolPref(PREF_HIDE_TOOLBAR, hidden);
+    setHideToolbar(hidden);
+  }, []);
   /**
    * Latest values for the native-menu listener below. It is registered once
    * per visible view, while these callbacks are defined further down and are
@@ -666,7 +684,7 @@ function SessionView({
       inputRef.current?.setNaturalScroll(readBoolPref(PREF_NATURAL_SCROLL, true));
       inputRef.current?.setForwardInsertedText(readBoolPref(PREF_FORWARD_INSERTED_TEXT, true));
       inputRef.current?.setTypeLocalPaste(readBoolPref(PREF_TYPE_LOCAL_PASTE, true));
-      setHideToolbar(readBoolPref(PREF_HIDE_TOOLBAR, false));
+      setHideToolbar(readToolbarHidden());
       if (sid) {
         const matchLocal = readBoolPref(PREF_MATCH_LOCAL_LAYOUT, false);
         void safeInvoke(
@@ -1762,9 +1780,7 @@ function SessionView({
       case "menu:hide-toolbar": {
         // Read back rather than flipping the local copy: this is a global
         // preference and another window may have changed it since.
-        const next = !readBoolPref(PREF_HIDE_TOOLBAR, false);
-        writeBoolPref(PREF_HIDE_TOOLBAR, next);
-        setHideToolbar(next);
+        setToolbarHidden(!readToolbarHidden());
         break;
       }
       case "menu:scale-fit":
@@ -2002,16 +2018,20 @@ function SessionView({
         aria-label={t("session.remoteDesktopAria", { name: session.desktopName })}
       />
 
-      {/* Preferences ▸ Session can take the bar away; the View and Session
-          menus carry the same options either way.
+      {/* Preferences ▸ Session, the View menu and the bar's own toggle all
+          put the bar away rather than taking it out of the tree, so the
+          chevron and the capture badge survive and there is always one
+          control on screen whose job is to bring it back.
 
           Only the focused view draws one. The bar's position is a single
           app-wide preference, so a split would otherwise stack one toolbar per
           pane at the same point, and every button on it acts on a particular
           session: four disconnect buttons in a heap, no way to tell whose is
           whose. Following the focus gives the same answer the menu bar does. */}
-      {hideToolbar || !owns ? null : (
+      {owns ? (
         <SessionToolbar
+          hidden={hideToolbar}
+          onHiddenChange={setToolbarHidden}
           frame={frame}
           onSplit={onSplit}
           desktopName={session.desktopName}
@@ -2063,7 +2083,7 @@ function SessionView({
           onAlwaysRefresh={toggleAlwaysRefresh}
           onDisconnect={disconnectWithThumbnail}
         />
-      )}
+      ) : null}
 
       {/* The toolbar's status button as a dialog, for Session ▸ Connection
           Info: with the bar hidden the latency reading has nowhere else to

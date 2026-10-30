@@ -25,7 +25,7 @@ import { panes } from "./lib/layout";
 import { useT } from "./lib/i18n";
 import { inTauri, safeListen } from "./lib/tauri";
 import { syncSessionMenu } from "./lib/menuSync";
-import { PREF_HIDE_TOOLBAR, readBoolPref, writeBoolPref } from "./lib/prefs";
+import { PREF_HIDE_TOOLBAR, readToolbarHidden, writeBoolPref } from "./lib/prefs";
 import { installContextMenuSuppressor } from "./lib/contextMenu";
 import { installAvailableUpdate } from "./lib/updater";
 
@@ -76,7 +76,7 @@ function ModalLoading(): ReactNode {
  * session half of the menu greys out.
  */
 function syncMenuState(): void {
-  syncSessionMenu(readBoolPref(PREF_HIDE_TOOLBAR, false), null);
+  syncSessionMenu(readToolbarHidden(), null);
 }
 
 /**
@@ -266,7 +266,7 @@ function MainShell(): ReactNode {
         // event, so only one of us may act on it: with a session in front it
         // is that session's, and toggling here as well would land back on the
         // value it started from.
-        writeBoolPref(PREF_HIDE_TOOLBAR, !readBoolPref(PREF_HIDE_TOOLBAR, false));
+        writeBoolPref(PREF_HIDE_TOOLBAR, !readToolbarHidden());
         syncMenuState();
       }
     }).then((fn) => {

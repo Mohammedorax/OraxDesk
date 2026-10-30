@@ -503,7 +503,8 @@ const ar = {
   "session.requestRefresh": "اطلب تحديث الشاشة كاملة",
   "session.unpin": "ألغِ تثبيت الشريط (يسمح باختفائه)",
   "session.pin": "ثبّت الشريط (يبقى ظاهرًا)",
-  "session.collapseToolbar": "أخفِ الشريط ({chord})",
+  "session.hideToolbar":
+    "أخفِ الشريط ({chord}). يبقى مخفيًّا في الجلسة القادمة، ويعيده الشيفرون",
   "session.disconnect": "افصل (يبقى الجهاز البعيد يعمل)",
   "session.customZoom": "تكبير مخصّص",
   "session.zoomPercent": "نسبة التكبير",
@@ -1314,9 +1315,9 @@ const ar = {
   "prefs.shareClipboardRdpHint": "انسخ النص والصقه في الاتجاهين.",
 
   // التفضيلات: الجلسة
-  "prefs.hideToolbar": "أخفِ شريط الأدوات الطائر",
+  "prefs.hideToolbar": "ابدأ وشريط الأدوات الطائر مخفيًّا",
   "prefs.hideToolbarHint":
-    "لا شيء فوق سطح المكتب البعيد. وكل ما يفعله الشريط يبقى متاحًا من قوائم العرض والجلسة، وهي تبيّن إعداد كل جلسة.",
+    "يطوى الشريط إلى شيفرون صغير على الحافة العليا، والنقر عليه — أو مفتاح الاختصار — يعيده بأدواته. وكل ما يفعله الشريط يبقى متاحًا من قوائم العرض والجلسة.",
   "prefs.newDefaults": "الافتراضيات للأجهزة الجديدة",
   "prefs.newDefaultsHint":
     "من أين يبدأ الجهاز قبل أن تبدّل شيئًا فيه. غيّر أحد هذه وأنت متصل، من شريط الأدوات أو القوائم، فيُحفَظ على ذلك الجهاز منذ ذلك الحين، بما في ذلك الشاشة التي اخترتها.",
@@ -2102,7 +2103,8 @@ const en: Record<keyof typeof ar, string> = {
   "session.requestRefresh": "Request full screen refresh",
   "session.unpin": "Unpin toolbar (allow auto-hide)",
   "session.pin": "Pin toolbar (stay visible)",
-  "session.collapseToolbar": "Collapse toolbar ({chord})",
+  "session.hideToolbar":
+    "Hide the toolbar ({chord}). It stays hidden next session; the chevron brings it back",
   "session.disconnect": "Disconnect (leaves the remote machine running)",
   "session.customZoom": "Custom zoom",
   "session.zoomPercent": "Zoom percentage",
@@ -2926,9 +2928,9 @@ const en: Record<keyof typeof ar, string> = {
   "prefs.shareClipboardRdpHint": "Copy and paste text in both directions.",
 
   // Preferences: session
-  "prefs.hideToolbar": "Hide the floating toolbar",
+  "prefs.hideToolbar": "Start with the floating toolbar hidden",
   "prefs.hideToolbarHint":
-    "Leave nothing on top of the remote desktop. Everything the toolbar does stays available from the View and Session menus, which show what each session is set to.",
+    "The bar folds to a small chevron at the top edge; click it, or press the shortcut, and it comes back with its tools. Everything the toolbar does stays available from the View and Session menus.",
   "prefs.newDefaults": "Defaults for new computers",
   "prefs.newDefaultsHint":
     "Where a computer starts before you have adjusted anything on it. Change one of these while connected, from the toolbar or the menus, and it is remembered against that computer from then on, including which monitor you picked.",
