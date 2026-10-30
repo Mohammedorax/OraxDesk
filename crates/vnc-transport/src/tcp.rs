@@ -16,10 +16,17 @@ use crate::{Result, TransportError};
 /// Linux/macOS), which is what makes auto-reconnect feel immediate after a
 /// cable pull or a Wi-Fi drop where no RST is ever delivered.
 ///
-/// Applied via `socket2`. The probe *count* is not settable on every platform,
-/// so that part stays best-effort; idle and interval are the ones that matter.
-/// Application-level liveness is additionally covered by the session's RFB
-/// fence probes.
+/// Applied via `socket2`. The probe *count* is not settable on every
+/// platform, and the platform where it is not is the one this app runs on
+/// most: Windows. socket2 0.5 cfg's `TcpKeepalive::with_retries` out there,
+/// and its Windows backend speaks `SIO_KEEPALIVE_VALS`, which carries idle
+/// and interval but no count; the Windows stack itself has hardcoded the
+/// keepalive probe count to 10 since Vista, and Microsoft's own note says it
+/// cannot be changed via the registry either. So on Windows the real window
+/// is 15 s idle + 10 x 5 s = ~65 s, not ~30 s; on the other targets
+/// `with_retries` applies and it is ~30 s. Idle and interval are the ones
+/// that matter and are set everywhere; application-level liveness is
+/// additionally covered by the session's RFB fence probes.
 pub const KEEPALIVE_IDLE: Duration = Duration::from_secs(15);
 pub const KEEPALIVE_INTERVAL: Duration = Duration::from_secs(5);
 pub const KEEPALIVE_PROBES: u32 = 3;
@@ -39,7 +46,10 @@ fn apply_keepalive(stream: &TcpStream) {
         .with_interval(KEEPALIVE_INTERVAL);
 
     // `with_retries` is unavailable on some targets (notably Windows and
-    // older BSDs); idle+interval already give us fast dead-peer detection.
+    // older BSDs). Where it is missing the OS keeps its own probe count — 10
+    // on Windows since Vista, not adjustable — so the dead-peer window there
+    // is the ~65 s named on the constants, not the ~30 s three probes give.
+    // Idle and interval still land everywhere, and that is most of the win.
     #[cfg(not(any(target_os = "windows", target_os = "openbsd")))]
     {
         ka = ka.with_retries(KEEPALIVE_PROBES);
@@ -176,6 +186,17 @@ mod tests {
             lookup_target("vnc.example.com", 5900),
             "vnc.example.com:5900"
         );
+    }
+
+    /// The schedule the constants document is what other crates' timing
+    /// assumptions (auto-reconnect feel, the ~30 s vs ~65 s note) rest on,
+    /// so pin it. Whether a platform honours the probe count is spelled out
+    /// where the constants are declared.
+    #[test]
+    fn the_keepalive_schedule_is_the_documented_one() {
+        assert_eq!(KEEPALIVE_IDLE, Duration::from_secs(15));
+        assert_eq!(KEEPALIVE_INTERVAL, Duration::from_secs(5));
+        assert_eq!(KEEPALIVE_PROBES, 3);
     }
 
     #[tokio::test]

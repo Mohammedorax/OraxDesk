@@ -9,9 +9,11 @@
 //! another local process to race us to.
 //!
 //! Host-key verification and authentication are the carrier's
-//! ([`crate::connect::connect_and_authenticate`]): one TOFU pin store answers
-//! for every feature, so trusting a machine once covers its tunnel, its Files
-//! panel and its terminal alike.
+//! ([`crate::connect::connect_and_authenticate_with`]): one TOFU pin store
+//! answers for every feature, so trusting a machine once covers its tunnel,
+//! its Files panel and its terminal alike. The carrier runs under
+//! [`Keepalive::interactive`], because a tunnelled VNC session is watched by
+//! a human.
 //!
 //! The auto-reconnect supervisor calls [`SshTunnel::open_stream`] again after
 //! a drop. A dead SSH carrier is re-dialled then, verified against the pin
@@ -25,9 +27,30 @@ use russh::client::Msg;
 use russh::ChannelStream;
 
 use crate::config::{host_port, SshConfig};
-use crate::connect::{connect_and_authenticate, BoxFuture, ClientHandler};
+use crate::connect::{
+    connect_and_authenticate_with, BoxFuture, ClientHandler, Keepalive,
+};
 use crate::error::{Error, Result};
 use crate::hostkey::HostKeyVerifier;
+
+/// The liveness profile the carrier dials with.
+///
+/// A tunnelled VNC session is watched by a person: a cable pull mid-session
+/// is a frozen picture, and the [`Keepalive::sidecar`] window (30 s x 3) is a
+/// minute and a half of nobody understanding what happened. The interactive
+/// profile calls it in ~15 s, the same profile a remote shell uses
+/// (`ssh-core`), for the same reason.
+///
+/// The probes cannot become a keepalive storm: russh sends one only while the
+/// link is otherwise silent (any inbound byte resets the counter, and a
+/// tunnelled VNC session's own framebuffer traffic counts), so a busy
+/// session pays nothing and an idle one pays an empty ~40-byte
+/// `SSH_MSG_GLOBAL_REQUEST` every five seconds — under 10 bytes per second.
+/// `max_missed` stays at 3, and `inactivity_timeout` stays `None`, so a
+/// merely idle tunnel is never torn down.
+fn carrier_keepalive() -> Keepalive {
+    Keepalive::interactive()
+}
 
 /// The stream a tunnelled VNC connection runs over.
 pub type TunnelStream = ChannelStream<Msg>;
@@ -62,7 +85,7 @@ impl SshTunnel {
     /// or hard-stop (`Error::HostKeyChanged`).
     pub async fn connect(cfg: SshConfig, verifier: impl HostKeyVerifier) -> Result<Self> {
         let verifier: Arc<dyn HostKeyVerifier + Send + Sync + 'static> = Arc::new(verifier);
-        let ssh = connect_and_authenticate(&cfg, verifier.clone()).await?;
+        let ssh = connect_and_authenticate_with(&cfg, verifier.clone(), carrier_keepalive()).await?;
         tracing::info!(gateway = %cfg.endpoint(), auth = cfg.auth.label(), "ssh tunnel established");
         Ok(Self {
             cfg,
@@ -107,7 +130,9 @@ impl SshTunnel {
             }
         }
 
-        let ssh = connect_and_authenticate(&self.cfg, self.verifier.clone()).await?;
+        let ssh =
+            connect_and_authenticate_with(&self.cfg, self.verifier.clone(), carrier_keepalive())
+                .await?;
         tracing::info!(gateway = %self.cfg.endpoint(), "ssh tunnel re-established");
         let stream =
             open_channel(&ssh, target_host, target_port, self.cfg.connect_timeout()).await?;
@@ -156,4 +181,29 @@ fn open_channel<'a>(
             }),
         }
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    /// The assertion reads the profile the dialling code itself uses, not a
+    /// copy of the numbers: a cable pull mid-tunnelled-VNC has to be called
+    /// in ~15 s, not the sidecar's ~90 s.
+    #[test]
+    fn the_tunnelled_carrier_is_declared_dead_within_twenty_seconds() {
+        let window = carrier_keepalive()
+            .detection_window()
+            .expect("the tunnel probes");
+        assert!(
+            window <= Duration::from_secs(20),
+            "detection window {window:?} is too slow for a person staring at a frozen picture"
+        );
+        assert_ne!(
+            carrier_keepalive(),
+            Keepalive::sidecar(),
+            "the tunnel must not sit on the background-transfer profile"
+        );
+    }
 }

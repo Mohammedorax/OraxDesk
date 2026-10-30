@@ -673,6 +673,56 @@ async fn an_unanswered_probe_declares_the_peer_dead_and_reconnects() {
     handle.shutdown();
 }
 
+#[tokio::test]
+async fn an_unanswered_idle_probe_declares_a_fenceless_peer_dead() {
+    // The Fence-less mirror of the test above, and the shape a wedged server
+    // actually has: no Fence advertised, so liveness rests on the one-pixel
+    // FramebufferUpdateRequest probe; the server answers the first request,
+    // then goes silent WITHOUT closing the socket. TCP keeps ACKing, no EOF
+    // ever arrives, and without the probe deadline the session would sit in
+    // `Connected` for ever — the connected-state twin of the mid-connect
+    // silence `connect_deadline` was added to end.
+    let server = MockServer::start(
+        MockConfig::new()
+            .update(vec![RectSpec::Raw {
+                rect: Rect::new(0, 0, 4, 4),
+                colour: RED,
+            }])
+            .hang_after_n_updates(1),
+    )
+    .await;
+
+    let (handle, mut events) = spawn_session(options(server.port()));
+    events.wait_connected(DEFAULT_TIMEOUT).await;
+    events.wait_framebuffer(DEFAULT_TIMEOUT).await;
+
+    // The quiet screen gets the one-pixel probe rather than a fence.
+    let probed = server
+        .wait_until(Duration::from_secs(5), |r| {
+            r.messages.iter().any(|m| {
+                matches!(
+                    m,
+                    ClientMessage::FramebufferUpdateRequest { incremental: false, rect }
+                        if rect.width == 1 && rect.height == 1
+                )
+            })
+        })
+        .await;
+    assert!(
+        probed,
+        "a Fence-less server must be probed with a one-pixel request"
+    );
+
+    // Slow by construction: the probe's deadline is PROBE_TIMEOUT (10 s).
+    let (attempt, _, reason) = wait_reconnecting(&mut events, Duration::from_secs(25)).await;
+    assert_eq!(attempt, 1);
+    assert!(
+        reason.contains("did not respond"),
+        "expected a timeout reason, got {reason:?}"
+    );
+    handle.shutdown();
+}
+
 // ---------------------------------------------------------------------------
 // Policy switches
 // ---------------------------------------------------------------------------

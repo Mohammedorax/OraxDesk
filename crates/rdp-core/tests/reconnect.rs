@@ -123,13 +123,13 @@ impl ConnectOnce for MockConnect {
                 Ok(connected) => connected,
                 Err(RdpError::Redirected(redirect)) => {
                     self.carry.redirect = Some(*redirect);
-                    return Ok(absorb_attempt(
+                    return absorb_attempt(
                         &mut self.options,
                         &mut self.carry,
                         rdp_core::session::run_loop::RunOutcome::ServerDisconnect {
                             user_requested: false,
                         },
-                    ));
+                    );
                 }
                 Err(e) => return Err(e),
             };
@@ -173,19 +173,19 @@ impl ConnectOnce for MockConnect {
             let _ = writer_task.await;
 
             match outcome {
-                Ok(attempt) => Ok(absorb_attempt(&mut self.options, &mut self.carry, attempt)),
+                Ok(attempt) => absorb_attempt(&mut self.options, &mut self.carry, attempt),
                 Err(e) => {
                     // A redirection recorded by the pump outlives the error
                     // the socket produced afterwards, which is what makes a
                     // redirect followed by a close still a redirect.
                     if self.carry.redirect.is_some() {
-                        return Ok(absorb_attempt(
+                        return absorb_attempt(
                             &mut self.options,
                             &mut self.carry,
                             rdp_core::session::run_loop::RunOutcome::ServerDisconnect {
                                 user_requested: false,
                             },
-                        ));
+                        );
                     }
                     Err(e)
                 }

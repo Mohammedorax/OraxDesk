@@ -167,7 +167,9 @@ pub fn connect_and_authenticate<'a>(
 ///
 /// A remote shell wants [`Keepalive::interactive`]: a human notices a frozen
 /// terminal in seconds, so waiting 90 for the transport to admit it is dead
-/// is the difference between a blip and a bug report.
+/// is the difference between a blip and a bug report. So does a tunnelled
+/// VNC session (`crate::tunnel`), where the picture freezing is the same
+/// thing seen by somebody who cannot type `exit` and try again.
 pub fn connect_and_authenticate_with<'a>(
     cfg: &'a SshConfig,
     verifier: Arc<dyn HostKeyVerifier + Send + Sync + 'static>,

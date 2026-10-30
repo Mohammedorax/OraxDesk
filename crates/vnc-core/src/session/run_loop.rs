@@ -36,6 +36,11 @@ use super::emit;
 
 /// Declare the peer dead when a fence RTT probe goes unanswered this long
 /// while newer traffic would have been expected (PRD/05 §6.4).
+///
+/// One budget for both probe shapes: the Fence probe (`probe`), and — on a
+/// Fence-less server — the one-pixel probe streak anchored at
+/// `probe_unanswered_since`. Both are messages the server's RFB loop must
+/// answer; silence past the budget is a wedged loop, not a quiet desktop.
 const PROBE_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// How often the stats/observation tick runs.
@@ -98,6 +103,13 @@ const PROBE_IDLE: Duration = Duration::from_millis(300);
 
 /// Abandon an unanswered no-Fence probe after this, so one lost answer does
 /// not stop the reading updating for the rest of the session.
+///
+/// Abandoning here means only the ANSWER clock (`probe_request_at`) is
+/// forgotten so the re-send can time a fresh round trip. It is NOT a
+/// verdict on the peer: the dead-peer deadline is anchored separately at
+/// `probe_unanswered_since` and deliberately does not reset here, so probes
+/// may keep being re-sent every streak while one unanswered streak still
+/// reaches [`PROBE_TIMEOUT`].
 const PROBE_STALE: Duration = Duration::from_secs(5);
 
 /// Weight of a new sample in the reported round trip. Even a well-timed
@@ -605,6 +617,22 @@ pub(crate) struct RunLoop {
     /// request for a single pixel is the universal equivalent: every RFB
     /// server must answer one, and one pixel costs nothing.
     probe_request_at: Option<Instant>,
+    /// When the first still-unanswered one-pixel probe of the current streak
+    /// went out.
+    ///
+    /// `probe_request_at` above is deliberately forgotten at
+    /// [`PROBE_STALE`] so one lost answer cannot poison the round-trip
+    /// readout, and the re-send times its own attempt from scratch. But
+    /// forgetting must not mean giving up: a server whose RFB loop has
+    /// wedged while its kernel still ACKs keepalives answers nothing, and a
+    /// re-send loop with no anchor that never moves is the connected-state
+    /// twin of the mid-connect failure `connect_deadline` was added to end
+    /// in remote-core's options ("went quiet ... no error, no timeout, no
+    /// reconnect attempt"). This is that anchor: armed with the FIRST probe
+    /// of a streak, cleared by the next update header (any answer is proof
+    /// of life), and past [`PROBE_TIMEOUT`] the session ends with
+    /// `VncError::Timeout`, which the supervisor classifies as transient.
+    probe_unanswered_since: Option<Instant>,
     /// When the one-pixel probe last produced a sample. The probe needs a
     /// quiet screen, so on a busy desktop its reading can be minutes old;
     /// past `RTT_SAMPLE_FRESH` the passive readout takes over.
@@ -775,6 +803,7 @@ impl RunLoop {
             rtt_ms: 0.0,
             probe: None,
             probe_request_at: None,
+            probe_unanswered_since: None,
             probe_sample_at: None,
             probe_full_answers: 0,
             probe_disabled: false,
@@ -941,7 +970,14 @@ impl RunLoop {
                 self.colour_map_since_pf = true;
                 Ok(())
             }
-            server_msg::BELL => Ok(emit(events, SessionEvent::Bell).await?),
+            server_msg::BELL => {
+                // Through the input-preserving path, not plain `emit`, for the
+                // reason spelled out on `emit_serving_input`: a bell while the
+                // renderer is behind must not park the loop with every queued
+                // keystroke behind it.
+                self.emit_serving_input(events, SessionEvent::Bell, commands, settings)
+                    .await
+            }
             server_msg::SERVER_CUT_TEXT => self.handle_server_cut_text(events).await,
             server_msg::END_OF_CONTINUOUS_UPDATES => {
                 self.caps.supports_continuous_updates = true;
@@ -1075,6 +1111,13 @@ impl RunLoop {
         // this update is really the probe's answer is decided once its size
         // is known, after the rect loop below.
         let probe_sent = self.probe_request_at.take();
+        // Any update header is the server's RFB loop answering us, whether it
+        // is the probe's answer or damage that merely spoils the probe's
+        // timing — and even a quiet desktop answers the probe with a
+        // zero-rect update. So the dead-peer streak ends here, on proof of
+        // life, and only an update that never arrives can reach the
+        // PROBE_TIMEOUT deadline in `tick`.
+        self.probe_unanswered_since = None;
         self.record_passive_rtt(header_at);
         let primed_before = !self.priming_update_pending;
 
@@ -1155,7 +1198,9 @@ impl RunLoop {
                     &mut self.decoder,
                 )
                 .await?;
-                let last_rect = self.handle_pseudo(parsed, settings, events).await?;
+                let last_rect = self
+                    .handle_pseudo(parsed, settings, events, commands)
+                    .await?;
                 // Service input here too, not only after a data rect below.
                 // An update made entirely of pseudo rects (a cursor shape
                 // followed by LastRect is the common one, and a server that
@@ -1363,6 +1408,7 @@ impl RunLoop {
         parsed: PseudoRect,
         settings: &mut SessionSettings,
         events: &mpsc::Sender<SessionEvent>,
+        commands: &mut mpsc::Receiver<ClientCommand>,
     ) -> Result<bool> {
         match parsed {
             PseudoRect::LastRect => return Ok(true),
@@ -1403,7 +1449,16 @@ impl RunLoop {
                         4 => "the request was forwarded (pending)",
                         _ => "unknown error",
                     };
-                    emit(events, SessionEvent::Error(format!("Resize failed: {why}"))).await?;
+                    // Input-preserving path: a refusal the renderer is slow
+                    // to show must not hold pointer/keyboard service (see
+                    // `emit_serving_input`).
+                    self.emit_serving_input(
+                        events,
+                        SessionEvent::Error(format!("Resize failed: {why}")),
+                        commands,
+                        settings,
+                    )
+                    .await?;
                 } else {
                     let changed = (width, height) != (self.fb_width, self.fb_height);
                     self.apply_resize(width, height, events).await?;
@@ -1425,11 +1480,15 @@ impl RunLoop {
                 // the framebuffer it already has, so the new geometry must
                 // land first.
                 if layout_changed {
-                    emit(
+                    // Input-preserving path, as the resize-refusal error
+                    // above: this send awaits room in a full event channel.
+                    self.emit_serving_input(
                         events,
                         SessionEvent::ScreenLayout {
                             screens: self.screens.clone(),
                         },
+                        commands,
+                        settings,
                     )
                     .await?;
                 }
@@ -1446,10 +1505,26 @@ impl RunLoop {
             }
             PseudoRect::DesktopName(name) => {
                 self.caps.desktop_name = name.clone();
-                emit(events, SessionEvent::DesktopName(name)).await?;
+                // Input-preserving path; see `emit_serving_input`.
+                self.emit_serving_input(
+                    events,
+                    SessionEvent::DesktopName(name),
+                    commands,
+                    settings,
+                )
+                .await?;
             }
             PseudoRect::Cursor(shape) => {
-                emit(events, SessionEvent::CursorUpdate(shape)).await?;
+                // Input-preserving path; see `emit_serving_input`. A cursor
+                // stream during a drag is exactly when the renderer falls
+                // behind and exactly when input must keep flowing.
+                self.emit_serving_input(
+                    events,
+                    SessionEvent::CursorUpdate(shape),
+                    commands,
+                    settings,
+                )
+                .await?;
             }
             PseudoRect::LedState(state) => {
                 tracing::debug!(leds = state, "QEMU LED state");
@@ -2683,6 +2758,20 @@ impl RunLoop {
                 return Err(VncError::Timeout);
             }
         }
+        // The same deadline for the one-pixel probe a Fence-less server gets.
+        // That probe is a FramebufferUpdateRequest, and RFB requires the
+        // server to answer EVERY one with a FramebufferUpdate — on a quiet
+        // desktop that is an update of zero rects, but it is still an answer,
+        // and its header clears the anchor in `read_framebuffer_update`. So a
+        // quiet desktop is never mistaken for a dead peer; only a wedged RFB
+        // loop (kernel still ACKing, nothing decoding) stays silent past the
+        // budget. The anchor is the first unanswered probe of the streak and
+        // the PROBE_STALE re-send does not move it (see `probe_unanswered_since`).
+        if let Some(since) = self.probe_unanswered_since {
+            if since.elapsed() > PROBE_TIMEOUT {
+                return Err(VncError::Timeout);
+            }
+        }
 
         let now = Instant::now();
         let stats = self.observe_tick(settings, now);
@@ -2758,6 +2847,12 @@ impl RunLoop {
                 let msg = messages::framebuffer_update_request(false, Rect::new(0, 0, 1, 1));
                 self.send(&msg).await?;
                 self.probe_request_at = Some(Instant::now());
+                // Armed with the FIRST probe of a streak only: the
+                // PROBE_STALE re-send above restarts the answer clock but
+                // must not restart the dead-peer budget, or a peer that
+                // never answers would be re-probed forever (see
+                // `probe_unanswered_since`).
+                self.probe_unanswered_since.get_or_insert(Instant::now());
             }
         }
 
@@ -3774,5 +3869,121 @@ mod pacing_tests {
         answer_probe(&mut rl, &mut server, &mut settings, Rect::new(0, 0, 1, 1)).await;
         assert_eq!(rl.probe_full_answers, 0);
         assert!(!rl.probe_disabled);
+    }
+
+    // -----------------------------------------------------------------------
+    // Dead-peer detection without Fence (PRD/05 §6.4)
+    // -----------------------------------------------------------------------
+
+    /// The bug this guards: a server whose RFB loop wedges while its kernel
+    /// still ACKs keepalives answers nothing, and the PROBE_STALE re-send
+    /// loop turned that into a session frozen in `Connected` for ever — the
+    /// connected-state twin of the mid-connect silence `connect_deadline`
+    /// was added to end in remote-core's options. An unanswered one-pixel
+    /// probe past PROBE_TIMEOUT is a dead peer, and the session ends with
+    /// `VncError::Timeout`, which the supervisor already reconnects on.
+    #[tokio::test]
+    async fn an_unanswered_idle_probe_ends_the_session_with_a_timeout() {
+        let (mut rl, mut server) = harness();
+        let mut settings = settings();
+        let (events, _events_rx) = mpsc::channel(8);
+        let (_cmd_tx, mut commands) = mpsc::channel(8);
+
+        // The quiet screen arms the probe, and with it the deadline anchor.
+        let sent = tick_on_a_quiet_screen(&mut rl, &mut server, &mut settings).await;
+        assert!(sent.contains(&probe()), "{sent:?}");
+        assert!(
+            rl.probe_unanswered_since.is_some(),
+            "the first probe of a streak arms the deadline"
+        );
+
+        // ...and the answer never comes, for longer than the budget.
+        rl.probe_unanswered_since = Some(Instant::now() - PROBE_TIMEOUT - Duration::from_secs(1));
+        let err = rl
+            .tick(&mut settings, &events, &mut commands)
+            .await
+            .expect_err("a server that answers nothing is a dead peer");
+        assert!(matches!(err, VncError::Timeout), "got {err:?}");
+    }
+
+    /// A quiet desktop is NOT a dead peer. The probe is a
+    /// FramebufferUpdateRequest, and RFB requires the server to answer every
+    /// one with an update even when nothing has changed: an update of zero
+    /// rects. That is proof of life and clears the deadline, however long
+    /// the desktop has been still — "no updates" is never the error, only an
+    /// unanswered probe is.
+    #[tokio::test]
+    async fn an_answer_from_a_quiet_desktop_clears_the_dead_peer_deadline() {
+        let (mut rl, mut server) = harness();
+        let mut settings = settings();
+        let (events, _events_rx) = mpsc::channel(8);
+        let (_cmd_tx, mut commands) = mpsc::channel(8);
+
+        tick_on_a_quiet_screen(&mut rl, &mut server, &mut settings).await;
+        assert!(rl.probe_unanswered_since.is_some());
+
+        // The budget has already run out when the server's answer — an
+        // update with nothing in it — finally arrives.
+        rl.probe_unanswered_since = Some(Instant::now() - PROBE_TIMEOUT - Duration::from_secs(1));
+        server
+            .write_all(&[0u8, 0, 0])
+            .await
+            .expect("write the empty update");
+        rl.handle_server_message(
+            server_msg::FRAMEBUFFER_UPDATE,
+            &mut settings,
+            &events,
+            &mut commands,
+        )
+        .await
+        .expect("read the empty update");
+        assert!(
+            rl.probe_unanswered_since.is_none(),
+            "any update header is the peer's RFB loop answering"
+        );
+
+        // The session carries on, and the still-quiet screen is probed again.
+        rl.tick(&mut settings, &events, &mut commands)
+            .await
+            .expect("a quiet desktop that answers is a healthy session");
+    }
+
+    /// The deadline measures the FIRST unanswered probe of a streak. The
+    /// PROBE_STALE re-send restarts the answer clock (so the round-trip
+    /// readout is timed from the attempt that is actually answered) but must
+    /// not restart the dead-peer budget: a server that never answers would
+    /// otherwise be re-probed for ever, which is the bug itself.
+    #[tokio::test]
+    async fn the_probe_resend_does_not_restart_the_dead_peer_deadline() {
+        let (mut rl, mut server) = harness();
+        let mut settings = settings();
+        let (events, _events_rx) = mpsc::channel(8);
+        let (_cmd_tx, mut commands) = mpsc::channel(8);
+
+        tick_on_a_quiet_screen(&mut rl, &mut server, &mut settings).await;
+        let anchor = rl
+            .probe_unanswered_since
+            .expect("the first probe arms the deadline");
+
+        // The answer clock is stale and the peer still silent: the probe is
+        // re-sent, but the anchor stays where the streak began.
+        rl.probe_request_at = Some(Instant::now() - PROBE_STALE - Duration::from_secs(1));
+        rl.tick(&mut settings, &events, &mut commands)
+            .await
+            .expect("tick");
+        assert_eq!(
+            rl.probe_unanswered_since,
+            Some(anchor),
+            "the re-send must not move the deadline"
+        );
+        assert!(rl.probe_request_at.is_some(), "the stale probe is re-sent");
+
+        // Once the FIRST probe's budget is spent, the session ends.
+        rl.probe_unanswered_since = Some(Instant::now() - PROBE_TIMEOUT - Duration::from_secs(1));
+        let err = rl
+            .tick(&mut settings, &events, &mut commands)
+            .await
+            .expect_err("an unanswered streak is a dead peer even across re-sends");
+        assert!(matches!(err, VncError::Timeout), "got {err:?}");
     }
 }

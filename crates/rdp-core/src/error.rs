@@ -525,6 +525,16 @@ impl RdpError {
     /// and [`RdpError::ServerError`] are both perfectly repeatable, and
     /// retrying them hammers a server that has already given its answer
     /// (PRDRDP/12 §3.7).
+    ///
+    /// [`RdpError::ServerDisconnect`] with `user_requested: false` is here
+    /// because it carries no verdict from the server: it is an
+    /// `rn-provider-initiated` ultimatum with no latched `ERRINFO` code, or
+    /// a bare EOF (MS-RDPBCGR 2.2.2.3, 1.3.1.4.2). A farm draining a host
+    /// before a restart answers exactly like that, and one attempt with
+    /// backoff is what gets past it. The verdicts a server can give arrive as
+    /// [`RdpError::ServerError`] and stay non-transient; a logoff arrives as
+    /// `user_requested: true` and stays non-transient, because reconnecting
+    /// into a session the far end just ended is a loop.
     #[must_use]
     pub fn is_transient(&self) -> bool {
         matches!(
@@ -534,6 +544,9 @@ impl RdpError {
                 | RdpError::Timeout { .. }
                 | RdpError::ConnectionRefused(_)
                 | RdpError::ResolveFailed(_)
+                | RdpError::ServerDisconnect {
+                    user_requested: false
+                }
         )
     }
 
@@ -607,6 +620,9 @@ mod tests {
             },
             RdpError::ConnectionRefused("h".into()),
             RdpError::ResolveFailed("h".into()),
+            RdpError::ServerDisconnect {
+                user_requested: false,
+            },
             RdpError::AuthFailed("no".into()),
             RdpError::NlaRefused,
             RdpError::CertificateMismatch {
@@ -655,6 +671,26 @@ mod tests {
         };
         assert!(!e.is_transient());
         assert!(!e.needs_user_action());
+    }
+
+    /// A server-ended session with no `ERRINFO` verdict and no logoff is the
+    /// shape a farm draining a host for a restart produces, so the ladder
+    /// retries it with backoff. A logoff (`rn-user-requested`) is deliberate
+    /// and must not be dialed back into.
+    #[test]
+    fn a_server_disconnect_with_no_logoff_is_transient() {
+        let drained = RdpError::ServerDisconnect {
+            user_requested: false,
+        };
+        assert!(drained.is_transient(), "{drained}");
+        // The sentence the UI shows for it is the honest one: the server
+        // ended this, the user did not.
+        assert_eq!(drained.user_message(), "the server ended the session");
+
+        let logoff = RdpError::ServerDisconnect {
+            user_requested: true,
+        };
+        assert!(!logoff.is_transient(), "{logoff}");
     }
 
     /// The `NotImplemented` message has to name the phase and cite the

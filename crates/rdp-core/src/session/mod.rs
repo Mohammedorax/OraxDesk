@@ -194,7 +194,7 @@ impl ConnectOnce for RdpConnect {
                 connected_at,
             )
             .await?;
-            Ok(absorb_attempt(&mut self.options, &mut self.carry, outcome))
+            absorb_attempt(&mut self.options, &mut self.carry, outcome)
         })
     }
 
@@ -206,17 +206,24 @@ impl ConnectOnce for RdpConnect {
 /// Turn one attempt's outcome into the supervisor's, applying whatever the
 /// attempt learned about where to go next.
 ///
+/// `Err` means "a connection the server ended with nothing to follow": the
+/// shared supervisor's ladder only sees a failure's transience through
+/// [`RetryClassify`], so a server-ended session travels as
+/// [`RdpError::ServerDisconnect`], which classifies as transient and climbs
+/// the ladder with backoff. The one exception is a logoff
+/// (`rn-user-requested`), which stays a silent user disconnect: the far end
+/// ended a session the user was in, and dialling straight back in is a loop.
+///
 /// Public because the integration tests drive the supervisor against the mock
 /// server, which has no TLS, so they run the connection sequence themselves
 /// and then take this decision with the same code the driver does
-/// (`crates/rdp-core/tests/connect.rs`). The alternative is a second copy of
+/// (`crates/rdp-core/tests/reconnect.rs`). The alternative is a second copy of
 /// the redirection rules in a test, which is the copy that goes stale.
-#[must_use]
 pub fn absorb_attempt(
     options: &mut ConnectOptions,
     carry: &mut Continuity,
     outcome: Attempt,
-) -> RunOutcome {
+) -> Result<RunOutcome, RdpError> {
     match carry.redirect.take() {
         Some(redirect) => {
             // The cookie belongs to the session on the machine we are
@@ -225,20 +232,32 @@ pub fn absorb_attempt(
             carry.cookie = None;
             let why = redirect.describe();
             redirect.apply(options, &mut carry.routing_token);
-            RunOutcome::Reattempt { why }
+            Ok(RunOutcome::Reattempt { why })
         }
-        // A logoff and an administrative close are both deliberate, and
-        // reconnecting into a session the far end just ended is a loop. A
-        // dropped socket is not this: it arrives as
-        // `RdpError::ConnectionClosed`, which classifies as transient and
-        // does climb the ladder.
-        None => {
-            debug_assert!(matches!(
-                outcome,
-                Attempt::UserDisconnect | Attempt::ServerDisconnect { .. }
-            ));
-            RunOutcome::UserDisconnect
-        }
+        None => match outcome {
+            // A deliberate end: the user hung up, or a logoff
+            // (`rn-user-requested`) ended the session. Reconnecting into a
+            // session the far end just ended is a loop, so this is the one
+            // outcome that stops silently with no retry.
+            Attempt::UserDisconnect | Attempt::ServerDisconnect { user_requested: true } => {
+                Ok(RunOutcome::UserDisconnect)
+            }
+            // Everything else the server did — an `rn-provider-initiated`
+            // ultimatum (a farm draining a host before a restart), an
+            // unknown reason code MS-RDPBCGR 3.1.5.1.2 says to ignore, or a
+            // bare EOF, every closing PDU being optional per 1.3.1.4.2 — is
+            // a connection the SERVER ended, not one the user ended. A
+            // dropped socket already reaches the ladder as the transient
+            // `RdpError::ConnectionClosed`; this is the same fact wearing
+            // the server's clothes, so it travels as the transient
+            // `RdpError::ServerDisconnect` and the reason the user finally
+            // sees is "the server ended the session", never "Disconnected".
+            Attempt::ServerDisconnect { user_requested: false } => {
+                Err(RdpError::ServerDisconnect {
+                    user_requested: false,
+                })
+            }
+        },
     }
 }
 
@@ -305,5 +324,47 @@ mod tests {
         // a final event, and `recv` returning `None` is the signal the shell
         // waits for.
         while rx.recv().await.is_some() {}
+    }
+
+    /// The `user_requested` flag set by the pump (`session::run_loop`) is
+    /// what tells a logoff apart from a server that ended the session on its
+    /// own. The logoff stays a silent user disconnect; the server-ended case
+    /// travels as the transient `RdpError::ServerDisconnect` so the
+    /// supervisor retries it with backoff and reports the honest reason.
+    #[test]
+    fn a_server_ended_session_retries_but_a_logoff_does_not() {
+        let mut options = ConnectOptions::rdp("host.example", 3389);
+
+        for deliberate in [
+            Attempt::UserDisconnect,
+            Attempt::ServerDisconnect { user_requested: true },
+        ] {
+            let what = format!("{deliberate:?}");
+            let mut carry = Continuity::default();
+            let outcome = absorb_attempt(&mut options, &mut carry, deliberate)
+                .expect("a deliberate end is not a failure");
+            assert_eq!(outcome, RunOutcome::UserDisconnect, "{what}");
+        }
+
+        let mut carry = Continuity::default();
+        let err = absorb_attempt(
+            &mut options,
+            &mut carry,
+            Attempt::ServerDisconnect {
+                user_requested: false,
+            },
+        )
+        .expect_err("a session the server ended must reach the ladder as a failure");
+        assert!(matches!(
+            err,
+            RdpError::ServerDisconnect {
+                user_requested: false
+            }
+        ));
+        // The ladder decides on transience, and the user reads the sentence:
+        // both have to say "the server did this", not "you did this".
+        assert!(err.is_transient(), "{err}");
+        assert_eq!(err.user_message(), "the server ended the session");
+        assert_eq!(err.symbol(), None, "no specific remedy to offer");
     }
 }

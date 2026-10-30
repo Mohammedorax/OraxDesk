@@ -253,9 +253,16 @@ pub async fn supervise<C: ConnectOnce>(
         // A connection that stayed up long enough proves the network is fine
         // again, so backoff starts from scratch on the next drop
         // (PRD/05 §6.2).
+        //
+        // `chained` resets here for the same reason `attempts_made` does: the
+        // bound exists to break an unbounded back-to-back redirect loop (two
+        // servers pointing at each other), and a brokered session that
+        // redirects once every few hours across months of uptime is the
+        // redirection feature working, not that loop.
         if let Some(t) = connected_at {
             if t.elapsed() >= STABLE_UPTIME {
                 attempts_made = 0;
+                chained = 0;
             }
         }
 
@@ -476,6 +483,9 @@ mod tests {
         policy: ReconnectPolicy,
         script: Vec<Result<RunOutcome, TestError>>,
         absorbed: usize,
+        /// Report every attempt as having connected and stayed up past
+        /// [`STABLE_UPTIME`], which is what the supervisor's reset keys off.
+        stable_uptime: bool,
     }
 
     impl ConnectOnce for Scripted {
@@ -490,9 +500,20 @@ mod tests {
             _events: &'a mpsc::Sender<SessionEvent>,
             _commands: &'a mut mpsc::Receiver<ClientCommand>,
             _cancel: &'a CancellationToken,
-            _connected_at: &'a mut Option<Instant>,
+            connected_at: &'a mut Option<Instant>,
         ) -> Pin<Box<dyn Future<Output = Result<RunOutcome, TestError>> + Send + 'a>> {
             Box::pin(async move {
+                if self.stable_uptime {
+                    // "Connected long ago": the supervisor reads stability as
+                    // `connected_at.elapsed() >= STABLE_UPTIME`, and a
+                    // monotonic `Instant` cannot be wound back past its
+                    // origin, hence the fallback.
+                    *connected_at = Some(
+                        Instant::now()
+                            .checked_sub(STABLE_UPTIME)
+                            .unwrap_or_else(Instant::now),
+                    );
+                }
                 if self.script.is_empty() {
                     return Err(TestError::Fatal);
                 }
@@ -540,6 +561,7 @@ mod tests {
                 Err(TestError::Transient),
             ],
             absorbed: 0,
+            stable_uptime: false,
         };
         supervise("t".into(), conn, tx, cmd_rx, CancellationToken::new()).await;
 
@@ -577,6 +599,7 @@ mod tests {
                 Ok(RunOutcome::UserDisconnect),
             ],
             absorbed: 0,
+            stable_uptime: false,
         };
         supervise("t".into(), conn, tx, cmd_rx, CancellationToken::new()).await;
 
@@ -609,6 +632,7 @@ mod tests {
                 })
                 .collect(),
             absorbed: 0,
+            stable_uptime: false,
         };
         supervise("t".into(), conn, tx, cmd_rx, CancellationToken::new()).await;
 
@@ -619,6 +643,43 @@ mod tests {
             }) => {
                 assert!(reason.contains("redirect"), "{reason}");
                 assert!(*can_retry);
+            }
+            other => panic!("expected a terminal state, got {other:?}"),
+        }
+    }
+
+    /// The bound is on a back-to-back chain, not on a session's lifetime. A
+    /// brokered session that legitimately redirects more than
+    /// [`MAX_CHAINED_REATTEMPTS`] times over months of uptime — each redirect
+    /// preceded by hours of healthy service — must not end with "kept
+    /// redirecting": a stable connection resets `chained` exactly as it
+    /// resets `attempts_made`.
+    #[tokio::test]
+    async fn redirects_that_are_miles_apart_are_not_a_chain() {
+        let (tx, mut rx) = mpsc::channel(64);
+        let (_cmd_tx, cmd_rx) = mpsc::channel(8);
+        let conn = Scripted {
+            policy: fast_policy(),
+            script: (0..MAX_CHAINED_REATTEMPTS as usize + 2)
+                .map(|_| {
+                    Ok(RunOutcome::Reattempt {
+                        why: "redirected".into(),
+                    })
+                })
+                .chain(std::iter::once(Ok(RunOutcome::UserDisconnect)))
+                .collect(),
+            absorbed: 0,
+            stable_uptime: true,
+        };
+        supervise("t".into(), conn, tx, cmd_rx, CancellationToken::new()).await;
+
+        let states = states(&mut rx).await;
+        match states.last() {
+            Some(SessionState::Disconnected { reason, .. }) => {
+                assert_eq!(
+                    reason, "Disconnected",
+                    "the chain breaker must not have fired: {states:?}"
+                );
             }
             other => panic!("expected a terminal state, got {other:?}"),
         }
@@ -634,6 +695,7 @@ mod tests {
             policy: fast_policy(),
             script: vec![Err(TestError::NeedsUser)],
             absorbed: 0,
+            stable_uptime: false,
         };
         supervise("t".into(), conn, tx, cmd_rx, CancellationToken::new()).await;
 
@@ -665,6 +727,7 @@ mod tests {
             },
             script: vec![Err(TestError::Fatal)],
             absorbed: 0,
+            stable_uptime: false,
         };
         supervise("t".into(), conn, tx, cmd_rx, CancellationToken::new()).await;
 
