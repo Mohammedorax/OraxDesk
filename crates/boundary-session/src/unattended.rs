@@ -745,24 +745,38 @@ async fn run_connect(
     };
     let endpoint = session::endpoint_with(&options, Some(key), lookup).await?;
     let _close = Closing(endpoint.clone());
-    let connection = tokio::time::timeout(Duration::from_secs(30), endpoint.connect(target, wire::ALPN))
+    let dialed = tokio::time::timeout(Duration::from_secs(30), endpoint.connect(target, wire::ALPN))
         .await
-        .context("The computer did not answer. It may be off, asleep, offline, or its unattended access may be switched off")?
-        .map_err(|error| {
+        .context("The computer did not answer. It may be off, asleep, offline, or its unattended access may be switched off")?;
+    let connection = match dialed {
+        Ok(connection) => connection,
+        Err(error) => {
             // The one failure a person can act on without a support call: the
-            // device number is registered, but nothing published an address,
-            // so there is nowhere to dial. Say which switch fixes it.
-            let text = error.to_string();
-            if text.contains("addressing information") {
-                anyhow!(
-                    "{text}. This computer is registered, but it has not published an \
+            // device number is registered, but nothing published an address —
+            // neither the registry directory nor n0 knows one — so there is
+            // nowhere to dial. Say which switch fixes it, the moment discovery
+            // runs out of sources: the 30s above is a dial budget, and a
+            // machine that has no address is never worth spending it on.
+            //
+            // Matched on iroh's typed variant, not on its message text: an
+            // upstream rewording would stop a `contains` matching in silence
+            // and hand the operator back a mystery failure.
+            if matches!(
+                error,
+                iroh::endpoint::ConnectError::Connect {
+                    source: iroh::endpoint::ConnectWithOptsError::NoAddress { .. },
+                    ..
+                }
+            ) {
+                bail!(
+                    "This computer is registered, but it has not published an \
                      address: switch on Unattended access there, or have the person \
                      send an invitation instead"
-                )
-            } else {
-                anyhow!("Cannot reach the computer: {text}")
+                );
             }
-        })?;
+            bail!("Cannot reach the computer: {error}")
+        }
+    };
     let (mut send, recv) = connection.open_bi().await?;
     wire::write(
         &mut send,
