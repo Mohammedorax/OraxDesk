@@ -75,7 +75,6 @@ import {
   IconHelp,
   IconList,
   IconMonitor,
-  IconPlus,
   IconTabs,
   IconWindows,
   IconZap,
@@ -136,7 +135,7 @@ export function Library({
   onAutoAddHandled?: () => void;
 }): ReactNode {
   const { hosts, groups, tags, loading, loadFailed, saveHost, deleteHost, saveGroup, saveTag, setHostTags, setHostsGroup, addTagToHosts, removeTagFromHosts, savePassword, saveSshPassphrase, saveRdpCredentials, wakeHost, toggleFavorite, refresh, reload, refreshThumbnail } = useHosts();
-  const { discovered, scan, startScan } = useDiscovery();
+  const { discovered, startScan } = useDiscovery();
   const { settings, update } = useSettings();
   const { livePreviews, setLivePreviews } = useLivePreviews();
   const {
@@ -1602,13 +1601,20 @@ export function Library({
       {/* Top bar */}
       {/*
         It wraps.
-        
-        The bar is a single row of eight fixed controls and a search field,
-        and it used not to wrap: below about 900 pixels it ran off the side
-        of the window with nothing to scroll to, so the buttons at the end
-        of it could not be reached at all. Wrapping puts the last of them on
-        a second row, which is a smaller thing to ask of a person than a
-        control they cannot see.
+
+        The bar is a single row of fixed controls and a search field, and it
+        used not to wrap: below about 900 pixels it ran off the side of the
+        window with nothing to scroll to, so the buttons at the end of it
+        could not be reached at all. Wrapping puts the last of them on a
+        second row, which is a smaller thing to ask of a person than a control
+        they cannot see.
+
+        Two things that used to be here are deliberately not: "new host" and
+        "scan the network". A person reaching this window usually has a number
+        to read out or type in, not a hostname; both actions are still
+        reachable (the empty state, Cmd/Ctrl+N, the command palette and the
+        native menu for a new host, the palette and the Nearby empty state for
+        a scan), they are simply not the first thing offered.
       */}
       <header className="flex flex-wrap items-center gap-3 border-b border-subtle bg-surface/80 px-4 py-2.5">
         <span className="mr-1 flex shrink-0 items-center gap-2">
@@ -1710,21 +1716,6 @@ export function Library({
           onClick={() => setLivePreviews(!livePreviews)}
         >
           <IconActivity size={15} />
-        </button>
-        <button type="button" className="btn-secondary relative overflow-hidden" onClick={() => void startScan().catch((err: unknown) => push("danger", describeError(err)))}>
-          {scan.running ? (
-            <span className="absolute inset-x-0 bottom-0 h-0.5 bg-inset">
-              <span
-                className={classNames("block h-full bg-accent", scan.total === 0 && "indeterminate-bar w-1/3")}
-                style={scan.total > 0 ? { width: `${(scan.done / scan.total) * 100}%` } : undefined}
-              />
-            </span>
-          ) : null}
-          <IconZap size={14} />
-          {scan.running ? t("library.scanning") : t("about.scanNetwork")}
-        </button>
-        <button type="button" className="btn-primary" onClick={() => setHostDialog(draftFromHost(null))}>
-          <IconPlus size={14} /> {t("host.new")}
         </button>
         {/* Routed through the same event the native menu's About item emits,
             so one listener (App.tsx) owns opening the dialog everywhere. */}

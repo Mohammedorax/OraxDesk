@@ -46,7 +46,6 @@ const ar = {
   "registry.advanced": "إعدادات السجل المتقدمة",
   "registry.link": "نسخ رابط المساعدة",
   "device.number": "رقم هذا الجهاز — اقرأه لمن يساعدك",
-  "device.numberLabel": "رقم هذا الجهاز",
   "device.copyNumber": "نسخ الرقم",
   "device.copied": "نُسخ الرقم",
   "device.numberHint": "تسعة أرقام ثابتة لهذا الجهاز. اقرأها على الهاتف لمن يساعدك، أو انسخها.",
@@ -65,6 +64,13 @@ const ar = {
   "device.autoRegisterOff": "التسجيل التلقائي متوقف.",
   "device.id": "معرّف هذا الجهاز، للوصول دون الحضور",
   "device.copyId": "نسخ المعرّف",
+  "device.status.unchecked": "لم يُتحقّق بعد",
+  "device.status.published": "جاهز للاتصال",
+  "device.status.noAddress": "مسجّل، ولا عنوان منشور — شغّل الوصول دون حضور هناك",
+  "device.status.revoked": "أُبطل تسجيل هذا الجهاز",
+  "device.status.notRegistered": "هذا الرقم غير مسجّل في هذا السجل",
+  "device.status.unknown": "تعذّر سؤال السجل",
+  "device.status.check": "تحقّق من السجل الآن",
 
   // شاشة البدء
 
@@ -788,7 +794,6 @@ const ar = {
   "library.livePreviews": "معاينات حيّة",
   "library.livePreviewsHint":
     "معاينات حيّة: البطاقات ذات الجلسة النشطة تعرض صورة حيّة بدل الصورة المحفوظة",
-  "library.scanning": "جارٍ الفحص…",
   "library.aboutAndHelp": "عن البرنامج والمساعدة",
 
   // المكتبة: الحالة الفارغة وما حولها
@@ -1628,7 +1633,6 @@ const en: Record<keyof typeof ar, string> = {
   "registry.advanced": "Advanced registry settings",
   "registry.link": "Copy help link",
   "device.number": "This computer's number - read it out",
-  "device.numberLabel": "This computer's number",
   "device.copyNumber": "Copy number",
   "device.copied": "Number copied",
   "device.numberHint":
@@ -1651,6 +1655,14 @@ const en: Record<keyof typeof ar, string> = {
   "device.autoRegisterOff": "Automatic registration is off.",
   "device.id": "This computer's ID, for reaching it unattended",
   "device.copyId": "Copy ID",
+  "device.status.unchecked": "Not checked yet",
+  "device.status.published": "Ready to connect",
+  "device.status.noAddress":
+    "Registered, no address published — switch on unattended access there",
+  "device.status.revoked": "Revoked",
+  "device.status.notRegistered": "Not registered in this registry",
+  "device.status.unknown": "Could not ask the registry",
+  "device.status.check": "Check the registry now",
 
   // The onboarding screen
   "onboarding.welcome": "Welcome to OraxDesk",
@@ -2395,7 +2407,6 @@ const en: Record<keyof typeof ar, string> = {
   "library.livePreviews": "Live previews",
   "library.livePreviewsHint":
     "Live previews, tiles with an active session show a live picture instead of the saved thumbnail",
-  "library.scanning": "Scanning…",
   "library.aboutAndHelp": "About and help",
 
   // The library: the empty states
