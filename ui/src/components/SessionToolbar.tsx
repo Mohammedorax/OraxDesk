@@ -4,7 +4,9 @@
  *  put away by hand (which is remembered for the next session, unlike the
  *  idle fade), recalled by its chevron or Ctrl/Cmd+Shift+M, which also puts it
  *  away again. Its position is remembered and shared by every mounted
- *  toolbar. */
+ *  toolbar. When its pane is too narrow for all its buttons the weakest
+ *  groups fold into one overflow menu instead of the bar wrapping or
+ *  clipping; which groups, and in what order, is `lib/toolbarLayout`. */
 import {
   useCallback,
   useEffect,
@@ -26,10 +28,15 @@ import { useT, type Translate } from "../lib/i18n";
 import type { LocalCursor } from "../state/SettingsContext";
 import type { CaptureStatus } from "../lib/tauri";
 import { classNames, formatBps, fullscreenHint, isMac, modKeyLabel } from "../lib/util";
+import {
+  collapseToolbarGroups,
+  TOOLBAR_MENU_GROUPS,
+  type ToolbarGroupId,
+} from "../lib/toolbarLayout";
 import { usePaneVisible } from "./Pane";
 import {
   IconActivity, IconCamera, IconChevronDown, IconClipboard, IconCommand, IconDisconnect, IconEye,
-  IconFile, IconGripVertical, IconKeyboard, IconMaximize, IconMonitor, IconPin,
+  IconFile, IconGripVertical, IconKeyboard, IconMaximize, IconMonitor, IconMore, IconPin,
   IconCursor, IconRefresh, IconSearch, IconSplitDown, IconSplitRight, IconTerminal,
 } from "./icons";
 
@@ -55,6 +62,12 @@ const IDLE_MS = 3000;
 const FRESH_MS = 9000;
 /** Gap kept between the toolbar and the edges of the window. */
 const MARGIN = 12;
+/**
+ * What the pill costs beyond the room between its own edges: `px-1.5` and a
+ * one-pixel border on each side, padded, because the folding budget must err
+ * toward fitting rather than toward a bar a few pixels too wide.
+ */
+const ROW_INSET_PX = 16;
 /** Drag within this many pixels of an edge and it docks there. */
 const SNAP_PX = 40;
 /** Travel before a press counts as a drag rather than a click. */
@@ -368,6 +381,57 @@ export function SessionToolbar(props: SessionToolbarProps): ReactNode {
   });
 
   /**
+   * Measure each group of buttons as it renders, so the bar can decide which
+   * groups have to fold to fit its pane (see `lib/toolbarLayout`). The
+   * question is asked in real widths for the same reason the bar itself is
+   * measured rather than assumed: an estimate would either clip the bar at
+   * the pane's edge or fold away controls that in fact fit.
+   *
+   * A folded group unmounts and reports no width; its last measurement is
+   * kept, because it is still the right answer to "how much room comes back
+   * if this group comes back", and re-measuring it would mean rendering the
+   * buttons being avoided. `setGroupWidths` returns the previous object when
+   * nothing moved, so a settled bar costs one pass of `getBoundingClientRect`
+   * per visible group and no second render.
+   */
+  const [groupWidths, setGroupWidths] = useState<Partial<Record<ToolbarGroupId, number>>>({});
+  const groupEls = useRef(new Map<ToolbarGroupId, HTMLElement>());
+  const setGroupEl = useCallback(
+    (id: ToolbarGroupId) =>
+      (el: HTMLElement | null): void => {
+        if (el) groupEls.current.set(id, el);
+        else groupEls.current.delete(id);
+      },
+    [],
+  );
+
+  useLayoutEffect(() => {
+    setGroupWidths((prev) => {
+      let changed = false;
+      const next = { ...prev };
+      for (const [id, el] of groupEls.current) {
+        const w = el.getBoundingClientRect().width;
+        if (w > 0 && Math.abs((next[id] ?? -1) - w) >= 0.5) {
+          next[id] = w;
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  });
+
+  /** The widest the bar may be where it sits, and the room that leaves for
+   *  the buttons once the pill's own padding and border are taken out. */
+  const maxBarWidth = Math.max(0, viewport.w - 2 * MARGIN);
+  const room = Math.max(0, maxBarWidth - ROW_INSET_PX);
+  const collapsedGroups = useMemo(
+    () => collapseToolbarGroups(groupWidths, room),
+    [groupWidths, room],
+  );
+  /** The folded groups that get an entry in the overflow menu. */
+  const overflowGroups = TOOLBAR_MENU_GROUPS.filter((id) => collapsedGroups.has(id));
+
+  /**
    * Fold to the chevron because nobody is using it.
    *
    * Auto-hide is not a choice, so it never reaches `onHiddenChange`: a bar
@@ -652,6 +716,27 @@ export function SessionToolbar(props: SessionToolbarProps): ReactNode {
 
   const capturing = props.captureStatus.state === "active";
 
+  /**
+   * Labels shared by a bar button and the overflow-menu row that stands in
+   * for it when the group is folded, so the two cannot drift into saying
+   * different things about the same control.
+   */
+  const filesLabel =
+    props.filesAvailable === true
+      ? t("session.fileTransfer")
+      : props.filesAvailable === null
+        ? t("session.checkingSsh")
+        : t("session.filesNeedSsh");
+  const terminalLabel =
+    props.terminalAvailable === true
+      ? t("session.terminal")
+      : props.terminalAvailable === null
+        ? t("session.checkingSsh")
+        : t("session.terminalNeedSsh");
+  const splitRightLabel = `${t("about.shortcut.splitRight")} (${modKeyLabel}⌥D)`;
+  const splitDownLabel = `${t("about.shortcut.splitDown")} (${modKeyLabel}⌥⇧D)`;
+  const viewOnlyLabel = props.viewOnly ? t("session.viewOnlyOn") : t("session.viewOnlyOff");
+
   if (collapsed) {
     // The capture indicator survives collapse on purpose: PRD/06 §3 requires
     // the user to always be able to see that their keyboard is grabbed.
@@ -691,219 +776,276 @@ export function SessionToolbar(props: SessionToolbarProps): ReactNode {
           armIdle();
         }}
         /*
-         * Wrap onto a second row rather than run off the edge.
+         * One row that yields, rather than a bar that wraps.
          *
-         * The bar is a single flex row of two dozen controls and is `position:
-         * fixed`, so nothing about the layout stops it growing straight past
-         * the side of its pane and then past the side of the window, taking
-         * the controls at that end out of reach. Clamping the corner keeps the
-         * left of it on screen, which is not the same as keeping all of it on
-         * screen. Given a width to work within it now folds instead, which is
-         * what the rounded pill was always able to do and never asked to.
+         * The bar is a single flex row of two dozen controls and is
+         * `position: fixed`, so nothing about the layout stops it growing
+         * straight past the side of its pane and then past the side of the
+         * window, taking the controls at that end out of reach. Clamping the
+         * corner keeps the left of it on screen, which is not the same as
+         * keeping all of it on screen; wrapping kept the whole bar in view by
+         * laying it across the very desktop it floats on. Given a width to
+         * work within it now folds its weakest groups into the overflow menu
+         * instead (`lib/toolbarLayout` decides which), and `overflow-hidden`
+         * is the belt to that braces: the budget errs toward fitting, so the
+         * clip should never be visible, but a frame spent mid-resize should
+         * clip rather than spill across the pane.
          */
-        style={{ maxWidth: Math.max(160, viewport.w - 2 * MARGIN) }}
-        className="fade-in flex flex-wrap items-center justify-center gap-0.5 rounded-lg border border-subtle bg-raised/95 px-1.5 py-1 shadow-(--shadow-pop) backdrop-blur transition-shadow duration-150 hover:shadow-(--shadow-glow)"
+        style={{ maxWidth: maxBarWidth }}
+        className="fade-in flex flex-nowrap items-center justify-center gap-0.5 overflow-hidden rounded-lg border border-subtle bg-raised/95 px-1.5 py-1 shadow-(--shadow-pop) backdrop-blur transition-shadow duration-150 hover:shadow-(--shadow-glow)"
       >
-        <button
-          type="button"
-          aria-label={t("session.dragToolbar")}
-          className="cursor-grab px-0.5 text-tertiary active:cursor-grabbing"
-          onPointerDown={beginDrag}
-        >
-          <IconGripVertical size={14} />
-        </button>
+        {/*
+          Each group is one span of adjacent buttons, matching the runs the
+          dividers already cut the bar into. A folded group unmounts whole,
+          so it leaves nothing behind but its entry in the overflow menu; the
+          groups that never fold are the ones a person reaches for without
+          looking — the front of the bar, quality, keyboard, and disconnect.
+        */}
+        <span ref={setGroupEl("quick")} className="flex shrink-0 items-center gap-0.5">
+          <button
+            type="button"
+            aria-label={t("session.dragToolbar")}
+            className="cursor-grab px-0.5 text-tertiary active:cursor-grabbing"
+            onPointerDown={beginDrag}
+          >
+            <IconGripVertical size={14} />
+          </button>
+
+          {/*
+            The two things a person does in the first minute of a session, first.
+
+            Fullscreen was the twelfth control and Ctrl+Alt+Del was two menus
+            deep, which meant the two most common requests were the two hardest
+            to find. They are here now, at the front, with the rest of the bar
+            unchanged behind them.
+          */}
+          <ToolButton label={t("session.fullscreen", { hint: fullscreenHint })} onClick={props.onFullscreen}>
+            <IconMaximize size={15} />
+          </ToolButton>
+
+          <ToolButton
+            label={t("session.sendCtrlAltDel", { combo: "Ctrl+Alt+Del" })}
+            onClick={() => props.onSendCombo("ctrl-alt-del")}
+          >
+            <IconCommand size={15} />
+          </ToolButton>
+
+          <Divider />
+        </span>
 
         {/*
-          The two things a person does in the first minute of a session, first.
-
-          Fullscreen was the twelfth control and Ctrl+Alt+Del was two menus
-          deep, which meant the two most common requests were the two hardest
-          to find. They are here now, at the front, with the rest of the bar
-          unchanged behind them.
+          The latency readout yields before the controls do: it only reports,
+          and the same figures live in Session ▸ Connection Info, which
+          needs no toolbar to be reached.
         */}
-        <ToolButton label={t("session.fullscreen", { hint: fullscreenHint })} onClick={props.onFullscreen}>
-          <IconMaximize size={15} />
-        </ToolButton>
-
-        <ToolButton
-          label={t("session.sendCtrlAltDel", { combo: "Ctrl+Alt+Del" })}
-          onClick={() => props.onSendCombo("ctrl-alt-del")}
-        >
-          <IconCommand size={15} />
-        </ToolButton>
-
-        <Divider />
-
-        {/* connection status */}
-        <ToolButton
-          label={t("session.connectionStatus")}
-          active={openMenu === "status"}
-          onClick={() => setOpenMenu(openMenu === "status" ? null : "status")}
-        >
-          <span className={`h-2 w-2 rounded-full ${latencyColor}`} />
-          {/* Fixed width, right-aligned: the figure changes every second, and
-              letting it size itself made the whole toolbar twitch sideways as
-              the reading moved between "-", "9ms" and "290ms". */}
-          <span className="inline-block w-[5ch] text-end text-xs tabular-nums text-secondary">
-            {latency !== null ? `${Math.round(latency)}ms` : "-"}
-          </span>
-        </ToolButton>
-
-        <Divider />
-
-        <ToolButton label={t("host.scaling")} active={openMenu === "scale"} onClick={() => setOpenMenu(openMenu === "scale" ? null : "scale")}>
-          <IconSearch size={15} />
-          <span className="text-xs text-secondary">
-            {props.scalingMode === "custom" ? `${Math.round(props.zoom * 100)}%` : scaleLabel(props.scalingMode, t)}
-          </span>
-        </ToolButton>
-
-        <ToolButton label={t("session.displays")} active={openMenu === "displays"} onClick={() => setOpenMenu(openMenu === "displays" ? null : "displays")}>
-          <IconMonitor size={15} />
-          {props.displayId !== null ? (
-            <span className="text-xs text-secondary">
-              {props.screens.findIndex((s) => s.id === props.displayId) + 1}/{props.screens.length}
-            </span>
-          ) : null}
-        </ToolButton>
-
-        <ToolButton
-          label={t("session.pointers")}
-          active={openMenu === "pointer"}
-          onClick={() => setOpenMenu(openMenu === "pointer" ? null : "pointer")}
-        >
-          <IconCursor size={15} />
-        </ToolButton>
-
-        <ToolButton label={t("host.quality")} active={openMenu === "quality"} onClick={() => setOpenMenu(openMenu === "quality" ? null : "quality")}>
-          <IconActivity size={15} />
-          <span className="text-xs uppercase text-secondary">{qualityBadge(props.quality, t)}</span>
-        </ToolButton>
-
-        <ToolButton
-          label={captureButtonLabel(props.captureStatus, props.passthrough, t)}
-          active={openMenu === "keyboard"}
-          toggled={capturing}
-          onClick={() => setOpenMenu(openMenu === "keyboard" ? null : "keyboard")}
-        >
-          <IconKeyboard size={15} />
-          {props.passthrough ? (
-            <span
-              className={classNames(
-                "h-1.5 w-1.5 rounded-full",
-                capturing
-                  ? "bg-accent"
-                  : props.captureStatus.state === "inactive"
-                    ? "bg-tertiary"
-                    : "bg-warning",
-              )}
-            />
-          ) : null}
-        </ToolButton>
-
-        {capturing ? <CaptureIndicator /> : null}
-
-        <ToolButton label={t("session.sendClipboard")} onClick={props.onClipboardSend}>
-          <IconClipboard size={15} />
-        </ToolButton>
-
-        <ToolButton
-          label={
-            props.filesAvailable === true
-              ? t("session.fileTransfer")
-              : props.filesAvailable === null
-                ? t("session.checkingSsh")
-                : t("session.filesNeedSsh")
-          }
-          disabled={props.filesAvailable !== true}
-          onClick={props.onFiles}
-        >
-          <IconFile size={15} />
-        </ToolButton>
-
-        <ToolButton
-          label={
-            props.terminalAvailable === true
-              ? t("session.terminal")
-              : props.terminalAvailable === null
-                ? t("session.checkingSsh")
-                : t("session.terminalNeedSsh")
-          }
-          disabled={props.terminalAvailable !== true}
-          onClick={props.onTerminal}
-        >
-          <IconTerminal size={15} />
-        </ToolButton>
-
-        <Divider />
-
-        {/* Only a session shown in a tab has panes to divide. A window has
-            nothing to put a second desktop beside. */}
-        {props.onSplit ? (
-          <>
+        {collapsedGroups.has("status") ? null : (
+          <span ref={setGroupEl("status")} className="flex shrink-0 items-center gap-0.5">
             <ToolButton
-              label={`${t("about.shortcut.splitRight")} (${modKeyLabel}⌥D)`}
-              onClick={() => props.onSplit?.("row")}
+              label={t("session.connectionStatus")}
+              active={openMenu === "status"}
+              onClick={() => setOpenMenu(openMenu === "status" ? null : "status")}
             >
-              <IconSplitRight size={15} />
+              <span className={`h-2 w-2 rounded-full ${latencyColor}`} />
+              {/* Fixed width, right-aligned: the figure changes every second, and
+                  letting it size itself made the whole toolbar twitch sideways as
+                  the reading moved between "-", "9ms" and "290ms". */}
+              <span className="inline-block w-[5ch] text-end text-xs tabular-nums text-secondary">
+                {latency !== null ? `${Math.round(latency)}ms` : "-"}
+              </span>
             </ToolButton>
+
+            <Divider />
+          </span>
+        )}
+
+        {collapsedGroups.has("view") ? null : (
+          <span ref={setGroupEl("view")} className="flex shrink-0 items-center gap-0.5">
+            <ToolButton label={t("host.scaling")} active={openMenu === "scale"} onClick={() => setOpenMenu(openMenu === "scale" ? null : "scale")}>
+              <IconSearch size={15} />
+              <span className="text-xs text-secondary">
+                {props.scalingMode === "custom" ? `${Math.round(props.zoom * 100)}%` : scaleLabel(props.scalingMode, t)}
+              </span>
+            </ToolButton>
+
+            <ToolButton label={t("session.displays")} active={openMenu === "displays"} onClick={() => setOpenMenu(openMenu === "displays" ? null : "displays")}>
+              <IconMonitor size={15} />
+              {props.displayId !== null ? (
+                <span className="text-xs text-secondary">
+                  {props.screens.findIndex((s) => s.id === props.displayId) + 1}/{props.screens.length}
+                </span>
+              ) : null}
+            </ToolButton>
+
             <ToolButton
-              label={`${t("about.shortcut.splitDown")} (${modKeyLabel}⌥⇧D)`}
-              onClick={() => props.onSplit?.("column")}
+              label={t("session.pointers")}
+              active={openMenu === "pointer"}
+              onClick={() => setOpenMenu(openMenu === "pointer" ? null : "pointer")}
             >
-              <IconSplitDown size={15} />
+              <IconCursor size={15} />
             </ToolButton>
-          </>
+          </span>
+        )}
+
+        {/*
+          Quality and keyboard stay whatever happens: they are the two answers
+          to "this session feels wrong" — the picture is slow, or the keyboard
+          is not going through — and both report their state on the button.
+        */}
+        <span ref={setGroupEl("tuning")} className="flex shrink-0 items-center gap-0.5">
+          <ToolButton label={t("host.quality")} active={openMenu === "quality"} onClick={() => setOpenMenu(openMenu === "quality" ? null : "quality")}>
+            <IconActivity size={15} />
+            <span className="text-xs uppercase text-secondary">{qualityBadge(props.quality, t)}</span>
+          </ToolButton>
+
+          <ToolButton
+            label={captureButtonLabel(props.captureStatus, props.passthrough, t)}
+            active={openMenu === "keyboard"}
+            toggled={capturing}
+            onClick={() => setOpenMenu(openMenu === "keyboard" ? null : "keyboard")}
+          >
+            <IconKeyboard size={15} />
+            {props.passthrough ? (
+              <span
+                className={classNames(
+                  "h-1.5 w-1.5 rounded-full",
+                  capturing
+                    ? "bg-accent"
+                    : props.captureStatus.state === "inactive"
+                      ? "bg-tertiary"
+                      : "bg-warning",
+                )}
+              />
+            ) : null}
+          </ToolButton>
+
+          {capturing ? <CaptureIndicator /> : null}
+        </span>
+
+        {collapsedGroups.has("transfer") ? null : (
+          <span ref={setGroupEl("transfer")} className="flex shrink-0 items-center gap-0.5">
+            <ToolButton label={t("session.sendClipboard")} onClick={props.onClipboardSend}>
+              <IconClipboard size={15} />
+            </ToolButton>
+
+            <ToolButton
+              label={filesLabel}
+              disabled={props.filesAvailable !== true}
+              onClick={props.onFiles}
+            >
+              <IconFile size={15} />
+            </ToolButton>
+
+            <ToolButton
+              label={terminalLabel}
+              disabled={props.terminalAvailable !== true}
+              onClick={props.onTerminal}
+            >
+              <IconTerminal size={15} />
+            </ToolButton>
+
+            <Divider />
+          </span>
+        )}
+
+        {/*
+          Pane actions fold first: splitting, view-only, a screenshot and a
+          refresh are all things a person sets up and then leaves alone, and
+          a session in a window of its own has no splits to show anyway.
+        */}
+        {collapsedGroups.has("pane") ? null : (
+          <span ref={setGroupEl("pane")} className="flex shrink-0 items-center gap-0.5">
+            {/* Only a session shown in a tab has panes to divide. A window has
+                nothing to put a second desktop beside. */}
+            {props.onSplit ? (
+              <>
+                <ToolButton label={splitRightLabel} onClick={() => props.onSplit?.("row")}>
+                  <IconSplitRight size={15} />
+                </ToolButton>
+                <ToolButton label={splitDownLabel} onClick={() => props.onSplit?.("column")}>
+                  <IconSplitDown size={15} />
+                </ToolButton>
+              </>
+            ) : null}
+
+            <ToolButton
+              label={viewOnlyLabel}
+              toggled={props.viewOnly}
+              onClick={() => props.onViewOnly(!props.viewOnly)}
+            >
+              <IconEye size={15} />
+            </ToolButton>
+
+            <ToolButton label={t("session.saveScreenshot")} onClick={props.onScreenshot}>
+              <IconCamera size={15} />
+            </ToolButton>
+
+            <ToolButton label={t("session.requestRefresh")} onClick={props.onRefresh}>
+              <IconRefresh size={15} />
+            </ToolButton>
+          </span>
+        )}
+
+        {/*
+          The bar's own controls are the last thing to go, and they go
+          outright rather than behind the menu: a pane this narrow is a pane
+          where every pixel counts, and both actions survive elsewhere — the
+          chord Ctrl/Cmd+Shift+M toggles the bar, and Preferences ▸ Session
+          and the native View menu put it away too.
+        */}
+        {collapsedGroups.has("chrome") ? null : (
+          <span ref={setGroupEl("chrome")} className="flex shrink-0 items-center gap-0.5">
+            <ToolButton
+              label={pinned ? t("session.unpin") : t("session.pin")}
+              toggled={pinned}
+              onClick={() => {
+                const v = !pinned;
+                setPinned(v);
+                storeLayout(PIN_KEY, v ? "1" : "0");
+              }}
+            >
+              <IconPin size={15} />
+            </ToolButton>
+
+            {/* Auto-hide only ever arrives on its own schedule, and a pinned
+                toolbar never hides at all, so put it away by hand from here.
+
+                This one is the remembered show/hide: the chevron it leaves behind
+                is the way back, and the chord does the same thing. It is the only
+                control on the bar whose state outlives the session, which is why
+                its label says so rather than repeating "collapse". */}
+            <ToolButton label={t("session.hideToolbar", { chord: `${modKeyLabel}⇧M` })} onClick={hide}>
+              <IconChevronDown size={15} className={menuBelow ? "rotate-180" : ""} />
+            </ToolButton>
+
+            <Divider />
+          </span>
+        )}
+
+        <span ref={setGroupEl("disconnect")} className="flex shrink-0 items-center gap-0.5">
+          <ToolButton
+            label={t("session.disconnect")}
+            danger
+            onClick={props.onDisconnect}
+          >
+            <IconDisconnect size={15} />
+          </ToolButton>
+        </span>
+
+        {/*
+          The one control that stands in for folded groups, and only exists
+          while some group is folded. Its label is the catalogue's, so it
+          reads the same as every other control's tooltip.
+        */}
+        {overflowGroups.length > 0 ? (
+          <ToolButton
+            label={t("session.more")}
+            active={openMenu === "more"}
+            onClick={() => setOpenMenu(openMenu === "more" ? null : "more")}
+          >
+            <IconMore size={15} />
+            <span className="text-xs text-secondary">{t("session.more")}</span>
+          </ToolButton>
         ) : null}
-
-        <ToolButton
-          label={props.viewOnly ? t("session.viewOnlyOn") : t("session.viewOnlyOff")}
-          toggled={props.viewOnly}
-          onClick={() => props.onViewOnly(!props.viewOnly)}
-        >
-          <IconEye size={15} />
-        </ToolButton>
-
-        <ToolButton label={t("session.saveScreenshot")} onClick={props.onScreenshot}>
-          <IconCamera size={15} />
-        </ToolButton>
-
-        <ToolButton label={t("session.requestRefresh")} onClick={props.onRefresh}>
-          <IconRefresh size={15} />
-        </ToolButton>
-
-        <ToolButton
-          label={pinned ? t("session.unpin") : t("session.pin")}
-          toggled={pinned}
-          onClick={() => {
-            const v = !pinned;
-            setPinned(v);
-            storeLayout(PIN_KEY, v ? "1" : "0");
-          }}
-        >
-          <IconPin size={15} />
-        </ToolButton>
-
-        {/* Auto-hide only ever arrives on its own schedule, and a pinned
-            toolbar never hides at all, so put it away by hand from here.
-
-            This one is the remembered show/hide: the chevron it leaves behind
-            is the way back, and the chord does the same thing. It is the only
-            control on the bar whose state outlives the session, which is why
-            its label says so rather than repeating "collapse". */}
-        <ToolButton label={t("session.hideToolbar", { chord: `${modKeyLabel}⇧M` })} onClick={hide}>
-          <IconChevronDown size={15} className={menuBelow ? "rotate-180" : ""} />
-        </ToolButton>
-
-        <Divider />
-
-        <ToolButton
-          label={t("session.disconnect")}
-          danger
-          onClick={props.onDisconnect}
-        >
-          <IconDisconnect size={15} />
-        </ToolButton>
       </div>
 
       {/* menus */}
@@ -1133,6 +1275,106 @@ export function SessionToolbar(props: SessionToolbarProps): ReactNode {
                 <MenuRow onClick={() => props.onSendCombo("alt-f4")}>Alt+F4</MenuRow>
                 <MenuRow onClick={() => props.onSendCombo("escape")}>Escape</MenuRow>
               </div>
+            </div>
+          ) : null}
+          {/*
+            What folded away, offered back.
+
+            The rows are the same buttons with the same labels running the
+            same handlers, in the order they sit on the bar. A dropdown of
+            rows is how this bar already offers everything else, so the
+            overflow is that menu again rather than a second kind of popup:
+            the rows that open a group's own menu switch to it in place, and
+            the rows that are actions close this one as they run.
+          */}
+          {openMenu === "more" ? (
+            <div>
+              {collapsedGroups.has("view") ? (
+                <div>
+                  <MenuRow onClick={() => setOpenMenu("scale")}>{t("host.scaling")}</MenuRow>
+                  <MenuRow onClick={() => setOpenMenu("displays")}>{t("session.displays")}</MenuRow>
+                  <MenuRow onClick={() => setOpenMenu("pointer")}>{t("session.pointers")}</MenuRow>
+                </div>
+              ) : null}
+              {collapsedGroups.has("transfer") ? (
+                <div>
+                  <MenuRow
+                    onClick={() => {
+                      setOpenMenu(null);
+                      props.onClipboardSend();
+                    }}
+                  >
+                    {t("session.sendClipboard")}
+                  </MenuRow>
+                  <MenuRow
+                    disabled={props.filesAvailable !== true}
+                    onClick={() => {
+                      setOpenMenu(null);
+                      props.onFiles();
+                    }}
+                  >
+                    {filesLabel}
+                  </MenuRow>
+                  <MenuRow
+                    disabled={props.terminalAvailable !== true}
+                    onClick={() => {
+                      setOpenMenu(null);
+                      props.onTerminal();
+                    }}
+                  >
+                    {terminalLabel}
+                  </MenuRow>
+                </div>
+              ) : null}
+              {collapsedGroups.has("pane") ? (
+                <div>
+                  {props.onSplit ? (
+                    <>
+                      <MenuRow
+                        onClick={() => {
+                          setOpenMenu(null);
+                          props.onSplit?.("row");
+                        }}
+                      >
+                        {splitRightLabel}
+                      </MenuRow>
+                      <MenuRow
+                        onClick={() => {
+                          setOpenMenu(null);
+                          props.onSplit?.("column");
+                        }}
+                      >
+                        {splitDownLabel}
+                      </MenuRow>
+                    </>
+                  ) : null}
+                  <MenuRow
+                    selected={props.viewOnly}
+                    onClick={() => {
+                      setOpenMenu(null);
+                      props.onViewOnly(!props.viewOnly);
+                    }}
+                  >
+                    {viewOnlyLabel}
+                  </MenuRow>
+                  <MenuRow
+                    onClick={() => {
+                      setOpenMenu(null);
+                      props.onScreenshot();
+                    }}
+                  >
+                    {t("session.saveScreenshot")}
+                  </MenuRow>
+                  <MenuRow
+                    onClick={() => {
+                      setOpenMenu(null);
+                      props.onRefresh();
+                    }}
+                  >
+                    {t("session.requestRefresh")}
+                  </MenuRow>
+                </div>
+              ) : null}
             </div>
           ) : null}
         </div>

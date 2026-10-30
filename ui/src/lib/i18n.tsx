@@ -512,6 +512,7 @@ const ar = {
   "session.pin": "ثبّت الشريط (يبقى ظاهرًا)",
   "session.hideToolbar":
     "أخفِ الشريط ({chord}). يبقى مخفيًّا في الجلسة القادمة، ويعيده الشيفرون",
+  "session.more": "المزيد…",
   "session.disconnect": "افصل (يبقى الجهاز البعيد يعمل)",
   "session.customZoom": "تكبير مخصّص",
   "session.zoomPercent": "نسبة التكبير",
@@ -2117,6 +2118,7 @@ const en: Record<keyof typeof ar, string> = {
   "session.pin": "Pin toolbar (stay visible)",
   "session.hideToolbar":
     "Hide the toolbar ({chord}). It stays hidden next session; the chevron brings it back",
+  "session.more": "More…",
   "session.disconnect": "Disconnect (leaves the remote machine running)",
   "session.customZoom": "Custom zoom",
   "session.zoomPercent": "Zoom percentage",

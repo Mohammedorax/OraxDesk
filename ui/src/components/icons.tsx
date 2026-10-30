@@ -149,6 +149,10 @@ export const IconChevronsUp = (p: IconProps): ReactNode => (
 export const IconGripVertical = (p: IconProps): ReactNode => (
   <Icon {...p}><circle cx="9" cy="6" r="1" fill="currentColor" /><circle cx="9" cy="12" r="1" fill="currentColor" /><circle cx="9" cy="18" r="1" fill="currentColor" /><circle cx="15" cy="6" r="1" fill="currentColor" /><circle cx="15" cy="12" r="1" fill="currentColor" /><circle cx="15" cy="18" r="1" fill="currentColor" /></Icon>
 );
+/** Three dots in a row: the one glyph that says "the rest is in here". */
+export const IconMore = (p: IconProps): ReactNode => (
+  <Icon {...p}><circle cx="5" cy="12" r="1" fill="currentColor" /><circle cx="12" cy="12" r="1" fill="currentColor" /><circle cx="19" cy="12" r="1" fill="currentColor" /></Icon>
+);
 export const IconCommand = (p: IconProps): ReactNode => (
   <Icon {...p}><path d="M9 9V6a3 3 0 1 0-3 3h3zm0 0v6m0-6h6m-6 6v3a3 3 0 1 1-3-3h3zm6-6h3a3 3 0 1 0-3-3v3zm0 0v6m0 0h3a3 3 0 1 1-3 3v-3z" /></Icon>
 );
