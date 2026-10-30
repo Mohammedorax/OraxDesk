@@ -1163,7 +1163,7 @@ function CaptureIndicator({ compact }: { compact?: boolean }): ReactNode {
         "flex items-center gap-1.5 rounded-pill bg-accent/15 text-accent",
         compact
           ? "border border-subtle bg-raised/90 px-2 py-1 shadow-(--shadow-tile) backdrop-blur"
-          : "ml-0.5 px-2 py-1",
+          : "ms-0.5 px-2 py-1",
       )}
     >
       <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-accent" aria-hidden="true" />

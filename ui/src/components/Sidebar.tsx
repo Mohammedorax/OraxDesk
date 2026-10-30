@@ -386,7 +386,7 @@ function GroupRow({
         data-drop={`group:${group.id}`}
         title={dragging ? `Drop here to move these hosts into ${group.name}` : undefined}
         className={classNames(
-          "flex w-full items-center gap-2 rounded-sm py-1.5 pr-2 text-sm",
+          "flex w-full items-center gap-2 rounded-sm py-1.5 pe-2 text-sm",
           active ? "bg-accent/15 font-medium text-primary" : "text-secondary hover:bg-inset hover:text-primary",
           over && "ring-2 ring-accent",
         )}

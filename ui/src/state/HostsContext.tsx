@@ -299,10 +299,12 @@ export function HostsProvider({ children }: { children: ReactNode }): ReactNode 
   /**
    * Read the library and put it on screen.
    *
-   * `revalidate` re-reads every thumbnail, which is what a window that has
-   * just opened needs and what a write does not: the tile pictures do not
-   * change when a host is renamed, and re-reading all of them meant that
-   * saving one host read the PNG of every host in the library.
+   * `revalidate` re-reads the thumbnails already fetched, which is what a
+   * write does not: the tile pictures do not change when a host is renamed,
+   * and re-reading all of them meant that saving one host read the PNG of
+   * every host in the library. A window that has just opened holds no
+   * thumbnails yet — its tiles ask for their own as they come into view —
+   * so its first read re-reads nothing, by design.
    */
   const readLibrary = useCallback(
     async (revalidate: boolean): Promise<void> => {
@@ -358,8 +360,10 @@ export function HostsProvider({ children }: { children: ReactNode }): ReactNode 
   }, [readLibrary]);
 
   useEffect(() => {
-    // The first read of a window re-reads the pictures too, because the
-    // tiles have not asked for them yet.
+    // The first read of a window revalidates the pictures too. Nothing has
+    // been fetched yet, so at first open it re-reads nothing — the tiles ask
+    // for their own images as they come into view — and what it does cover
+    // is a remount of this provider in a window that already fetched some.
     void reload();
   }, [reload]);
 

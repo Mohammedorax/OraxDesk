@@ -202,7 +202,7 @@ function Tab({
           // Always visible on the tab in front: a close button that only shows
           // on hover cannot be found without a pointer.
           className={classNames(
-            "-mr-1 shrink-0 rounded-sm p-0.5 text-tertiary hover:bg-inset hover:text-primary",
+            "-me-1 shrink-0 rounded-sm p-0.5 text-tertiary hover:bg-inset hover:text-primary",
             selected ? "" : "opacity-0 group-hover:opacity-100 focus-visible:opacity-100",
           )}
           onClick={(e) => {

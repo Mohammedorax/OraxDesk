@@ -1617,7 +1617,7 @@ export function Library({
         a scan), they are simply not the first thing offered.
       */}
       <header className="flex flex-wrap items-center gap-3 border-b border-subtle bg-surface/80 px-4 py-2.5">
-        <span className="mr-1 flex shrink-0 items-center gap-2">
+        <span className="me-1 flex shrink-0 items-center gap-2">
           <img
             src="/brand/icon-64.png"
             alt=""

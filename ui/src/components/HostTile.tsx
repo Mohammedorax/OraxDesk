@@ -1,5 +1,5 @@
 /** Host tiles for the Library grid: saved hosts and the discovered-but-unsaved band. */
-import { memo, useEffect, useState, type ReactNode } from "react";
+import { memo, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import type { DiscoveredHost, HostProfile, OsHint } from "../lib/types";
 import {
   DEFAULT_PORT,
@@ -13,6 +13,7 @@ import {
 } from "../lib/types";
 import { useT, type Translate } from "../lib/i18n";
 import { classNames, colorFromId, formatBps } from "../lib/util";
+import { createVisibleOnce, type VisibleOnce } from "../lib/visibleOnce";
 import { useHosts } from "../state/HostsContext";
 import { useLivePreviews, useTileActivity } from "../state/SessionsContext";
 import type { TileActivity } from "../state/sessionActivity";
@@ -240,6 +241,73 @@ function livePreviewOf(activity: TileActivity, enabled: boolean): string | null 
   return enabled && activity.preview ? activity.preview.dataUrl : null;
 }
 
+/**
+ * The Library's one visibility watcher, made when the first tile needs it.
+ *
+ * One observer for every tile rather than one per tile, which is what
+ * `lib/visibleOnce` exists to keep straight.
+ */
+let tileVisibility: VisibleOnce | null = null;
+
+function watchTile(el: Element, onVisible: () => void): () => void {
+  tileVisibility ??= createVisibleOnce(
+    (hit) =>
+      new IntersectionObserver((entries) => {
+        for (const entry of entries) {
+          if (entry.isIntersecting) hit(entry.target);
+        }
+      }),
+  );
+  return tileVisibility.watch(el, onVisible);
+}
+
+/**
+ * Ask for a tile's picture the first time the tile can be seen.
+ *
+ * The grid renders every tile at once, and asking the moment each one
+ * mounted meant opening the window read one PNG per host off disk for
+ * pictures nobody had looked at yet. Watching the tile asks for the first
+ * screenful now and the rest as they are scrolled to.
+ *
+ * `signal` is whatever the caller re-asks on — a fresh capture timestamp.
+ * It is only a dependency here, never a value: once a tile has been seen
+ * the gate is done with that key, and a change of the signal asks again
+ * straight away.
+ *
+ * The gate decides only WHEN the first read happens. `requestThumbnail` in
+ * `HostsContext` still owns the pending/known sets and the generation
+ * counter that stops a slow read from overwriting a newer one, and the
+ * write paths (a save, and the capture event from another window) go
+ * through `refreshThumbnail`, which was never behind this gate.
+ */
+function useThumbnailWhenVisible(
+  key: string,
+  signal: unknown,
+  request: (key: string) => void,
+): (el: HTMLDivElement | null) => void {
+  const elRef = useRef<HTMLDivElement | null>(null);
+  const seen = useRef(new Set<string>());
+  useEffect(() => {
+    const el = elRef.current;
+    if (!el) return;
+    // A webview with no observer falls back to the old behaviour: ask on
+    // render. Eager, but never wrong, and every webview we ship in has one.
+    if (seen.current.has(key) || typeof IntersectionObserver === "undefined") {
+      request(key);
+      return;
+    }
+    return watchTile(el, () => {
+      seen.current.add(key);
+      request(key);
+    });
+  }, [key, signal, request]);
+  // Stable, so React never detaches and re-attaches the element on a
+  // re-render of an already-watched tile.
+  return useCallback((el: HTMLDivElement | null) => {
+    elRef.current = el;
+  }, []);
+}
+
 function HostTileView({
   host,
   selected,
@@ -271,9 +339,7 @@ function HostTileView({
   // the two drift apart easily (an ad-hoc session writes a file against no
   // profile row at all). A host without one costs a single empty IPC reply,
   // whereas trusting a stale null leaves a tile permanently blank.
-  useEffect(() => {
-    requestThumbnail(host.id);
-  }, [host.id, host.thumbnailAt, requestThumbnail]);
+  const tileRef = useThumbnailWhenVisible(host.id, host.thumbnailAt, requestThumbnail);
 
   const thumb = thumbnailUrl(host.id);
   // Subscribed to this host's key only: another session's stats tick, or a
@@ -287,6 +353,7 @@ function HostTileView({
       // a marquee sweep or a drag is about (see useHostDragSelect), so it must
       // stay on the outermost element of the tile.
       data-host-id={host.id}
+      ref={tileRef}
       role="button"
       tabIndex={0}
       aria-label={t("host.tileAria", {
@@ -517,10 +584,9 @@ export function DiscoveredTile({
   // The tile asks for its own image. Leaving this to the Library was the
   // reason a Nearby machine never showed one: the grid read the cache but
   // nothing ever populated it for an endpoint key, so the lookup was null on
-  // every render no matter how many screenshots were on disk.
-  useEffect(() => {
-    requestThumbnail(key);
-  }, [key, requestThumbnail]);
+  // every render no matter how many screenshots were on disk. Asked when the
+  // tile can be seen, as a saved host's tile is.
+  const tileRef = useThumbnailWhenVisible(key, null, requestThumbnail);
 
   const image = thumb ?? thumbnailUrl(key);
   const activity = useTileActivity(key);
@@ -558,7 +624,7 @@ export function DiscoveredTile({
       </span>
     );
   return (
-    <div className="flex flex-col overflow-hidden rounded-md border border-dashed border-strong bg-transparent">
+    <div className="flex flex-col overflow-hidden rounded-md border border-dashed border-strong bg-transparent" ref={tileRef}>
       <div
         className="relative flex aspect-[16/10] items-center justify-center overflow-hidden"
         style={{ background: `color-mix(in srgb, ${colorFromId(host.address)} 22%, transparent)` }}
