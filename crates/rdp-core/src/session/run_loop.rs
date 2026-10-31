@@ -49,7 +49,7 @@ use tokio_util::sync::CancellationToken;
 use crate::channels::{ChannelCtx, Outbox, StaticChannels};
 use crate::connection::activate::{self, Activated};
 use crate::connection::ChannelMap;
-use crate::error::{RdpError, Result};
+use crate::error::{ConnectStage, RdpError, Result};
 use crate::options::ResolvedOptions;
 use crate::session::cookie::ReconnectCookie;
 use crate::session::graphics::Graphics;
@@ -58,6 +58,47 @@ use crate::session::redirect::Redirection;
 use crate::session::signal::{DisconnectSignal, SessionSignal};
 use crate::transport::framer::{Framed, FramedKind, Framer};
 use crate::transport::writer::Outbound;
+
+/// How long a Refresh Rect probe may go unanswered before the server is
+/// declared wedged (PRD/05 §6.4).
+///
+/// The same budget the RFB loop's probe uses
+/// (`crates/vnc-core/src/session/run_loop.rs:44`) and for the same reason:
+/// the probe is a message the far side's own loop must answer, so silence
+/// past the budget is a wedged loop, not a quiet desktop. TCP keepalive
+/// cannot substitute: a loop wedged while its kernel still ACKs keepalives
+/// is a live socket forever.
+const PROBE_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Re-send an unanswered probe after this, so one lost answer does not
+/// decide the session.
+///
+/// Only the ANSWER clock moves on a re-send. The dead-peer anchor
+/// (`probe_unanswered_since`) is the first unanswered probe of the streak
+/// and deliberately does not, or a peer that never answers would be probed
+/// for ever (`crates/vnc-core/src/session/run_loop.rs:104`). Five seconds,
+/// as there.
+const PROBE_STALE: Duration = Duration::from_secs(5);
+
+/// Consecutive probes answered with far more than the one pixel they asked
+/// for before the probe is switched off for the rest of the session.
+///
+/// A server may round a one pixel redraw up to a repaint of much more than
+/// the region named, and then the probe costs more than the detection it
+/// buys — the exact measurement that made the RFB one-pixel probe switch
+/// itself off (`crates/vnc-core/src/session/run_loop.rs:124`). Two in a
+/// row, as there: once for a window that opened at the wrong moment, once
+/// to be sure. Once off, detection falls back to what it was before this
+/// probe existed — the transport's keepalive schedule, which bounds a dead
+/// socket and nothing else.
+const PROBE_FULL_REPAINT_STRIKES: u8 = 2;
+
+/// Bytes of answer that read a one pixel probe's response as a repaint of
+/// far more than the region it named (see [`PROBE_FULL_REPAINT_STRIKES`]).
+///
+/// 64 KiB is several tiles of 32bpp at any sane depth: an answer to a
+/// one-pixel question that arrived this big was not one.
+const PROBE_ANSWER_MAX_BYTES: u64 = 64 * 1024;
 
 /// How a connection ended when it did not fail.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -156,6 +197,19 @@ pub struct RunLoop<R> {
     /// Frames and rectangles handed to the renderer since the last tick.
     frames_since_tick: u32,
     rects_decoded: u64,
+    /// The liveness probe that is out, if any: when it went out, and the
+    /// receive counter when it did, so any later bytes read as its answer
+    /// (see [`RunLoop::probe_tick`]).
+    probe_sent: Option<(Instant, u64)>,
+    /// When the first still-unanswered probe of the current streak went out.
+    /// Armed once per streak and not moved by a re-send, so a peer that
+    /// never answers still reaches [`PROBE_TIMEOUT`] (see [`PROBE_STALE`]).
+    probe_unanswered_since: Option<Instant>,
+    /// Consecutive answers that read as a repaint of far more than the
+    /// probe asked for (see [`PROBE_FULL_REPAINT_STRIKES`]).
+    probe_full_answers: u8,
+    /// The probe is off for the rest of this session.
+    probe_disabled: bool,
 }
 
 impl<R: AsyncRead + Unpin> RunLoop<R> {
@@ -198,6 +252,10 @@ impl<R: AsyncRead + Unpin> RunLoop<R> {
             last_tick_at: None,
             frames_since_tick: 0,
             rects_decoded: 0,
+            probe_sent: None,
+            probe_unanswered_since: None,
+            probe_full_answers: 0,
+            probe_disabled: false,
         }
     }
 
@@ -1097,24 +1155,34 @@ impl<R: AsyncRead + Unpin> RunLoop<R> {
     /// request, and this is the same idea: ask the server to resend everything
     /// it thinks is already on screen.
     fn encode_refresh(&self) -> Result<Bytes> {
-        use rdp_pdu::io::{Encode, Writer};
-        use rdp_pdu::rdp::control::{Rectangle16, RefreshRectPdu};
-
+        use rdp_pdu::rdp::control::Rectangle16;
         let (w, h) = self.activated.desktop;
+        // `TS_RECTANGLE16` is inclusive on the right and bottom edges, like
+        // `TS_BITMAP_DATA` and unlike a surface command (MS-RDPBCGR
+        // 2.2.11.2.1).
+        self.encode_refresh_area(Rectangle16 {
+            left: 0,
+            top: 0,
+            right: w.saturating_sub(1),
+            bottom: h.saturating_sub(1),
+        })
+    }
+
+    /// One Refresh Rect PDU over `area` alone (MS-RDPBCGR 2.2.11.2).
+    ///
+    /// Split out of [`Self::encode_refresh`] because the liveness probe asks
+    /// for ONE PIXEL with it (see [`Self::probe_tick`]) and the manual
+    /// Refresh asks for the whole desktop; the addressing is one function
+    /// either way, so a Refresh Rect and a Client Info PDU still cannot
+    /// disagree about it (`crate::connection::activate::send_data_request`).
+    fn encode_refresh_area(&self, area: rdp_pdu::rdp::control::Rectangle16) -> Result<Bytes> {
+        use rdp_pdu::io::{Encode, Writer};
+        use rdp_pdu::rdp::control::RefreshRectPdu;
+
         let pdu = SharePdu::data(
             self.channels.user_channel_id,
             self.activated.share_id,
-            ShareDataPdu::RefreshRect(RefreshRectPdu {
-                areas: vec![Rectangle16 {
-                    left: 0,
-                    top: 0,
-                    // `TS_RECTANGLE16` is inclusive on the right and bottom
-                    // edges, like `TS_BITMAP_DATA` and unlike a surface
-                    // command (MS-RDPBCGR 2.2.11.2.1).
-                    right: w.saturating_sub(1),
-                    bottom: h.saturating_sub(1),
-                }],
-            }),
+            ShareDataPdu::RefreshRect(RefreshRectPdu { areas: vec![area] }),
         );
         let mut body = Vec::with_capacity(pdu.size());
         pdu.encode_checked(&mut Writer::new(&mut body))?;
@@ -1123,6 +1191,104 @@ impl<R: AsyncRead + Unpin> RunLoop<R> {
             self.channels.io_channel_id,
             &body,
         )
+    }
+
+    /// The application level liveness probe, once per stats tick.
+    ///
+    /// RDP gives a client no heartbeat to ask with: the Heartbeat PDU
+    /// (MS-RDPBCGR 2.2.16.1) is server-to-client only, and this build decodes
+    /// and ignores it (`crate::connection::activate`). The protocol-native
+    /// question a client CAN ask is the Refresh Rect PDU (MS-RDPBCGR
+    /// 2.2.11.2), whose answer the specification does not leave to the
+    /// server's discretion: "Once this PDU has been processed, the server MUST
+    /// send updated graphics data for the region specified by the PDU"
+    /// (MS-RDPBCGR 3.3.5.11.1). That is the same bargain the RFB loop's probe
+    /// relies on — an unanswered `FramebufferUpdateRequest` closes nothing
+    /// there because RFB requires an answer to every one
+    /// (`crates/vnc-core/src/session/run_loop.rs:2761`) — so the same shape
+    /// applies here: ask about one pixel when the stream goes quiet, read any
+    /// later bytes as the answer, and call a peer that stays silent past
+    /// [`PROBE_TIMEOUT`] wedged rather than waiting for a keepalive that a
+    /// wedged loop with a live socket never triggers.
+    ///
+    /// One pixel rather than the desktop the manual Refresh asks for, so the
+    /// redraw a conforming server sends back is one pixel too. Only sent when
+    /// the server advertised `refreshRectSupport`
+    /// (`Activated::server_refresh_rect_support`).
+    async fn probe_tick(&mut self, received: u64) -> Result<()> {
+        use rdp_pdu::rdp::control::Rectangle16;
+
+        /// The region a probe names: one pixel, in the inclusive coordinates
+        /// `TS_RECTANGLE16` uses (MS-RDPBCGR 2.2.11.2.1).
+        const AREA: Rectangle16 = Rectangle16 {
+            left: 0,
+            top: 0,
+            right: 0,
+            bottom: 0,
+        };
+
+        if let Some((sent_at, baseline)) = self.probe_sent {
+            if received > baseline {
+                // Any bytes close the probe, the way the RFB loop reads the
+                // next update header as its answer arriving: the traffic a
+                // quiet desktop produced IS the server's redraw. A repaint of
+                // far more than the pixel asked for counts the strikes that
+                // switch the probe off (see [`PROBE_FULL_REPAINT_STRIKES`]).
+                let answered = received - baseline;
+                self.probe_sent = None;
+                self.probe_unanswered_since = None;
+                if answered > PROBE_ANSWER_MAX_BYTES {
+                    self.probe_full_answers = self.probe_full_answers.saturating_add(1);
+                    if self.probe_full_answers >= PROBE_FULL_REPAINT_STRIKES {
+                        tracing::debug!(
+                            "the server repaints far more than a one pixel refresh asked for; \
+                             the liveness probe is off for this session"
+                        );
+                        self.probe_disabled = true;
+                    }
+                } else {
+                    self.probe_full_answers = 0;
+                }
+                return Ok(());
+            }
+            if self
+                .probe_unanswered_since
+                .is_some_and(|since| since.elapsed() > PROBE_TIMEOUT)
+            {
+                // A wedged peer: the socket keeps ACKing (the framer would
+                // report an error if it did not) but nothing above it ever
+                // answers. Transient, so the supervisor dials the machine
+                // again rather than parking the window on a frozen picture.
+                return Err(RdpError::Timeout {
+                    stage: ConnectStage::Connected,
+                });
+            }
+            if sent_at.elapsed() > PROBE_STALE {
+                // One unanswered probe may simply have lost its answer: ask
+                // again, without moving the dead-peer anchor.
+                let bytes = self.encode_refresh_area(AREA)?;
+                self.send(Outbound::Frame(bytes)).await?;
+                self.probe_sent = Some((Instant::now(), received));
+            }
+            return Ok(());
+        }
+        // No probe outstanding. A whole tick with no byte at all is the
+        // quiet streak that makes one worth asking; a stream carrying
+        // anything is a server that is demonstrably answering for itself.
+        if !self.probe_disabled
+            && self.activated.server_refresh_rect_support
+            && received == self.last_received
+        {
+            let bytes = self.encode_refresh_area(AREA)?;
+            self.send(Outbound::Frame(bytes)).await?;
+            let now = Instant::now();
+            self.probe_sent = Some((now, received));
+            // Armed with the FIRST probe of a streak only: the re-send above
+            // restarts the answer clock but must not restart the dead-peer
+            // budget (see [`PROBE_STALE`]).
+            self.probe_unanswered_since.get_or_insert(now);
+        }
+        Ok(())
     }
 
     /// Count a frame on its way to the renderer.
@@ -1151,6 +1317,11 @@ impl<R: AsyncRead + Unpin> RunLoop<R> {
         self.vc.flush_pending_resize(ctx, &mut out)?;
         self.flush_channel(out).await?;
 
+        // Dead-peer detection, before the stats this tick also reports: a
+        // verdict that waits behind a readout is a verdict with a lie in it.
+        let received = self.received.load(Ordering::Relaxed);
+        self.probe_tick(received).await?;
+
         // Seconds since the last tick, not the interval it was asked for. A
         // tick that arrives late would otherwise report a rate that is too
         // high by however late it was.
@@ -1162,7 +1333,6 @@ impl<R: AsyncRead + Unpin> RunLoop<R> {
             .unwrap_or(1.0);
         self.last_tick_at = Some(now);
 
-        let received = self.received.load(Ordering::Relaxed);
         let sent = self.sent.load(Ordering::Relaxed);
         let stats = remote_core::SessionStats {
             bytes_received: received,
@@ -1315,6 +1485,9 @@ mod tests {
             desktop: (64, 64),
             server_input_flags: rdp_pdu::rdp::capabilities::input_flags::MOUSEX
                 | rdp_pdu::rdp::capabilities::input_flags::MOUSE_HWHEEL,
+            // TRUE, so the liveness probe is armed in tests that do not say
+            // otherwise; the one that tests the gate flips it.
+            server_refresh_rect_support: true,
         }
     }
 
@@ -1961,5 +2134,177 @@ mod tests {
 
         let first = erx.recv().await.expect("the parked update was drawn");
         assert!(matches!(first, SessionEvent::FramebufferUpdate { .. }));
+    }
+
+    /// The liveness probe's whole life: it waits for a quiet tick, it is a
+    /// one pixel Refresh Rect (MS-RDPBCGR 2.2.11.2), any bytes answer it, and
+    /// the next quiet streak arms a fresh one.
+    #[tokio::test]
+    async fn a_probe_goes_out_when_the_stream_goes_quiet_and_any_bytes_answer_it() {
+        use rdp_pdu::rdp::control::Rectangle16;
+
+        let (tx, mut rx) = mpsc::channel(crate::transport::writer::WRITER_QUEUE);
+        let (events, _erx) = mpsc::channel(16);
+        let mut rl = loop_with(&[][..], tx);
+
+        // Nothing has been received since the last tick, so the probe goes
+        // out — and it asks about exactly one pixel, so the redraw a
+        // conforming server answers with is one pixel too (MS-RDPBCGR
+        // 3.3.5.11.1).
+        rl.tick(&events).await.expect("tick");
+        let Outbound::Frame(frame) = rx.try_recv().expect("one probe queued") else {
+            panic!("a probe is a frame");
+        };
+        let mut r = Reader::new(&frame);
+        let mut body = x224::read_data_tpdu(&mut r).expect("data tpdu");
+        let DomainMcsPdu::SendDataRequest { payload, .. } =
+            DomainMcsPdu::decode(&mut body).expect("mcs")
+        else {
+            panic!("a probe is a send data request");
+        };
+        match SharePdu::decode(&mut Reader::new(&payload.to_bytes(&frame))).expect("share pdu") {
+            SharePdu::Data {
+                pdu: ShareDataPdu::RefreshRect(pdu),
+                ..
+            } => assert_eq!(
+                pdu.areas,
+                vec![Rectangle16 {
+                    left: 0,
+                    top: 0,
+                    right: 0,
+                    bottom: 0
+                }]
+            ),
+            other => panic!("expected a one pixel refresh rect, got {other:?}"),
+        }
+
+        // Any bytes at all are the answer, and the probe closes on them: a
+        // stream carrying traffic is a server that answers for itself.
+        rl.received.fetch_add(64, std::sync::atomic::Ordering::Relaxed);
+        rl.tick(&events).await.expect("tick");
+        assert!(rx.try_recv().is_err(), "the answer closed the probe");
+        assert!(rl.probe_sent.is_none() && rl.probe_unanswered_since.is_none());
+
+        // A fresh quiet streak arms a fresh probe.
+        rl.tick(&events).await.expect("tick");
+        rx.try_recv().expect("a new probe once the stream is quiet again");
+    }
+
+    /// A peer that never answers a probe the specification says it MUST
+    /// answer (MS-RDPBCGR 3.3.5.11.1) is a wedged loop, and ends the session
+    /// as a TRANSIENT failure so the supervisor dials the machine again —
+    /// the same verdict the RFB loop reaches for an unanswered
+    /// FramebufferUpdateRequest.
+    #[tokio::test]
+    async fn an_unanswered_probe_ends_the_session_as_a_transient_timeout() {
+        let (tx, _rx) = mpsc::channel(crate::transport::writer::WRITER_QUEUE);
+        let (events, _erx) = mpsc::channel(16);
+        let mut rl = loop_with(&[][..], tx);
+        let stale = Instant::now()
+            .checked_sub(PROBE_TIMEOUT + Duration::from_secs(1))
+            .unwrap_or_else(Instant::now);
+        rl.probe_sent = Some((stale, 0));
+        rl.probe_unanswered_since = Some(stale);
+
+        let err = rl
+            .tick(&events)
+            .await
+            .expect_err("silence past the budget is a dead peer");
+        assert!(
+            matches!(err, RdpError::Timeout {
+                stage: ConnectStage::Connected,
+            }),
+            "{err:?}"
+        );
+        assert!(err.is_transient(), "the ladder must redial: {err}");
+    }
+
+    /// A re-send buys a fresh ANSWER clock and nothing else. The dead-peer
+    /// anchor is the first unanswered probe of the streak, so a peer that
+    /// never answers is still declared dead at the budget and cannot be
+    /// probed for ever (see `PROBE_STALE`).
+    #[tokio::test]
+    async fn a_re_send_does_not_move_the_dead_peer_anchor() {
+        let (tx, mut rx) = mpsc::channel(crate::transport::writer::WRITER_QUEUE);
+        let (events, _erx) = mpsc::channel(16);
+        let mut rl = loop_with(&[][..], tx);
+
+        // The last probe went out long enough ago to be re-sent, and the
+        // streak is young: the tick asks again and the anchor stays put.
+        let anchor = Instant::now()
+            .checked_sub(Duration::from_secs(2))
+            .unwrap_or_else(Instant::now);
+        let stale_answer_clock = Instant::now()
+            .checked_sub(PROBE_STALE + Duration::from_secs(1))
+            .unwrap_or_else(Instant::now);
+        rl.probe_sent = Some((stale_answer_clock, 0));
+        rl.probe_unanswered_since = Some(anchor);
+        rl.tick(&events).await.expect("tick");
+        rx.try_recv().expect("the re-sent probe");
+        let Some((sent_at, baseline)) = rl.probe_sent else {
+            panic!("the probe is still out");
+        };
+        assert!(sent_at.elapsed() < PROBE_STALE, "a fresh answer clock");
+        assert_eq!(baseline, 0);
+        assert_eq!(rl.probe_unanswered_since, Some(anchor), "the anchor is not moved");
+
+        // Now the anchor itself is past the budget while a re-send just went
+        // out: the verdict stands, because it was the streak and not the last
+        // probe that ran out of time.
+        let dead = Instant::now()
+            .checked_sub(PROBE_TIMEOUT + Duration::from_secs(1))
+            .unwrap_or_else(Instant::now);
+        rl.probe_unanswered_since = Some(dead);
+        let err = rl
+            .tick(&events)
+            .await
+            .expect_err("a re-send cannot buy a silent peer another budget");
+        assert!(matches!(err, RdpError::Timeout { .. }), "{err:?}");
+    }
+
+    /// A server that answers one pixel with a repaint of far more than that
+    /// makes every probe cost more than the detection it buys — the
+    /// measurement that switched the RFB probe off — so two such answers turn
+    /// it off for the session (see `PROBE_FULL_REPAINT_STRIKES`).
+    #[tokio::test]
+    async fn a_server_that_repaints_the_world_gets_no_more_probes() {
+        let (tx, mut rx) = mpsc::channel(crate::transport::writer::WRITER_QUEUE);
+        let (events, _erx) = mpsc::channel(16);
+        let mut rl = loop_with(&[][..], tx);
+
+        rl.tick(&events).await.expect("tick");
+        let _first = rx.try_recv().expect("the first probe");
+        rl.received
+            .fetch_add(PROBE_ANSWER_MAX_BYTES + 1, std::sync::atomic::Ordering::Relaxed);
+        rl.tick(&events).await.expect("tick");
+        assert!(!rl.probe_disabled, "one repaint is not a pattern yet");
+
+        rl.tick(&events).await.expect("tick");
+        let _second = rx.try_recv().expect("the second probe");
+        rl.received
+            .fetch_add(PROBE_ANSWER_MAX_BYTES + 1, std::sync::atomic::Ordering::Relaxed);
+        rl.tick(&events).await.expect("tick");
+        assert!(rl.probe_disabled, "two repaints in a row are enough");
+
+        rl.tick(&events).await.expect("tick");
+        assert!(
+            rx.try_recv().is_err(),
+            "no probe goes out once the server has proven each one a repaint"
+        );
+    }
+
+    /// The Refresh Rect PDU is only sent to a server that advertised
+    /// `refreshRectSupport` (MS-RDPBCGR 2.2.7.1.1): an unsolicited PDU at a
+    /// server that never claimed to speak it is not a probe, it is a hazard.
+    #[tokio::test]
+    async fn a_server_that_advertised_no_refresh_rect_support_is_never_probed() {
+        let (tx, mut rx) = mpsc::channel(crate::transport::writer::WRITER_QUEUE);
+        let (events, _erx) = mpsc::channel(16);
+        let mut rl = loop_with(&[][..], tx);
+        rl.activated.server_refresh_rect_support = false;
+
+        rl.tick(&events).await.expect("tick");
+        assert!(rx.try_recv().is_err());
+        assert!(rl.probe_sent.is_none());
     }
 }

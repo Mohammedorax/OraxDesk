@@ -91,6 +91,13 @@ pub struct Activated {
     /// (MS-RDPBCGR 2.2.7.1.6), which gates the horizontal wheel and the
     /// extended pointer buttons on the input path (PRDRDP/05 §3.3, §3.4).
     pub server_input_flags: u16,
+    /// What the server's General Capability Set said about the Refresh Rect
+    /// PDU (`refreshRectSupport`, MS-RDPBCGR 2.2.7.1.1).
+    ///
+    /// The connected pump's liveness probe sends one every quiet streak
+    /// (`crate::session::run_loop::RunLoop::probe_tick`), and a PDU the
+    /// server never claimed to speak is not one to send unsolicited.
+    pub server_refresh_rect_support: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -414,11 +421,18 @@ pub fn activated_from(
         Some(CapabilitySet::Input(set)) => set.input_flags,
         _ => 0,
     };
+    // Absent counts as "no": the General set is where the flag lives, and a
+    // server that sent none has said nothing about speaking Refresh Rect.
+    let server_refresh_rect_support = demand
+        .capabilities
+        .general()
+        .is_some_and(|general| general.refresh_rect_support != 0);
     Activated {
         share_id: demand.share_id,
         server_pdu_source: pdu_source,
         desktop,
         server_input_flags,
+        server_refresh_rect_support,
     }
 }
 

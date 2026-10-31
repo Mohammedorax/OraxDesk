@@ -657,8 +657,17 @@ fn state_tag(state: &SessionState) -> Option<String> {
     Some(value.get("state")?.as_str()?.to_string())
 }
 
-/// Forward a session's events until its event stream ends, then clean up the
-/// registry entry and tell the UI the session is over.
+/// Forward a session's events, retiring the registry entry when the terminal
+/// state passes through, and finishing whatever is left when the event stream
+/// ends.
+///
+/// The entry is retired on the TERMINAL STATE rather than on the stream
+/// draining, because draining waits for every sender clone to drop and a
+/// Boundary `exec` task holds one for as long as its `client.call` may run
+/// (`crates/boundary-driver/src/lib.rs:277`, `timeout + 15 s`). Under the old
+/// schedule a Reconnect pressed in that window found the entry still
+/// registered and failed with "still shutting down" (see
+/// [`retire_session`]).
 #[allow(clippy::too_many_arguments)] // internal plumbing fan-out, not an API
 fn forward_events(
     app: AppHandle,
@@ -678,6 +687,11 @@ fn forward_events(
         // rather than once per 20 ms packet).
         let mut auth_method: Option<String> = None;
         let mut audio_format: Option<(u32, u8)> = None;
+        // Whether the terminal state already took this id out of the
+        // registry, so the drain-time path below does not repeat the
+        // farewell — or worse, take out a REPLACEMENT that registered the
+        // same id in the meantime.
+        let mut retired = false;
         loop {
             let Some(event) = rx.recv().await else {
                 // The session task has ended and dropped its sender.
@@ -834,6 +848,14 @@ fn forward_events(
                     .lock()
                     .insert(session_id.clone(), req.clone());
             }
+            // The terminal state is the last lifecycle event a driver sends
+            // (every supervisor emits it on every exit path, and the Boundary
+            // driver at the end of its task), so it — not the channel
+            // draining — is where this incarnation of the session id ends.
+            let terminal = matches!(
+                &event,
+                SessionEvent::StateChanged(SessionState::Disconnected { .. })
+            );
             match event {
                 SessionEvent::FramebufferUpdate { rects, damage } => {
                     // JPEG tiles become pixels here, once, for both consumers
@@ -922,52 +944,96 @@ fn forward_events(
                     }
                 }
             }
+            if terminal && !retired {
+                retired = true;
+                retire_session(&app, &sessions, &creds_ctx, &session_id, &window_label);
+            }
         }
-        // No more input can be queued for this session, so its ordering gate
-        // goes with it; a call numbered for a dead session is admitted and
-        // then fails on the missing channel, which is the right answer.
-        input_orders().lock().remove(&session_id);
-
-        // Event stream closed: the session task has fully ended. Any
-        // credential the user asked to remember but that never reached
-        // `Connected` dies here, unwritten.
-        creds_ctx.pending.lock().remove(&session_id);
-        // And so does an authentication prompt that was still on screen. The
-        // prompt is only removed when the session moves out of
-        // `Authenticating`, so a session that was cancelled while it was
-        // asking for a password left its request behind for the life of the
-        // process.
-        if let Some(app_state) = app.try_state::<AppState>() {
-            app_state.pending_prompts.lock().remove(&session_id);
+        // A driver that ended WITHOUT a terminal state (a panic took the
+        // session task) still gets its cleanup, on the schedule this always
+        // used: the event stream draining. Everything below is skipped when
+        // the terminal state already did it.
+        if !retired {
+            retire_session(&app, &sessions, &creds_ctx, &session_id, &window_label);
         }
-        let entry = sessions.lock().remove(&session_id);
-        // An attachment must not outlive the session it attached to: the id
-        // would otherwise still read as agent driven in a pane, and a later
-        // session that happened to reuse it would inherit somebody else's
-        // revocation.
-        if let Some(state) = app.try_state::<AppState>() {
-            state.agent.forget(&session_id);
-            let _ = app.emit(
-                crate::agent::AGENT_EVENT,
-                serde_json::json!({ "type": "detached", "sessionId": session_id }),
-            );
-        }
-        let duration_s = entry.map(|e| e.started_at.elapsed().as_secs()).unwrap_or(0);
-        let _ = app.emit_to(
-            &window_label,
-            "session://event",
-            serde_json::json!({
-                "sessionId": session_id,
-                "type": "ended",
-                "durationS": duration_s,
-            }),
-        );
-        let _ = app.emit(
-            SESSIONS_EVENT,
-            serde_json::json!({ "type": "ended", "sessionId": session_id }),
-        );
-        tracing::info!(session = %session_id, duration_s, "session ended");
     });
+}
+
+/// Take a finished session out of the registry and tell the world it is
+/// over.
+///
+/// Called when the forwarding task forwards the terminal `Disconnected`
+/// state — and NOT when the event channel drains, which is what this cleanup
+/// used to wait for. The channel drains only when every sender clone has
+/// dropped, and a Boundary `exec` task holds one for as long as its
+/// `client.call` may run (`crates/boundary-driver/src/lib.rs:277`,
+/// `timeout + 15 s`), so the old schedule left the entry registered long
+/// past [`reap_existing_session`]'s budget and a Reconnect clicked in that
+/// window failed with "still shutting down". A terminal state, by contrast,
+/// is sent by the driver task itself the moment the session ends, so
+/// retiring on it is bounded by event processing rather than by how long a
+/// remote command may run. The drain-time path calls this too, which is why
+/// it is one function: whichever path gets here first does the work and the
+/// other finds it done (`retired` in [`forward_events`]).
+///
+/// The registry entry goes LAST, after every farewell. `reap_existing_session`
+/// waits for exactly this removal before letting a replacement register the
+/// same id, so everything a person sees about the session ending — the
+/// detached announcement, the `ended` in the window and in the Library — is
+/// on its way before the slot frees.
+fn retire_session(
+    app: &AppHandle,
+    sessions: &Arc<Mutex<HashMap<String, SessionEntry>>>,
+    creds_ctx: &CredentialSaveCtx,
+    session_id: &str,
+    window_label: &str,
+) {
+    // No more input can be queued for this session, so its ordering gate
+    // goes with it; a call numbered for a dead session is admitted and
+    // then fails on the missing channel, which is the right answer.
+    input_orders().lock().remove(session_id);
+
+    // Any credential the user asked to remember but that never reached
+    // `Connected` dies here, unwritten.
+    creds_ctx.pending.lock().remove(session_id);
+    // And so does an authentication prompt that was still on screen. The
+    // prompt is only removed when the session moves out of
+    // `Authenticating`, so a session that was cancelled while it was
+    // asking for a password left its request behind for the life of the
+    // process.
+    if let Some(app_state) = app.try_state::<AppState>() {
+        app_state.pending_prompts.lock().remove(session_id);
+    }
+    let started_at = sessions.lock().get(session_id).map(|entry| entry.started_at);
+    // An attachment must not outlive the session it attached to: the id
+    // would otherwise still read as agent driven in a pane, and a later
+    // session that happened to reuse it would inherit somebody else's
+    // revocation.
+    if let Some(state) = app.try_state::<AppState>() {
+        state.agent.forget(session_id);
+        let _ = app.emit(
+            crate::agent::AGENT_EVENT,
+            serde_json::json!({ "type": "detached", "sessionId": session_id }),
+        );
+    }
+    let duration_s = started_at
+        .map(|started| started.elapsed().as_secs())
+        .unwrap_or(0);
+    let _ = app.emit_to(
+        window_label,
+        "session://event",
+        serde_json::json!({
+            "sessionId": session_id,
+            "type": "ended",
+            "durationS": duration_s,
+        }),
+    );
+    let _ = app.emit(
+        SESSIONS_EVENT,
+        serde_json::json!({ "type": "ended", "sessionId": session_id }),
+    );
+    sessions.lock().remove(session_id);
+    tracing::info!(session = %session_id, duration_s, "session ended");
 }
 
 /// What [`connect_session`] did. `Started` is the normal case; the two
@@ -1626,16 +1692,25 @@ async fn decide_ssh_host_key(
 
 /// How long a reconnect waits for the previous incarnation of the same session
 /// id to finish unwinding before giving up.
+///
+/// Bounded now by how fast the forwarding task processes the terminal state
+/// and retires the entry (see [`reap_existing_session`]), not by how long any
+/// sender clone of its event channel may outlive the session.
 const REAP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(3);
 const REAP_POLL: std::time::Duration = std::time::Duration::from_millis(20);
 
 /// Shut down any session still registered under `id` and wait for its
-/// event-forwarding task to remove the entry.
+/// event-forwarding task to retire the entry.
 ///
-/// Waiting matters: that task is the only thing that removes a session from the
-/// registry, so inserting a replacement before it has run would let the old
-/// task reap the *new* entry, leaving a live session that no command can
-/// reach. Ok(()) means the slot is free.
+/// Waiting matters: that task is the only thing that removes a session from
+/// the registry on its own, so inserting a replacement before it has run
+/// would let the old task reap the *new* entry, leaving a live session that
+/// no command can reach. What the wait is bounded BY changed: the entry is
+/// retired when the terminal state passes through the forwarding task (see
+/// [`retire_session`]), not when the event channel drains, so a Boundary
+/// `exec` task still holding a sender clone for the length of a remote
+/// command (`timeout + 15 s`) no longer expires this budget under a
+/// Reconnect click. Ok(()) means the slot is free.
 async fn reap_existing_session(state: &AppState, id: &str) -> Result<(), String> {
     {
         let sessions = state.sessions.lock();

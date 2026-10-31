@@ -7,9 +7,10 @@ use boundary_session::{
     Button, Event, HostOptions, Input, Invitation, Key, Session,
 };
 use parking_lot::Mutex;
+use remote_core::reconnect::{classify, Decision, RetryClassify, STABLE_UPTIME};
 use remote_core::{
     ClientCommand, ConnectOptions, DecodedRect, OptionsMismatch, ProtocolDriver, ProtocolKind,
-    Rect, RectPayload, SessionEvent, SessionHandle, SessionState,
+    ReconnectPolicy, Rect, RectPayload, SessionEvent, SessionHandle, SessionState,
 };
 use std::{
     collections::HashMap,
@@ -138,74 +139,152 @@ impl ProtocolDriver for BoundaryDriver {
         let cancel = CancellationToken::new();
         let token = cancel.clone();
         tokio::spawn(async move {
-            let work = async {
-                let mut session = match pending {
-                    Some(pending) => {
-                        ensure!(
-                            pending.created.elapsed() < Duration::from_secs(60),
-                            "Support connection expired before the window opened"
-                        );
-                        // With tools declared, so the person is asked about
-                        // commands and files and an agent can use them once
-                        // they say yes.
-                        boundary_session::viewer_with_tools(
-                            pending.ticket,
-                            pending.helper,
-                            HostOptions::default(),
-                            identity,
-                        )
-                    }
-                    None if unattended => {
-                        let key = identity.ok_or_else(|| anyhow!("This copy of OraxDesk has no helper identity, so it cannot be recognised by a computer it was paired with"))?;
-                        let name = options
-                            .credentials
-                            .username
-                            .clone()
-                            .filter(|n| !n.trim().is_empty())
-                            .unwrap_or_else(helper_name);
-                        // The registry the number was resolved in is the first
-                        // place the address is looked for. n0 stays in place as
-                        // a second source, so a registry that is down — or a
-                        // machine that has not published there yet — does not
-                        // hide a machine that n0 can find.
-                        let host_options = match directory_url.clone() {
-                            Some(url) => boundary_session::HostOptions {
-                                directory: Some(boundary_session::DirectoryOptions {
-                                    url,
-                                    signing_key: None,
-                                }),
-                                ..boundary_session::HostOptions::default()
-                            },
-                            None => boundary_session::HostOptions::default()
-                                .with_directory_from_env(None),
-                        };
-                        unattended::connect_with_tools(
-                            options.host.clone(),
-                            name,
-                            options.credentials.password.clone().filter(|p| !p.is_empty()),
-                            key,
-                            host_options,
-                        )
-                    }
-                    None => bail!("This support invitation is no longer available. Paste a new invitation in the Library"),
+            // `Some(pending)` spends the one use token `prepare` handed out,
+            // so the invitation arm opens exactly once and leaves on its
+            // first outcome, as it always has. Only the saved-machine arm
+            // goes round the loop below.
+            let mut invitation = pending;
+            let policy = options.reconnect;
+            let mut attempts_made: u32 = 0;
+            let result: Result<()> = loop {
+                // When this attempt first reached `Connected`, which is both
+                // what the ladder's stability reset measures from and the
+                // fact its transient classification turns on (see
+                // [`Failure`]).
+                let mut connected_at: Option<Instant> = None;
+                let attempt = async {
+                    let mut session = match invitation.take() {
+                        Some(pending) => {
+                            ensure!(
+                                pending.created.elapsed() < Duration::from_secs(60),
+                                "Support connection expired before the window opened"
+                            );
+                            // With tools declared, so the person is asked about
+                            // commands and files and an agent can use them once
+                            // they say yes.
+                            boundary_session::viewer_with_tools(
+                                pending.ticket,
+                                pending.helper,
+                                HostOptions::default(),
+                                identity.clone(),
+                            )
+                        }
+                        None if unattended => {
+                            let key = identity.clone().ok_or_else(|| anyhow!("This copy of OraxDesk has no helper identity, so it cannot be recognised by a computer it was paired with"))?;
+                            let name = options
+                                .credentials
+                                .username
+                                .clone()
+                                .filter(|n| !n.trim().is_empty())
+                                .unwrap_or_else(helper_name);
+                            // The registry the number was resolved in is the first
+                            // place the address is looked for. n0 stays in place as
+                            // a second source, so a registry that is down — or a
+                            // machine that has not published there yet — does not
+                            // hide a machine that n0 can find.
+                            let host_options = match directory_url.clone() {
+                                Some(url) => boundary_session::HostOptions {
+                                    directory: Some(boundary_session::DirectoryOptions {
+                                        url,
+                                        signing_key: None,
+                                    }),
+                                    ..boundary_session::HostOptions::default()
+                                },
+                                None => boundary_session::HostOptions::default()
+                                    .with_directory_from_env(None),
+                            };
+                            unattended::connect_with_tools(
+                                options.host.clone(),
+                                name,
+                                options.credentials.password.clone().filter(|p| !p.is_empty()),
+                                key,
+                                host_options,
+                            )
+                        }
+                        None => bail!("This support invitation is no longer available. Paste a new invitation in the Library"),
+                    };
+                    drive(
+                        &mut session,
+                        &mut receiver,
+                        &events,
+                        options.view_only,
+                        paired.clone(),
+                        Tools {
+                            registry: registry.clone(),
+                            session_id: session_id.clone(),
+                        },
+                        &mut connected_at,
+                    )
+                    .await
                 };
-                drive(
-                    &mut session,
-                    &mut receiver,
-                    &events,
-                    options.view_only,
-                    paired,
-                    Tools {
-                        registry,
-                        session_id,
-                    },
-                )
-                .await
-            };
-            let result = tokio::select! {
-                biased;
-                _ = token.cancelled() => Ok(()),
-                result = work => result,
+                let outcome = tokio::select! {
+                    biased;
+                    _ = token.cancelled() => Ok(()),
+                    result = attempt => result,
+                };
+                let error = match outcome {
+                    Ok(()) => break Ok(()),
+                    Err(error) => error,
+                };
+                // An attempt that stayed up long enough proves the machine is
+                // reachable again, so the ladder restarts from its first step
+                // (the rule the shared supervisor applies at the same point,
+                // `remote_core::reconnect::STABLE_UPTIME`).
+                if connected_at.is_some_and(|at| at.elapsed() >= STABLE_UPTIME) {
+                    attempts_made = 0;
+                }
+                let failure = Failure {
+                    error,
+                    reached_connected: connected_at.is_some(),
+                };
+                match attempt_decision(unattended, &failure, &policy, attempts_made) {
+                    // `can_retry` is the tail's to state, exactly as before:
+                    // a saved machine may always be dialled again by hand and
+                    // an invitation never may (`can_retry: unattended`).
+                    Decision::Stop { .. } => break Err(failure.error),
+                    Decision::Retry => {
+                        attempts_made += 1;
+                        let delay = policy.delay_for(attempts_made, jitter_unit());
+                        // The same state the shared ladder emits on its way
+                        // up (`remote_core::reconnect::supervise`), carrying
+                        // the failure's own words rather than a new sentence.
+                        if emit(
+                            &events,
+                            SessionEvent::StateChanged(SessionState::Reconnecting {
+                                attempt: attempts_made,
+                                next_retry_ms: delay.as_millis() as u64,
+                                reason: failure.error.to_string(),
+                            }),
+                        )
+                        .await
+                        .is_err()
+                        {
+                            break Ok(()); // shell is gone
+                        }
+                        let sleep = tokio::time::sleep(delay);
+                        tokio::pin!(sleep);
+                        let stop = tokio::select! {
+                            biased;
+                            _ = token.cancelled() => true,
+                            _ = &mut sleep => false,
+                            command = receiver.recv() => match command {
+                                // The three the shared supervisor takes here
+                                // (`remote_core::reconnect::wait_backoff`):
+                                // the handle is gone, or the user hung up, or
+                                // "retry now" skips the remaining backoff.
+                                None | Some(ClientCommand::Disconnect) => true,
+                                Some(ClientCommand::ReconnectNow) => { attempts_made = 0; false }
+                                // Input and agent intents addressed to a
+                                // session that no longer exists are dropped;
+                                // the session they were for is over.
+                                Some(_) => false,
+                            },
+                        };
+                        if stop {
+                            break Ok(());
+                        }
+                    }
+                }
             };
             let reason = match result {
                 Ok(()) => "Support session ended".into(),
@@ -231,7 +310,104 @@ async fn emit(events: &mpsc::Sender<SessionEvent>, event: SessionEvent) -> Resul
     events
         .send(event)
         .await
-        .map_err(|_| anyhow!("Session window closed"))
+        // [`ShellGone`] rather than a bare `anyhow!`: the reconnect loop
+        // downcasts it to tell "the session failed" from "the shell that was
+        // listening to it is gone", and only the first of those may be
+        // redialled.
+        .map_err(|_| anyhow::Error::new(ShellGone))
+}
+
+/// Our own failure, not the session's: the shell's event channel is closed,
+/// so nothing is listening any more.
+///
+/// Carries the same sentence [`emit`] always produced for it, because a
+/// closed shell says the same thing however the loop below is classified.
+#[derive(Debug)]
+struct ShellGone;
+impl std::fmt::Display for ShellGone {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Session window closed")
+    }
+}
+impl std::error::Error for ShellGone {}
+
+/// One failed attempt of a support session, reduced to what the reconnect
+/// ladder can ask of it.
+///
+/// `boundary-session`'s failures are `anyhow::Error` with no taxonomy
+/// (`crates/boundary-session/src/session.rs:51`) and that crate is not this
+/// change's to edit, so the ladder is fed the two facts this side can know
+/// on its own rather than a guess read out of a message.
+struct Failure {
+    error: anyhow::Error,
+    /// The attempt reached `Connected` before failing, so what ended it ended
+    /// a LIVE link: a relay dropping, a machine sleeping, the network moving
+    /// under it. That is the transient failure the documented policy
+    /// (`crates/remote-core/src/options.rs:570`) says the ladder redials.
+    ///
+    /// Before `Connected` the same `anyhow::Error` also carries the outcomes
+    /// a retry must never guess through — the person declining, a wrong
+    /// password (whose retries are what pauses password access for fifteen
+    /// minutes, `crates/boundary-session/src/unattended.rs:592`), unattended
+    /// access switched off — beside the unreachable machine, and nothing in
+    /// this crate can tell those apart honestly. So a failure that never
+    /// connected is stopped, with the manual retry button it has always had.
+    reached_connected: bool,
+}
+
+impl RetryClassify for Failure {
+    /// Cancellation is not an error here: it leaves through the token and
+    /// breaks the loop as a clean end.
+    fn is_cancelled(&self) -> bool {
+        false
+    }
+    /// Only a dropped LIVE link. A closed event channel is the shell being
+    /// gone (`ShellGone`), and redialling into a shell that is not listening
+    /// would loop on the same closed channel forever.
+    fn is_transient(&self) -> bool {
+        self.reached_connected && self.error.downcast_ref::<ShellGone>().is_none()
+    }
+    /// Nothing here is a "fix me" failure: the outcomes a human must act on
+    /// arrive before `Connected` and are already stopped by
+    /// [`Self::is_transient`] returning false.
+    fn needs_user_action(&self) -> bool {
+        false
+    }
+    fn user_message(&self) -> String {
+        self.error.to_string()
+    }
+}
+
+/// What one failed attempt deserves: the ladder's own verdict for a saved
+/// machine, or the stop an invitation has always taken.
+///
+/// The one rule the shared ladder has no word for is the invitation's single
+/// use: `prepare`'s token was spent at spawn, so no verdict but a stop can be
+/// right for it, and the ladder's `Stop` for a non-transient failure offers
+/// a manual retry that would only fail again on a spent token.
+fn attempt_decision(
+    unattended: bool,
+    failure: &Failure,
+    policy: &ReconnectPolicy,
+    attempts_made: u32,
+) -> Decision {
+    if !unattended {
+        return Decision::Stop { can_retry: false };
+    }
+    classify(failure, policy, attempts_made)
+}
+
+/// The `rand_unit` [`ReconnectPolicy::delay_for`] asks for.
+///
+/// The clock's sub-second digits rather than a dependency: this crate has no
+/// `rand`, and jitter only needs the ladder's delays to stop lining up, not
+/// values nobody could predict.
+fn jitter_unit() -> f64 {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|since| since.subsec_nanos())
+        .unwrap_or(0);
+    f64::from(nanos) / 1_000_000_000.0
 }
 async fn permission(events: &mpsc::Sender<SessionEvent>, allowed: bool, tools: bool) -> Result<()> {
     emit(
@@ -382,6 +558,7 @@ async fn drive(
     mut view_only: bool,
     paired: Option<OnPaired>,
     published: Tools,
+    connected_at: &mut Option<Instant>,
 ) -> Result<()> {
     let mut size = (0u16, 0u16);
     let mut input = InputState::default();
@@ -393,6 +570,11 @@ async fn drive(
             event = session.events.recv() => match event {
                 Some(Event::Status(status)) => emit(events, SessionEvent::StateChanged(SessionState::Authenticating { method: status })).await?,
                 Some(Event::Connected { control, .. }) => {
+                    // The first `Connected` is when this attempt became a live
+                    // link: the ladder measures stability from it and
+                    // classifies this attempt's failures by it (see
+                    // [`Failure`]).
+                    connected_at.get_or_insert_with(Instant::now);
                     allowed = control;
                     if let Some(client) = session.tools() {
                         tools_allowed = client.allowed();
@@ -586,5 +768,102 @@ mod tests {
         let driver = BoundaryDriver::default();
         assert!(driver.prepare("bad".into(), "Helper".into()).is_err());
         assert!(driver.pending.lock().is_empty());
+    }
+
+    fn failure(reached_connected: bool) -> Failure {
+        Failure {
+            error: anyhow!("the link went away"),
+            reached_connected,
+        }
+    }
+
+    /// An invitation is spent the moment it is opened, so no verdict but a
+    /// stop can be right for it — not even one the ladder would call
+    /// transient for a saved machine.
+    #[test]
+    fn an_invitation_is_never_redialled() {
+        let policy = ReconnectPolicy::default();
+        assert_eq!(
+            attempt_decision(false, &failure(false), &policy, 0),
+            Decision::Stop { can_retry: false }
+        );
+        assert_eq!(
+            attempt_decision(false, &failure(true), &policy, 0),
+            Decision::Stop { can_retry: false }
+        );
+    }
+
+    /// The documented policy (`crates/remote-core/src/options.rs:570`) as the
+    /// ladder applies it to a saved, paired machine: a link that dropped
+    /// AFTER it was up is a transient relay failure and is redialled, where
+    /// before this it was terminal.
+    #[test]
+    fn a_saved_machine_whose_link_dropped_after_connecting_is_redialled() {
+        assert_eq!(
+            attempt_decision(true, &failure(true), &ReconnectPolicy::default(), 0),
+            Decision::Retry
+        );
+    }
+
+    /// Before `Connected` the same `anyhow::Error` also carries the refusals
+    /// a retry must not guess through (a declined pairing, a wrong password),
+    /// so the attempt stops — with the manual retry a saved machine has
+    /// always been offered.
+    #[test]
+    fn a_failure_before_connect_is_stopped_with_the_manual_retry() {
+        assert_eq!(
+            attempt_decision(true, &failure(false), &ReconnectPolicy::default(), 0),
+            Decision::Stop { can_retry: true }
+        );
+    }
+
+    /// A closed event channel is the shell being gone; redialling into a
+    /// shell that is not listening would loop on the same closed channel.
+    #[test]
+    fn a_closed_shell_is_never_redialled() {
+        let failure = Failure {
+            error: anyhow::Error::new(ShellGone),
+            reached_connected: true,
+        };
+        assert_eq!(
+            attempt_decision(true, &failure, &ReconnectPolicy::default(), 0),
+            Decision::Stop { can_retry: true }
+        );
+    }
+
+    /// The shared ladder's own policy knobs keep meaning what they mean for
+    /// every other protocol.
+    #[test]
+    fn the_ladder_honours_max_attempts_and_the_enabled_switch() {
+        let capped = ReconnectPolicy {
+            max_attempts: Some(2),
+            ..ReconnectPolicy::default()
+        };
+        assert_eq!(
+            attempt_decision(true, &failure(true), &capped, 1),
+            Decision::Retry
+        );
+        assert_eq!(
+            attempt_decision(true, &failure(true), &capped, 2),
+            Decision::Stop { can_retry: true }
+        );
+        let off = ReconnectPolicy {
+            enabled: false,
+            ..ReconnectPolicy::default()
+        };
+        assert_eq!(
+            attempt_decision(true, &failure(true), &off, 0),
+            Decision::Stop { can_retry: true }
+        );
+    }
+
+    /// Jitter only needs the ladder's delays to stop lining up; whatever the
+    /// clock hands over must still be a unit for `delay_for`.
+    #[test]
+    fn the_jitter_source_is_a_unit_interval() {
+        for _ in 0..64 {
+            let unit = jitter_unit();
+            assert!((0.0..1.0).contains(&unit), "{unit}");
+        }
     }
 }
