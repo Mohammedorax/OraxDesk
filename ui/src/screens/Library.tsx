@@ -2,6 +2,7 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -55,6 +56,12 @@ import { SidebarDeleteButton } from "../components/SidebarDeleteButton";
 import { DeleteHostsDialog } from "../components/DeleteHostsDialog";
 import { deleteSelection } from "../lib/hostDeletion";
 import { useHostDragSelect, type DropTarget } from "../hooks/useHostDragSelect";
+import {
+  useMeasuredRowHeight,
+  usePinnedFocus,
+  useScrollWindow,
+} from "../hooks/useVirtualRows";
+import { gridColumns, rowsHeight, virtualWindow } from "../lib/virtualWindow";
 import { HostTile, DiscoveredTile, addressLabel, osLabel } from "../components/HostTile";
 import { CommandPalette, type PaletteAction } from "../components/CommandPalette";
 import { HostDialog, draftFromHost, type HostDraft } from "../components/HostDialog";
@@ -106,6 +113,30 @@ interface GroupMenuState {
  */
 const TILE_MAX_WIDTH = { normal: 440, compact: 320 };
 const TILE_GAP = { normal: 16, compact: 12 };
+
+/**
+ * The minimum track width `.host-grid` declares.
+ *
+ * The browser owns the responsive layout, but a windowed grid has to know how
+ * many columns exist in order to know how many ROWS exist. These are the same
+ * two numbers as the `minmax(...)` in `styles/index.css`; they live here only
+ * so the count can be derived from the measured container width. Changing one
+ * without the other is the one way to make the spacers disagree with the grid,
+ * which is why the pair is stated together and why the rendered grid pins its
+ * track count (see `gridColumns`).
+ */
+const TILE_MIN_WIDTH = { normal: 250, compact: 190 };
+
+/**
+ * Extra rows kept mounted beyond each edge of the viewport.
+ *
+ * Two grid rows is roughly two tile heights of cover, enough that a flick of
+ * the wheel lands on already-painted tiles rather than a blank strip. The table
+ * row is short, so it gets a deeper margin: ten rows still costs less than a
+ * screenful of subscriptions and makes a fast scroll look continuous.
+ */
+const GRID_OVERSCAN_ROWS = 2;
+const LIST_OVERSCAN_ROWS = 10;
 
 /**
  * A session id for the browser-dev mock, where there is no shell to mint one.
@@ -991,6 +1022,32 @@ export function Library({
   );
 
   /**
+   * Wake, and say what happened.
+   *
+   * The context menu reports both outcomes; a tile's Wake button is the same
+   * gesture, and silence on success reads as a button that did nothing. Lifted
+   * out of the tile's inline callback because the windowed grid now renders
+   * tiles in a child component, and a callback rebuilt per render there would
+   * be one more thing the memo comparison has to ignore.
+   */
+  const wakeFromTile = useCallback(
+    (host: HostProfile): void => {
+      void wakeHost(host.id).then(
+        () => push("info", t("library.magicPacketSent", { name: host.friendlyName })),
+        (err: unknown) =>
+          push(
+            "danger",
+            t("library.wakeFailed", {
+              name: host.friendlyName,
+              reason: describeError(err),
+            }),
+          ),
+      );
+    },
+    [wakeHost, push, t],
+  );
+
+  /**
    * A session window asked for a host's security settings.
    *
    * The disconnect panel names a setting, and the editor lives here rather
@@ -1847,38 +1904,17 @@ export function Library({
                     body={t("library.groupEmptyBody")}
                   />
                 ) : settings.libraryView === "grid" ? (
-                  <div className={gridClass} style={gridCap(visibleHosts.length, settings.compact)}>
-                    {visibleHosts.map((h) => (
-                      <HostTile
-                        key={h.id}
-                        host={h}
-                        selected={selectedIds.has(h.id)}
-                        showProtocol={showProtocol}
-                        onConnect={() => connectHost(h)}
-                        onEdit={() => editHost(h)}
-                        onWake={() =>
-                          // The context menu reports both outcomes, and the
-                          // tile is the same gesture: silence on success reads
-                          // as a button that did nothing.
-                          void wakeHost(h.id).then(
-                            () => push("info", t("library.magicPacketSent", { name: h.friendlyName })),
-                            (err: unknown) =>
-                              push(
-                                "danger",
-                                t("library.wakeFailed", {
-                                  name: h.friendlyName,
-                                  reason: describeError(err),
-                                }),
-                              ),
-                          )
-                        }
-                        onContextMenu={(e) => {
-                          e.preventDefault();
-                          openCtxMenu(e, h);
-                        }}
-                      />
-                    ))}
-                  </div>
+                  <VirtualHostGrid
+                    hosts={visibleHosts}
+                    scrollerRef={containerRef}
+                    compact={settings.compact}
+                    showProtocol={showProtocol}
+                    selectedIds={selectedIds}
+                    onConnect={connectHost}
+                    onEdit={editHost}
+                    onWake={wakeFromTile}
+                    onContextMenu={openCtxMenu}
+                  />
                 ) : (
                   <HostListView
                     hosts={visibleHosts}
@@ -1886,6 +1922,7 @@ export function Library({
                     tags={tags}
                     selectedIds={selectedIds}
                     showProtocol={showProtocol}
+                    scrollerRef={containerRef}
                     onConnect={connectHost}
                     onContextMenu={(e, h) => {
                       e.preventDefault();
@@ -2058,6 +2095,191 @@ export function Library({
   );
 }
 
+// ----------------------------------------------------------- virtualized grid
+
+/**
+ * The saved-host grid, windowed by whole rows.
+ *
+ * The CSS still decides the columns (`.host-grid` is `auto-fit`); this only
+ * reads the resolved width to know how many rows exist, then mounts the rows
+ * the scroller can show plus two of overscan on either side. The spacers stand
+ * in for the rows that are not mounted, using the measured tile height, so the
+ * scrollbar and every scroll offset are the same as the un-windowed grid's.
+ *
+ * Whole rows, not individual tiles: tab order stays row-major, a row is one
+ * tile height even when it is the last, partial one, and the drag pipeline's
+ * rectangle queries see an ordinary grid. The focused host's row is kept
+ * mounted even when it is outside the window (see `usePinnedFocus`), so
+ * scrolling with a tile focused cannot drop the keyboard onto `<body>`.
+ */
+function VirtualHostGrid({
+  hosts,
+  scrollerRef,
+  compact,
+  showProtocol,
+  selectedIds,
+  onConnect,
+  onEdit,
+  onWake,
+  onContextMenu,
+}: {
+  hosts: HostProfile[];
+  scrollerRef: React.RefObject<HTMLDivElement | null>;
+  compact: boolean;
+  showProtocol?: boolean;
+  selectedIds: ReadonlySet<string>;
+  onConnect: (h: HostProfile) => void;
+  onEdit: (h: HostProfile) => void;
+  onWake: (h: HostProfile) => void;
+  onContextMenu: (e: React.MouseEvent, h: HostProfile) => void;
+}): ReactNode {
+  const shellRef = useRef<HTMLDivElement | null>(null);
+  const gridRef = useRef<HTMLDivElement | null>(null);
+  const [width, setWidth] = useState(0);
+
+  const density = compact ? "compact" : "normal";
+  const gap = TILE_GAP[density];
+  const rowHeight = useMeasuredRowHeight(gridRef, "[data-host-id]", compact ? 220 : 280);
+  const viewport = useScrollWindow(scrollerRef, gridRef, rowHeight + gap);
+  const focus = usePinnedFocus(gridRef);
+
+  /*
+    The shell is the max width `gridCap` already imposed on the old grid: a
+    one-host library must not stretch its tile across the window. Measuring it
+    rather than the pane means the column count is derived from exactly the
+    box the CSS is laying out in.
+  */
+  useLayoutEffect(() => {
+    const el = shellRef.current;
+    if (!el) return;
+    const measure = (): void => {
+      // A fractional width, unlike `clientWidth`: the auto-fit threshold is
+      // exact, and rounding a 515.6px pane to 516 would claim a second column
+      // that the CSS does not have.
+      const next = el.getBoundingClientRect().width;
+      setWidth((prev) => (Math.abs(prev - next) < 0.01 ? prev : next));
+    };
+    measure();
+    // The observer catches a pane resize, and the window event is the fallback
+    // for a webview without one (the same bargain as the thumbnail gate).
+    window.addEventListener("resize", measure);
+    let observer: ResizeObserver | null = null;
+    if (typeof ResizeObserver !== "undefined") {
+      observer = new ResizeObserver(measure);
+      observer.observe(el);
+    }
+    return () => {
+      window.removeEventListener("resize", measure);
+      observer?.disconnect();
+    };
+  }, []);
+
+  const columns = gridColumns({
+    width,
+    minTileWidth: TILE_MIN_WIDTH[density],
+    gap,
+    itemCount: hosts.length,
+  });
+
+  const range = virtualWindow({
+    itemCount: hosts.length,
+    columns,
+    rowHeight,
+    gap,
+    viewportHeight: viewport.viewportHeight,
+    scrollTop: viewport.scrollTop,
+    overscanRows: GRID_OVERSCAN_ROWS,
+  });
+
+  const indexById = useMemo(() => {
+    const map = new Map<string, number>();
+    hosts.forEach((h, i) => map.set(h.id, i));
+    return map;
+  }, [hosts]);
+  const focusedIndex = focus.focusedId === null ? undefined : indexById.get(focus.focusedId);
+  const pinnedRow = focusedIndex === undefined ? null : Math.floor(focusedIndex / columns);
+
+  /** Row indices to mount: the window plus the focused host's row, if apart. */
+  const rows: number[] = [];
+  for (let row = range.firstRow; row < range.lastRow; row++) rows.push(row);
+  if (pinnedRow !== null && (pinnedRow < range.firstRow || pinnedRow >= range.lastRow)) {
+    rows.push(pinnedRow);
+    // Sorted so the DOM order, and with it the tab order, stays the display
+    // order. A pinned row above the window must come before it, not after.
+    rows.sort((a, b) => a - b);
+  }
+
+  const strips: ReactNode[] = [];
+  let nextRow = 0;
+  for (const row of rows) {
+    if (row > nextRow) {
+      strips.push(
+        <div
+          key={`gap-${nextRow}`}
+          // A spacer is layout, not content: it must not be announced and must
+          // not become a tab stop.
+          aria-hidden="true"
+          style={{ gridColumn: "1 / -1", height: rowsHeight(row - nextRow, rowHeight, gap) }}
+        />,
+      );
+    }
+    const first = row * columns;
+    const last = Math.min(hosts.length, first + columns);
+    for (let i = first; i < last; i++) {
+      const h = hosts[i];
+      strips.push(
+        <HostTile
+          key={h.id}
+          host={h}
+          selected={selectedIds.has(h.id)}
+          showProtocol={showProtocol}
+          onConnect={() => onConnect(h)}
+          onEdit={() => onEdit(h)}
+          onWake={() => onWake(h)}
+          onContextMenu={(e) => {
+            e.preventDefault();
+            onContextMenu(e, h);
+          }}
+        />,
+      );
+    }
+    nextRow = row + 1;
+  }
+  if (nextRow < range.rowCount) {
+    strips.push(
+      <div
+        key={`gap-${nextRow}`}
+        aria-hidden="true"
+        style={{
+          gridColumn: "1 / -1",
+          height: rowsHeight(range.rowCount - nextRow, rowHeight, gap),
+        }}
+      />,
+    );
+  }
+
+  return (
+    <div ref={shellRef} style={gridCap(hosts.length, compact)}>
+      <div
+        ref={gridRef}
+        className={classNames("host-grid", compact && "is-compact")}
+        /*
+          Pin the resolved track count. Leaving `auto-fit` in charge of a
+          window that happens to contain only the last, partial row would
+          collapse the empty tracks and stretch those two tiles to full width,
+          which is both a different picture from the same row when it is fully
+          windowed and a different measured row height.
+        */
+        style={{ gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))` }}
+        onFocusCapture={focus.onFocusCapture}
+        onBlurCapture={focus.onBlurCapture}
+      >
+        {strips}
+      </div>
+    </div>
+  );
+}
+
 // -------------------------------------------------------------- selection bar
 
 /**
@@ -2161,6 +2383,7 @@ function HostListView({
   onConnect,
   onContextMenu,
   showProtocol,
+  scrollerRef,
 }: {
   hosts: HostProfile[];
   groups: { id: string; name: string }[];
@@ -2168,10 +2391,77 @@ function HostListView({
   selectedIds: ReadonlySet<string>;
   onConnect: (h: HostProfile) => void;
   onContextMenu: (e: React.MouseEvent, h: HostProfile) => void;
+  /** The library pane's scroller; windowing follows its scrollTop. */
+  scrollerRef: React.RefObject<HTMLDivElement | null>;
   /** The library holds more than one protocol, so the column earns its width. */
   showProtocol?: boolean;
 }): ReactNode {
   const { t } = useI18n();
+  const tbodyRef = useRef<HTMLTableSectionElement | null>(null);
+  const rowHeight = useMeasuredRowHeight(tbodyRef, "tr[data-host-id]", 37);
+  const viewport = useScrollWindow(scrollerRef, tbodyRef, rowHeight);
+  const focus = usePinnedFocus(tbodyRef);
+
+  const range = virtualWindow({
+    itemCount: hosts.length,
+    // One host per row. Keeping the table's own row layout is what preserves
+    // its column alignment, sorting semantics and screen-reader table model.
+    columns: 1,
+    rowHeight,
+    viewportHeight: viewport.viewportHeight,
+    scrollTop: viewport.scrollTop,
+    overscanRows: LIST_OVERSCAN_ROWS,
+  });
+
+  const indexById = useMemo(() => {
+    const map = new Map<string, number>();
+    hosts.forEach((h, i) => map.set(h.id, i));
+    return map;
+  }, [hosts]);
+  const focusedIndex = focus.focusedId === null ? undefined : indexById.get(focus.focusedId);
+  const pinnedRow = focusedIndex === undefined ? null : focusedIndex;
+
+  const rows: number[] = [];
+  for (let row = range.firstRow; row < range.lastRow; row++) rows.push(row);
+  if (pinnedRow !== null && (pinnedRow < range.firstRow || pinnedRow >= range.lastRow)) {
+    rows.push(pinnedRow);
+    rows.sort((a, b) => a - b);
+  }
+
+  /*
+    The table has one column per header cell. Spacer rows use `colSpan` so the
+    table layout does not invent a narrow first column for them.
+  */
+  const columnCount = showProtocol ? 7 : 6;
+  const strips: ReactNode[] = [];
+  let nextRow = 0;
+  const spacer = (rowsSkipped: number): ReactNode => (
+    <tr key={`gap-${nextRow}`} aria-hidden="true">
+      <td
+        colSpan={columnCount}
+        style={{ height: rowsHeight(rowsSkipped, rowHeight), padding: 0, border: 0 }}
+      />
+    </tr>
+  );
+  for (const row of rows) {
+    if (row > nextRow) strips.push(spacer(row - nextRow));
+    const h = hosts[row];
+    strips.push(
+      <HostRow
+        key={h.id}
+        host={h}
+        groups={groups}
+        tags={tags}
+        selected={selectedIds.has(h.id)}
+        showProtocol={showProtocol}
+        onConnect={onConnect}
+        onContextMenu={onContextMenu}
+      />,
+    );
+    nextRow = row + 1;
+  }
+  if (nextRow < range.rowCount) strips.push(spacer(range.rowCount - nextRow));
+
   return (
     <div className="select-none overflow-x-auto rounded-md border border-subtle bg-surface">
       <table className="w-full border-collapse text-sm">
@@ -2186,19 +2476,20 @@ function HostListView({
             <th className="px-3 py-2 font-medium">{t("library.sortLastConnected")}</th>
           </tr>
         </thead>
-        <tbody>
-          {hosts.map((h) => (
-            <HostRow
-              key={h.id}
-              host={h}
-              groups={groups}
-              tags={tags}
-              selected={selectedIds.has(h.id)}
-              showProtocol={showProtocol}
-              onConnect={onConnect}
-              onContextMenu={onContextMenu}
-            />
-          ))}
+        {/*
+          Every visible row is still a real `<tr>` in a real `<tbody>`: the
+          spacer rows around them stand in for the ones that are not mounted,
+          so the table's own height, scroll position and column layout are
+          unchanged. Focus is pinned exactly as in the grid, but one row is one
+          machine here, so a pinned row is one host rather than a whole row of
+          tiles.
+        */}
+        <tbody
+          ref={tbodyRef}
+          onFocusCapture={focus.onFocusCapture}
+          onBlurCapture={focus.onBlurCapture}
+        >
+          {strips}
         </tbody>
       </table>
     </div>
