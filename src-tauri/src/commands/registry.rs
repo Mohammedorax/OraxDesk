@@ -83,20 +83,12 @@ fn helper_keys() -> Result<DeviceKeys, String> {
     DeviceKeys::new(identity, registry.secret().clone()).map_err(|error| error.to_string())
 }
 
-/// The address directory's settings, when a registry is configured.
+/// The address directory's settings, for an origin the caller already resolved.
 ///
-/// A machine publishes its address there with its REGISTRY key, so the
-/// directory can tell that the address belongs to the device that claims it.
-/// A helper only looks other machines up, and publishes nothing: a helper is
-/// not a machine anyone connects to.
-///
-/// `None` when no registry is configured, and the machine then publishes to
-/// iroh's public directory exactly as it always has.
-pub fn machine_directory_options() -> Result<Option<boundary_session::DirectoryOptions>, String> {
-    machine_directory_options_for(configured_url())
-}
-
-/// [`machine_directory_options`] for an origin the caller already resolved.
+/// A machine publishes its address with its REGISTRY key, so the directory can
+/// tell that the address belongs to the device that claims it. A helper only
+/// looks other machines up, and publishes nothing: a helper is not a machine
+/// anyone connects to.
 ///
 /// The device NUMBER is registered in the app's registry (stored or default),
 /// so the ADDRESS must be published there too. Publishing to n0 while the

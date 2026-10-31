@@ -1801,10 +1801,73 @@ pub async fn disconnect_session(
 /// session, so a waiter is released after [`INPUT_ORDER_TIMEOUT`] and the
 /// gap is logged. A late duplicate, or a call without the header (an older
 /// webview, a test), is admitted as it arrives.
+///
+/// The gap has a second, worse failure: if the number that never arrived was
+/// a press, its release may have been delivered already (the webview sends a
+/// release-all on blur, and the grace path below sends one itself). Admitting
+/// the press afterwards would land a key-down *after* the release that ended
+/// it, leaving the key held on the remote for the rest of the session. So an
+/// admitted release-all raises a barrier: every batch numbered at or below it
+/// that arrives later is dropped, while anything newer is live input and goes
+/// through. Dropping is right rather than harmless because a pre-barrier batch
+/// describes keys the release has already let go of.
+///
+/// Invariant: no input numbered at or below an admitted release-all may ever
+/// be admitted after it.
 struct InputOrder {
-    /// The sequence number admitted next. Starts at 1, matching the webview.
-    next: Mutex<u64>,
+    state: Mutex<OrderState>,
     notify: tokio::sync::Notify,
+}
+
+/// The ordering state, kept under one lock so the barrier and the admission
+/// decided against it are always seen together.
+struct OrderState {
+    /// The lowest sequence number not yet accounted for: everything below it
+    /// has been queued or dropped. Starts at 1, matching the webview.
+    next: u64,
+    /// The highest sequence covered by an admitted release-all, `None` until
+    /// the first one. Any batch at or below it describes input that release
+    /// has already ended.
+    pending_release_seq: Option<u64>,
+}
+
+impl OrderState {
+    fn new() -> Self {
+        Self {
+            next: 1,
+            pending_release_seq: None,
+        }
+    }
+
+    /// Is `seq` older than a release-all that has already been admitted?
+    /// Checked before the `next` gate: `next` may have advanced past `seq` by
+    /// now, which is exactly the case an order-only gate would let through.
+    fn is_stale(&self, seq: u64) -> Option<u64> {
+        self.pending_release_seq.filter(|barrier| seq <= *barrier)
+    }
+
+    /// A release-all now ends input up to `seq`. The barrier only moves
+    /// forward, so an older release can never undo a newer one.
+    fn raise_barrier(&mut self, seq: u64) {
+        self.pending_release_seq = Some(
+            self.pending_release_seq
+                .map_or(seq, |barrier| barrier.max(seq)),
+        );
+    }
+}
+
+/// What [`InputOrder::admit`] decided about one `send_input` batch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Admission {
+    /// Queue the batch now.
+    Admitted,
+    /// Queue the batch, but a predecessor is presumed lost: a release-all
+    /// must be sent before it. The barrier has already been raised for every
+    /// number below this one.
+    AfterGap,
+    /// Drop the batch: a release-all at `barrier` has already been admitted,
+    /// and this number is at or below it.
+    Stale { barrier: u64 },
 }
 
 /// How long a call waits for its predecessor before going anyway. Long enough
@@ -1816,14 +1879,33 @@ const INPUT_ORDER_TIMEOUT: Duration = Duration::from_millis(750);
 impl InputOrder {
     fn new() -> Self {
         Self {
-            next: Mutex::new(1),
+            state: Mutex::new(OrderState::new()),
             notify: tokio::sync::Notify::new(),
         }
     }
 
-    /// Wait until `seq` is next, or a lower number was already admitted.
-    /// Returns false when released by the timeout instead.
-    async fn admit(&self, seq: u64, timeout: Duration) -> bool {
+    /// One non-blocking look at the gate. `None` means `seq` still has a
+    /// predecessor to wait for.
+    fn check(&self, seq: u64, carries_release_all: bool) -> Option<Admission> {
+        let mut state = self.state.lock();
+        if let Some(barrier) = state.is_stale(seq) {
+            return Some(Admission::Stale { barrier });
+        }
+        if state.next < seq {
+            return None;
+        }
+        if carries_release_all {
+            state.raise_barrier(seq);
+        }
+        Some(Admission::Admitted)
+    }
+
+    /// Wait until `seq` may be admitted, or until a release-all makes it
+    /// stale. `carries_release_all` says this batch contains the release-all
+    /// event itself, so admitting it raises the barrier at `seq`. A timeout
+    /// means the predecessor is presumed lost: the barrier is raised for
+    /// everything below `seq` and the caller sends a release-all of its own.
+    async fn admit(&self, seq: u64, carries_release_all: bool, timeout: Duration) -> Admission {
         let deadline = tokio::time::Instant::now() + timeout;
         loop {
             // Registered BEFORE the check so a `done` that lands between the
@@ -1831,11 +1913,44 @@ impl InputOrder {
             let notified = self.notify.notified();
             tokio::pin!(notified);
             notified.as_mut().enable();
-            if *self.next.lock() >= seq {
-                return true;
+
+            if let Some(admission) = self.check(seq, carries_release_all) {
+                if carries_release_all {
+                    // Waiters at or below the new barrier must see it now.
+                    self.notify.notify_waiters();
+                }
+                return admission;
             }
+
             if tokio::time::timeout_at(deadline, notified).await.is_err() {
-                return false;
+                let mut state = self.state.lock();
+                // A release-all may have landed while this waited; that
+                // makes the batch stale, not a gap.
+                if let Some(barrier) = state.is_stale(seq) {
+                    return Admission::Stale { barrier };
+                }
+                if state.next >= seq {
+                    // `done` landed as the timer fired: admit normally.
+                    if carries_release_all {
+                        state.raise_barrier(seq);
+                    }
+                    drop(state);
+                    if carries_release_all {
+                        self.notify.notify_waiters();
+                    }
+                    return Admission::Admitted;
+                }
+                // The predecessor never came. Everything below this number
+                // is over; a release-all in the batch itself covers `seq` too
+                // because it is queued before the batch's own commands.
+                state.raise_barrier(if carries_release_all {
+                    seq
+                } else {
+                    seq.saturating_sub(1)
+                });
+                drop(state);
+                self.notify.notify_waiters();
+                return Admission::AfterGap;
             }
         }
     }
@@ -1844,9 +1959,9 @@ impl InputOrder {
     /// skipped number also releases anything still waiting on it.
     fn done(&self, seq: u64) {
         {
-            let mut next = self.next.lock();
-            if seq + 1 > *next {
-                *next = seq + 1;
+            let mut state = self.state.lock();
+            if seq + 1 > state.next {
+                state.next = seq + 1;
             }
         }
         self.notify.notify_waiters();
@@ -1880,7 +1995,7 @@ impl Drop for InputOrderDone<'_> {
 /// Invoke with an `ArrayBuffer` body and an `x-session-id` header:
 /// `invoke("send_input", buf, { headers: { "x-session-id": id } })`.
 ///
-/// Never loses state-changing input. Key events, and pointer events whose
+/// Never loses live state-changing input. Key events, and pointer events whose
 /// button mask differs from the last one seen for this session, are awaited
 /// onto the command channel: if the 256-slot queue is momentarily full (a
 /// stalled session, exactly when a release matters most) this briefly blocks
@@ -1888,6 +2003,10 @@ impl Drop for InputOrderDone<'_> {
 /// the webview. Only pointer events that merely repeat the current button
 /// mask (pure motion) are shed with `try_send` when the queue is full; that
 /// is genuine stale-motion, safe to drop.
+///
+/// The one deliberate exception is input older than an admitted release-all
+/// (see [`InputOrder`]): it is dropped because the release has already let go
+/// of every key it could describe.
 #[tauri::command]
 pub async fn send_input(
     state: State<'_, AppState>,
@@ -1911,6 +2030,18 @@ pub async fn send_input(
         .get("x-input-seq")
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.parse::<u64>().ok());
+
+    // Decoded before admission because the gate has to know whether this
+    // batch carries the release-all itself: admitting one raises the barrier
+    // that every older batch is then refused against. A malformed body still
+    // consumes its number (the guard below is created for every numbered
+    // call, and `done` runs on the error return too), so a bad batch cannot
+    // leave its successors waiting out the timeout.
+    let commands = framing::decode_input(body)?;
+    let carries_release_all = commands
+        .iter()
+        .any(|command| matches!(command, ClientCommand::ReleaseAllKeys));
+
     let order = seq.map(|_| {
         input_orders()
             .lock()
@@ -1920,31 +2051,53 @@ pub async fn send_input(
     });
     let _done = match (seq, order.as_deref()) {
         (Some(seq), Some(order)) => {
-            if !order.admit(seq, INPUT_ORDER_TIMEOUT).await {
-                tracing::warn!(
-                    session = %session_id,
-                    seq,
-                    "input sequence gap: admitting after the timeout"
-                );
-                // A gap means an IPC batch was LOST, and a batch carries
-                // key-downs and key-ups together. The session keeps track of
-                // the keys it believes are held, so it can be told to let go
-                // of them: without this, a lost batch that held the key-up
-                // leaves a modifier stuck down on the remote for the rest of
-                // the session, and the person cannot type a capital letter
-                // or copy anything until they click away.
-                //
-                // The session is the one that knows what it believes is
-                // held, so the release is asked of it rather than guessed
-                // at here.
-                let _ = send_command(&state, &session_id, ClientCommand::ReleaseAllKeys).await;
+            match order
+                .admit(seq, carries_release_all, INPUT_ORDER_TIMEOUT)
+                .await
+            {
+                Admission::Stale { barrier } => {
+                    // Older than a release-all that has already gone out:
+                    // queueing it would put its key-downs after the release
+                    // that ended them. Nothing is sent, and no `done`: a
+                    // dropped batch must not advance the gate, or a newer one
+                    // could overtake the release-all still being queued. The
+                    // admitted release's own `done` advances it.
+                    tracing::debug!(
+                        session = %session_id,
+                        seq,
+                        barrier,
+                        "dropping input older than an admitted release-all"
+                    );
+                    return Ok(());
+                }
+                Admission::AfterGap => {
+                    tracing::warn!(
+                        session = %session_id,
+                        seq,
+                        "input sequence gap: admitting after the timeout"
+                    );
+                    // A gap means an IPC batch was LOST, and a batch carries
+                    // key-downs and key-ups together. The session keeps track of
+                    // the keys it believes are held, so it can be told to let go
+                    // of them: without this, a lost batch that held the key-up
+                    // leaves a modifier stuck down on the remote for the rest of
+                    // the session, and the person cannot type a capital letter
+                    // or copy anything until they click away.
+                    //
+                    // The session is the one that knows what it believes is
+                    // held, so the release is asked of it rather than guessed
+                    // at here. `admit` has already raised the release barrier
+                    // for everything below this number, so a late predecessor
+                    // arriving now is dropped instead of landing after it.
+                    let _ = send_command(&state, &session_id, ClientCommand::ReleaseAllKeys).await;
+                }
+                Admission::Admitted => {}
             }
             Some(InputOrderDone { order, seq })
         }
         _ => None,
     };
 
-    let commands = framing::decode_input(body)?;
     let (sender, last_pointer_mask) = match state.command_channel(&session_id) {
         Ok(channel) => channel,
         Err(error) => {
@@ -2845,10 +2998,17 @@ mod input_order_tests {
     use super::*;
     use std::time::Duration;
 
+    /// Short enough that a deliberately missing predecessor keeps the test
+    /// quick, long enough that scheduling does not beat the timer.
+    const GRACE: Duration = Duration::from_millis(40);
+
     #[tokio::test]
     async fn the_next_number_is_admitted_at_once() {
         let order = InputOrder::new();
-        assert!(order.admit(1, Duration::from_millis(50)).await);
+        assert_eq!(
+            order.admit(1, false, Duration::from_millis(50)).await,
+            Admission::Admitted
+        );
     }
 
     #[tokio::test]
@@ -2856,14 +3016,15 @@ mod input_order_tests {
         let order = Arc::new(InputOrder::new());
         let waiter = {
             let order = order.clone();
-            tokio::spawn(async move { order.admit(2, Duration::from_secs(2)).await })
+            tokio::spawn(async move { order.admit(2, false, Duration::from_secs(2)).await })
         };
         // Not admitted while 1 is still outstanding.
         tokio::time::sleep(Duration::from_millis(60)).await;
         assert!(!waiter.is_finished(), "2 must not overtake 1");
         order.done(1);
-        assert!(
+        assert_eq!(
             waiter.await.unwrap(),
+            Admission::Admitted,
             "released in order, not by the timeout"
         );
     }
@@ -2872,32 +3033,104 @@ mod input_order_tests {
     async fn a_gap_is_released_by_the_timeout_and_reported() {
         let order = InputOrder::new();
         // 1 never arrives. 2 must not wait forever.
-        assert!(!order.admit(2, Duration::from_millis(40)).await);
+        assert_eq!(order.admit(2, false, GRACE).await, Admission::AfterGap);
         order.done(2);
         // And the advance past the gap lets 3 straight through.
-        assert!(order.admit(3, Duration::from_millis(40)).await);
+        assert_eq!(order.admit(3, false, GRACE).await, Admission::Admitted);
     }
 
     #[tokio::test]
     async fn a_late_duplicate_is_not_held() {
         let order = InputOrder::new();
-        assert!(order.admit(1, Duration::from_millis(40)).await);
+        assert_eq!(order.admit(1, false, GRACE).await, Admission::Admitted);
         order.done(1);
-        assert!(order.admit(1, Duration::from_millis(40)).await);
+        assert_eq!(order.admit(1, false, GRACE).await, Admission::Admitted);
     }
 
     #[tokio::test]
     async fn the_guard_releases_on_an_early_exit() {
         let order = Arc::new(InputOrder::new());
         {
-            assert!(order.admit(1, Duration::from_millis(40)).await);
+            assert_eq!(order.admit(1, false, GRACE).await, Admission::Admitted);
             let _done = InputOrderDone {
                 order: &order,
                 seq: 1,
             };
             // An error return would drop the guard here.
         }
-        assert!(order.admit(2, Duration::from_millis(40)).await);
+        assert_eq!(order.admit(2, false, GRACE).await, Admission::Admitted);
+    }
+
+    /// The defect: a press whose release-all already went out arrives late,
+    /// after the gate has moved past its number. It must be refused, or the
+    /// release leaves the key held down on the remote for the session.
+    #[tokio::test]
+    async fn a_late_press_after_a_release_all_is_dropped() {
+        let order = InputOrder::new();
+        // 1 (the press) is late. 2 carries the release-all and is admitted by
+        // the grace: the release ends everything numbered at or below it.
+        assert_eq!(order.admit(2, true, GRACE).await, Admission::AfterGap);
+        order.done(2);
+        assert_eq!(
+            order.admit(1, false, GRACE).await,
+            Admission::Stale { barrier: 2 }
+        );
+    }
+
+    /// A duplicate that was admitted once and is re-delivered after a later
+    /// release is pre-barrier too: the release already let go of it.
+    #[tokio::test]
+    async fn a_press_behind_a_delivered_release_is_dropped_when_it_arrives_late() {
+        let order = InputOrder::new();
+        assert_eq!(order.admit(1, false, GRACE).await, Admission::Admitted);
+        order.done(1);
+        // The blur release, sequenced after the press.
+        assert_eq!(order.admit(2, true, GRACE).await, Admission::Admitted);
+        order.done(2);
+        assert_eq!(
+            order.admit(1, false, GRACE).await,
+            Admission::Stale { barrier: 2 }
+        );
+    }
+
+    #[tokio::test]
+    async fn a_press_after_the_release_barrier_is_admitted() {
+        let order = InputOrder::new();
+        assert_eq!(order.admit(1, true, GRACE).await, Admission::Admitted);
+        order.done(1);
+        // Pressed again immediately after the release: newer than the
+        // barrier, so live input.
+        assert_eq!(order.admit(2, false, GRACE).await, Admission::Admitted);
+    }
+
+    #[tokio::test]
+    async fn the_release_all_that_raises_the_barrier_is_admitted() {
+        let order = InputOrder::new();
+        // The release is not refused by the barrier it is about to raise.
+        assert_eq!(order.admit(1, true, GRACE).await, Admission::Admitted);
+        order.done(1);
+        // A newer release is live too, and only moves the barrier forward.
+        assert_eq!(order.admit(2, true, GRACE).await, Admission::Admitted);
+        order.done(2);
+        assert_eq!(
+            order.admit(1, false, GRACE).await,
+            Admission::Stale { barrier: 2 }
+        );
+    }
+
+    #[tokio::test]
+    async fn the_grace_path_raises_the_barrier() {
+        let order = InputOrder::new();
+        // 1 never arrives; 2 does not carry the release itself. The caller
+        // sends one, which covers everything below 2.
+        assert_eq!(order.admit(2, false, GRACE).await, Admission::AfterGap);
+        order.done(2);
+        assert_eq!(
+            order.admit(1, false, GRACE).await,
+            Admission::Stale { barrier: 1 }
+        );
+        // And a row of newer input still flows.
+        assert_eq!(order.admit(3, false, GRACE).await, Admission::Admitted);
     }
 }
 
