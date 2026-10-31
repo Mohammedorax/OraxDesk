@@ -707,9 +707,34 @@ async fn pump(
                 None => return Err(Error::Cancelled),
                 Some(SshCommand::Disconnect) => return Ok(()),
                 Some(SshCommand::Input(bytes)) => {
-                    channel.data_bytes(bytes).await.map_err(|e| {
-                        Error::Transport(ssh_transport::Error::ssh(e))
-                    })?;
+                    // Flush what is already decoded BEFORE writing: this arm
+                    // does not return to the select until the write resolves,
+                    // so buffered output would otherwise sit behind it
+                    // (`flush_due` cannot run while we are in here).
+                    if !pending.is_empty() {
+                        emit(events, SshEvent::Output(std::mem::take(&mut pending))).await?;
+                    }
+                    // This await can park for good. russh admits a write only
+                    // while the peer's window covers it, and the waiter it
+                    // parks on is woken by ONE thing: a WINDOW_ADJUST from the
+                    // server (russh `WindowSizeRef::update`). Nothing on local
+                    // teardown notifies it, so once the link dies with more
+                    // than a window of input unconsumed, `data_bytes` never
+                    // returns at all and this pump hangs instead of reporting
+                    // the dead carrier the way `channel.wait()` ending does
+                    // below. Bound the whole write — UI input arrives in
+                    // ≤64 KiB chunks, at most one window's worth — and report
+                    // it as the transient transport failure it is. 20 s is the
+                    // dead-link ceiling `ssh-transport`'s tunnel test already
+                    // holds itself to, far beyond the keepalive's interactive
+                    // window, so a merely slow server never sees this fire.
+                    let write = channel.data_bytes(bytes);
+                    match tokio::time::timeout(std::time::Duration::from_secs(20), write).await {
+                        Ok(result) => {
+                            result.map_err(|e| Error::Transport(ssh_transport::Error::ssh(e)))?;
+                        }
+                        Err(_) => return Err(Error::Unresponsive),
+                    }
                 }
                 Some(SshCommand::Resize { cols, rows }) => {
                     // Clamped for the same reason the initial request is: a

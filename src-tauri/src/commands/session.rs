@@ -692,6 +692,11 @@ fn forward_events(
         // farewell — or worse, take out a REPLACEMENT that registered the
         // same id in the meantime.
         let mut retired = false;
+        // Set once the frame channel has actually FAILED to send (dead
+        // webview), not when its queue merely backed up: from then on encoding
+        // frames is work for a reader that no longer exists. See the
+        // FramebufferUpdate arm below.
+        let mut frame_channel_dead = false;
         loop {
             let Some(event) = rx.recv().await else {
                 // The session task has ended and dropped its sender.
@@ -894,12 +899,24 @@ fn forward_events(
                     // back into the protocol and so cannot storm. Flow control
                     // here, at a hop that can ask the server for more data, was
                     // the mistake.
-                    let bytes = framing::encode_frame(&rects, &damage);
-                    let len = bytes.len();
-                    if let Err(e) = channel.send(InvokeResponseBody::Raw(bytes)) {
-                        tracing::warn!(session = %session_id, "frame channel send failed: {e}");
-                    } else if protocol_trace_enabled() {
-                        tracing::info!(bytes = len, "frame -> webview");
+                    // A failed send here is not back-pressure: it means the
+                    // webview that opened this channel is gone (Tauri evaluates
+                    // into the invoking webview, and an eval that cannot land
+                    // has no reader left). Saturation still sheds frames via
+                    // the renderer's own queue and must NOT set this flag.
+                    // Once the webview is gone every later send fails too, so
+                    // stop encoding for it — while the decode and the agent
+                    // feed above keep running, because the agent plane is not
+                    // the webview and must not stop perceiving.
+                    if !frame_channel_dead {
+                        let bytes = framing::encode_frame(&rects, &damage);
+                        let len = bytes.len();
+                        if let Err(e) = channel.send(InvokeResponseBody::Raw(bytes)) {
+                            tracing::warn!(session = %session_id, "frame channel send failed: {e}");
+                            frame_channel_dead = true;
+                        } else if protocol_trace_enabled() {
+                            tracing::info!(bytes = len, "frame -> webview");
+                        }
                     }
                 }
                 SessionEvent::CursorUpdate(shape) => {

@@ -978,7 +978,9 @@ impl RunLoop {
                 self.emit_serving_input(events, SessionEvent::Bell, commands, settings)
                     .await
             }
-            server_msg::SERVER_CUT_TEXT => self.handle_server_cut_text(events).await,
+            server_msg::SERVER_CUT_TEXT => {
+                self.handle_server_cut_text(events, commands, settings).await
+            }
             server_msg::END_OF_CONTINUOUS_UPDATES => {
                 self.caps.supports_continuous_updates = true;
                 if self.cu_disable_pending.take().is_some() {
@@ -1420,7 +1422,8 @@ impl RunLoop {
                 // connect, 8 MB on a 2560x1600 desktop, straight down a Wi-Fi
                 // link, before the user sees anything.
                 let changed = width != self.fb_width || height != self.fb_height;
-                self.apply_resize(width, height, events).await?;
+                self.apply_resize(width, height, events, commands, settings)
+                    .await?;
                 if changed {
                     // Legacy -223 invalidates the framebuffer and the server
                     // will NOT push a refresh, request one. Never do this for
@@ -1461,7 +1464,8 @@ impl RunLoop {
                     .await?;
                 } else {
                     let changed = (width, height) != (self.fb_width, self.fb_height);
-                    self.apply_resize(width, height, events).await?;
+                    self.apply_resize(width, height, events, commands, settings)
+                        .await?;
                     // The pipelined incremental request for the next update
                     // was sent with the OLD full rect. After a grow, nothing
                     // covers the new strip: if the server has no damage
@@ -1546,6 +1550,8 @@ impl RunLoop {
         width: u16,
         height: u16,
         events: &mpsc::Sender<SessionEvent>,
+        commands: &mut mpsc::Receiver<ClientCommand>,
+        settings: &SessionSettings,
     ) -> Result<()> {
         if !crate::proto::handshake::framebuffer_fits(width, height) {
             return Err(VncError::Protocol(format!(
@@ -1562,7 +1568,17 @@ impl RunLoop {
             // request for that region is out of bounds, and servers vary
             // between clamping and erroring.
             self.lossy_damage = self.lossy_damage.intersect(&self.full_rect());
-            emit(events, SessionEvent::DesktopResize { width, height }).await?;
+            // Input-preserving path, not plain `emit`: the resize lands in
+            // the same full channel the frames do, and a renderer that is
+            // behind must not park the loop with every queued keystroke
+            // behind it (see `emit_serving_input`).
+            self.emit_serving_input(
+                events,
+                SessionEvent::DesktopResize { width, height },
+                commands,
+                settings,
+            )
+            .await?;
             if self.cu_active {
                 // Continuous updates were enabled with the OLD full rect. The
                 // server only pushes damage inside that region, so after a
@@ -1575,7 +1591,12 @@ impl RunLoop {
         Ok(())
     }
 
-    async fn handle_server_cut_text(&mut self, events: &mpsc::Sender<SessionEvent>) -> Result<()> {
+    async fn handle_server_cut_text(
+        &mut self,
+        events: &mpsc::Sender<SessionEvent>,
+        commands: &mut mpsc::Receiver<ClientCommand>,
+        settings: &SessionSettings,
+    ) -> Result<()> {
         let payload = messages::read_server_cut_text(&mut self.reader).await?;
         let data = match &payload {
             CutTextPayload::Legacy(d) => d,
@@ -1652,7 +1673,17 @@ impl RunLoop {
         framed.extend_from_slice(&length.to_be_bytes());
         framed.extend_from_slice(data);
         if let Some(text) = crate::clipboard::handle_server_cut_text(&mut self.clipboard, &framed) {
-            emit(events, SessionEvent::ClipboardText(text)).await?;
+            // Input-preserving path, not plain `emit`: pasted text can be
+            // long and the channel is the same one frames fill, so a slow
+            // renderer must not park the loop with every queued keystroke
+            // behind it (see `emit_serving_input`).
+            self.emit_serving_input(
+                events,
+                SessionEvent::ClipboardText(text),
+                commands,
+                settings,
+            )
+            .await?;
         }
         Ok(())
     }

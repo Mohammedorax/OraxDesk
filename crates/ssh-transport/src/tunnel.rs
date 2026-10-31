@@ -140,14 +140,21 @@ impl SshTunnel {
         Ok(stream)
     }
 
-    /// Close the SSH connection. Channels already handed out die with it.
-    pub async fn close(&self) {
-        if let Some(ssh) = self.ssh.lock().await.take() {
-            let _ = ssh
-                .disconnect(russh::Disconnect::ByApplication, "", "en")
-                .await;
-        }
-    }
+    // No `close()`: teardown rides drop, and drop is complete. The connector
+    // (`src-tauri/src/tunnel.rs`) holds the only strong `Arc<SshTunnel>` and
+    // lives in the session's `ConnectOptions`; the streams opened from it
+    // live in the same session task. A russh `Handle` and every channel
+    // opened through it each hold a sender into the client run loop, so the
+    // loop keeps running until ALL of them are gone — which is exactly what
+    // ending the session does: task unwinds, streams drop, `ConnectOptions`
+    // drop, the handle drops, the loop's `recv()` finally reads `None`,
+    // breaks, and takes the TCP connection with it. The gateway then tears
+    // down every channel the connection carried, `direct-tcpip` streams
+    // included, so no remote endpoint outlives the session. A method like
+    // the deleted `close()` would only have been a way to kill the carrier
+    // EARLY — while the same task's streams were still reading and writing
+    // it — and it would race `open_stream`'s redial under the mutex; drop is
+    // refcount-ordered and cannot fire early.
 }
 
 /// Open a `direct-tcpip` channel and turn it into a byte stream, bounded by
