@@ -286,6 +286,7 @@ impl ProtocolDriver for BoundaryDriver {
                     }
                 }
             };
+            let failed = result.is_err();
             let reason = match result {
                 Ok(()) => "Support session ended".into(),
                 Err(error) => error.to_string(),
@@ -294,7 +295,7 @@ impl ProtocolDriver for BoundaryDriver {
                 .send(SessionEvent::StateChanged(SessionState::Disconnected {
                     reason,
                     can_retry: unattended,
-                    symbol: None,
+                    symbol: terminal_symbol(unattended, failed),
                 }))
                 .await;
         });
@@ -395,6 +396,26 @@ fn attempt_decision(
         return Decision::Stop { can_retry: false };
     }
     classify(failure, policy, attempts_made)
+}
+
+/// The stable identifier the UI matches when an INVITATION session ended in
+/// a failure (`SessionState::Disconnected::symbol`, the same channel RDP and
+/// SSH use — `remote_core::reconnect::RetryClassify::symbol`).
+///
+/// An invitation is single use: `prepare`'s token was spent when this session
+/// opened it, so no reconnect can ever succeed — only a NEW code from the
+/// person being helped can open another session. The symbol carries that
+/// across IPC so the disconnect panel offers the re-invite entry instead of
+/// a reconnect that would only fail again on the spent token. The invitation
+/// is never redialled here either (`attempt_decision` above stops it), so
+/// single use stays intact on both sides of the wire.
+///
+/// `None` for a saved machine, whose failures keep the manual retry it has
+/// always had, and for the user's own disconnect, which is a clean end
+/// rather than a failure.
+fn terminal_symbol(unattended: bool, failed: bool) -> Option<String> {
+    const INVITATION_SPENT: &str = "invitation-spent";
+    (!unattended && failed).then(|| INVITATION_SPENT.to_string())
 }
 
 /// The `rand_unit` [`ReconnectPolicy::delay_for`] asks for.
@@ -791,6 +812,20 @@ mod tests {
             attempt_decision(false, &failure(true), &policy, 0),
             Decision::Stop { can_retry: false }
         );
+    }
+
+    /// The one thing the terminal state says that a reconnect button could
+    /// not: for an invitation that FAILED the code is spent, so the UI's way
+    /// back in is a new one. The user's own disconnect is a clean end, and a
+    /// saved machine keeps its manual retry, so neither carries a symbol.
+    #[test]
+    fn an_invitation_that_failed_says_the_code_is_spent() {
+        assert_eq!(
+            terminal_symbol(false, true).as_deref(),
+            Some("invitation-spent")
+        );
+        assert_eq!(terminal_symbol(false, false), None);
+        assert_eq!(terminal_symbol(true, true), None);
     }
 
     /// The documented policy (`crates/remote-core/src/options.rs:570`) as the

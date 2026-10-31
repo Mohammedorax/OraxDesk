@@ -35,6 +35,17 @@
 import type { MessageKey } from "./i18n";
 
 /**
+ * The Boundary driver's name for "the invitation this session was opened
+ * with is spent" (`crates/boundary-driver/src/lib.rs`, `terminal_symbol`).
+ *
+ * A support code is single use: it was spent when the session opened it, so
+ * no reconnect can ever succeed — only a NEW code from the person being
+ * helped can open another session. The disconnect panel matches this symbol
+ * and offers that entry instead of a reconnect.
+ */
+export const INVITATION_SPENT = "invitation-spent";
+
+/**
  * What to say, and the values to say it with.
  *
  * `args` is for the one case where the sentence has to name something: the
@@ -66,6 +77,11 @@ export function isAuthFailure(reason: string, symbol?: string | null): boolean {
     symbol === "legacy-tls-required" ||
     symbol === "legacy-tls-unavailable" ||
     symbol === "nla-refused" ||
+    // A spent invitation cannot be fixed by typing a password: the code is
+    // gone and only a new one opens another session. Offering the reprompt
+    // here would walk somebody through an authentication nothing they type
+    // can complete.
+    symbol === INVITATION_SPENT ||
     r.includes("ntlm-refused-by-policy") ||
     r.includes("legacy-tls-required") ||
     r.includes("legacy-tls-unavailable") ||
@@ -81,6 +97,11 @@ export function isAuthFailure(reason: string, symbol?: string | null): boolean {
 export function diagnose(reason: unknown, symbol?: string | null): Diagnosis {
   const text = typeof reason === "string" ? reason : "";
   const r = text.toLowerCase();
+  // Ordered FIRST: when the protocol says the invitation is spent, that is
+  // what decides what happens next whatever the prose reads like — the
+  // person being helped may have "cancelled", the link may have been
+  // "reset" — and the answer is a new code, not a retry.
+  if (symbol === INVITATION_SPENT) return { key: "diagnose.invitationSpent" };
   // Ordered: "cancelled" must win over the generic auth match below, or
   // dismissing the password prompt would be reported as a failed login.
   if (r.includes("cancel")) return { key: "diagnose.cancelled" };

@@ -11,7 +11,7 @@
  */
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { authMethodLabel } from "../hooks/useSession";
-import { diagnose, isAuthFailure, opensSecuritySettings } from "../lib/diagnose";
+import { diagnose, INVITATION_SPENT, isAuthFailure, opensSecuritySettings } from "../lib/diagnose";
 import { useT, type Translate } from "../lib/i18n";
 import type { SessionState } from "../lib/types";
 
@@ -185,6 +185,7 @@ export function DisconnectedOverlay({
   profileId,
   onEditSecurity,
   onReconnect,
+  onNewInvitation,
   onClose,
 }: {
   name: string;
@@ -196,6 +197,13 @@ export function DisconnectedOverlay({
   profileId: string | null;
   onEditSecurity: (() => void) | null;
   onReconnect: (options?: { reprompt?: boolean }) => void;
+  /**
+   * Open the entry for a NEW invitation code, for a session whose code is
+   * spent (see `INVITATION_SPENT`). Null where there is none to offer — a
+   * terminal beside a session never opens one, and this symbol is never
+   * theirs anyway.
+   */
+  onNewInvitation?: (() => void) | null;
   onClose: () => void;
 }): ReactNode {
   const t = useT();
@@ -211,11 +219,14 @@ export function DisconnectedOverlay({
   const text = typeof reason === "string" ? reason : "";
   const authFailure = isAuthFailure(text, symbol);
   const securityFix = opensSecuritySettings(text, symbol);
+  // A spent invitation is never offered a reconnect: the code was single use
+  // and is gone, so the only action that can lead anywhere is a NEW one.
+  const spentInvitation = symbol === INVITATION_SPENT;
   // A rejected password is ALWAYS retryable from the user's side, whatever the
   // core said: `can_retry: false` means "do not reconnect automatically", not
   // "there is nothing this person can do". Offering only a Close button after
   // three wrong attempts is the dead end the report was about.
-  const retryable = canRetry || authFailure;
+  const retryable = !spentInvitation && (canRetry || authFailure);
 
   return (
     <div className="fade-in absolute inset-0 z-30 flex items-center justify-center bg-scrim">
@@ -286,6 +297,21 @@ export function DisconnectedOverlay({
               onClick={() => onReconnect(authFailure ? { reprompt: true } : undefined)}
             >
               {t("overlay.reconnect")}
+            </button>
+          ) : null}
+          {/*
+            A spent code's only way back in is a NEW one, so this opens the
+            same entry the library opens from its "Help someone" button,
+            rather than a reconnect the single-use code cannot survive.
+          */}
+          {spentInvitation && onNewInvitation ? (
+            <button
+              type="button"
+              data-autofocus
+              className="btn-primary"
+              onClick={onNewInvitation}
+            >
+              {t("overlay.newCode")}
             </button>
           ) : null}
         </div>

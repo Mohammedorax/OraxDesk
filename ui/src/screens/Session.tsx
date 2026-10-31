@@ -27,6 +27,7 @@ import { SshHostKeyPrompt } from "../components/SshHostKeyPrompt";
 import { DropOverlay, FilePanel } from "../components/FilePanel";
 import { SshTerminal } from "../components/SshTerminal";
 import { ConnectingOverlay, DisconnectedOverlay, ReconnectOverlay } from "../components/SessionOverlays";
+import { BoundaryConnect } from "../components/BoundaryConnect";
 import { SshSession } from "./SshSession";
 import { useFiles } from "../hooks/useFiles";
 import type { RdpResolution } from "../lib/rdp";
@@ -35,6 +36,7 @@ import { encodeResolution } from "../lib/rdpDefaults";
 import { ToastShelf } from "../components/primitives";
 import { useToasts } from "../state/ToastContext";
 import { useSettings } from "../state/SettingsContext";
+import { HostsProvider } from "../state/HostsContext";
 import { classNames } from "../lib/util";
 import { emit } from "@tauri-apps/api/event";
 import { EDIT_HOST_EVENT } from "../lib/editHost";
@@ -357,6 +359,18 @@ function SessionView({
   const [alwaysRefresh, setAlwaysRefresh] = useState(stored.alwaysRefresh);
   const [recallSignal, setRecallSignal] = useState(0);
   const [connectionInfoOpen, setConnectionInfoOpen] = useState(false);
+  /**
+   * The invitation form, open over a session whose code is spent.
+   *
+   * A help code is single use, so when an invitation session ends in a
+   * failure the driver says so (`invitation-spent`) and the disconnect panel
+   * offers this instead of a reconnect that could only fail: the library's
+   * own entry, in the window the person is already looking at.
+   * `HostsProvider` is the library's own context — the dialog is the
+   * library's dialog — mounted with it so the same component runs unchanged
+   * in a session window, which has no library around it.
+   */
+  const [reinviteOpen, setReinviteOpen] = useState(false);
   /**
    * Bumped by every native-menu action, so the menu's state is re-asserted
    * after the render even when the action changed nothing. See the note where
@@ -2146,8 +2160,25 @@ function SessionView({
               : null
           }
           onReconnect={session.retryConnect}
+          onNewInvitation={() => setReinviteOpen(true)}
           onClose={dismiss}
         />
+      ) : null}
+
+      {/*
+        The way back in after a spent invitation: the library's own
+        invitation form, opening straight into the code field. The session
+        it belonged to is over and stays over — nothing here redials the
+        spent code; a new one opens its own window, like any connect.
+      */}
+      {reinviteOpen ? (
+        <HostsProvider>
+          <BoundaryConnect
+            autoOpen
+            acceptDeepLinks={false}
+            onClosed={() => setReinviteOpen(false)}
+          />
+        </HostsProvider>
       ) : null}
 
       {showCaptureHelp ? (

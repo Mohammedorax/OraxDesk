@@ -593,6 +593,7 @@ const ar = {
   "overlay.openSecurity": "افتح إعدادات أمان هذا الجهاز",
   "overlay.saveFirst": "احفظ هذا الجهاز في مكتبتك أولًا، ثم غيّر هذا الإعداد من إعداداته.",
   "overlay.reconnect": "أعد الاتصال",
+  "overlay.newCode": "أدخل رمزًا جديدًا",
   "overlay.pressEsc": "اضغط Esc لإغلاق هذه النافذة",
 
   // جدار الوكلاء
@@ -717,6 +718,8 @@ const ar = {
   "diagnose.reset": "أغلق الطرف الآخر الاتصال.",
   "diagnose.ended": "انتهى الاتصال.",
   "diagnose.endedWith": "{reason}",
+  "diagnose.invitationSpent":
+    "انقطع الاتصال. رمز المساعدة لا يُستعمل إلا مرة واحدة، فلا تُفتح هذه الجلسة من جديد. اطلب من الشخص الذي تساعده رمزًا جديدًا.",
   "agent.binaryMissing": "هذه النسخة لا تخبر أين يوجد dvv. المسار يأتي من داخل حزمة التطبيق، وبناء التطوير لا حزمة له. شغّل dvv doctor على نسخة لها، فيطبع هذه الأسطر بالمسار الحقيقي فيها.",
   "agent.turnOff": "أطفئها",
   "agent.turnOffTitle": "يغلق المقبس ويفصله، فيفقد كل وكيل اتصاله في الحال.",
@@ -2204,6 +2207,7 @@ const en: Record<keyof typeof ar, string> = {
   "overlay.saveFirst":
     "Save this computer to your library first, then change the setting in its settings.",
   "overlay.reconnect": "Reconnect",
+  "overlay.newCode": "Enter a new code",
   "overlay.pressEsc": "Press Esc to close this window",
 
   // The agent wall
@@ -2328,6 +2332,8 @@ const en: Record<keyof typeof ar, string> = {
   "diagnose.reset": "The connection was closed by the other side.",
   "diagnose.ended": "The connection ended.",
   "diagnose.endedWith": "{reason}",
+  "diagnose.invitationSpent":
+    "The connection dropped. A help code can only be used once, so this session cannot be opened again. Ask the person you were helping for a new code.",
   "agent.binaryMissing": "This build is not reporting where dvv is. The path comes from inside the application bundle, and a development build does not have one. Run dvv doctor on a copy that does and it prints these lines with the real path already in them.",
   "agent.turnOff": "Turn it off",
   "agent.turnOffTitle":

@@ -114,15 +114,32 @@ function looksLikeNumber(text: string): boolean {
 export function BoundaryConnect({
   variant = "toolbar",
   acceptDeepLinks = true,
+  autoOpen = false,
+  onClosed,
 }: {
   variant?: "toolbar" | "hero";
   /** Only the always-mounted toolbar instance should open from a link. */
   acceptDeepLinks?: boolean;
+  /**
+   * Open the dialog as soon as this instance mounts, with no trigger button.
+   *
+   * A session whose invitation is spent offers this as the one way back in:
+   * the same entry the library opens, in the window the person is already
+   * looking at. There the dialog is the whole component, so the button that
+   * would open it is not drawn.
+   */
+  autoOpen?: boolean;
+  /**
+   * Told when the dialog closed. A caller that mounted this with `autoOpen`
+   * uses it to put the instance away — and to offer the way in again, which
+   * a mounted-but-closed autoOpen instance no longer could.
+   */
+  onClosed?: () => void;
 } = {}) {
   const { t, dir } = useI18n();
   const { saveHost, savePassword } = useHosts();
   const hero = variant === "hero";
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(autoOpen);
   const [mode, setMode] = useState<Mode>("invite");
   const [invitation, setInvitation] = useState("");
   const [codeService, setCodeService] = useState("");
@@ -186,6 +203,7 @@ export function BoundaryConnect({
   };
   const close = () => {
     reset();
+    onClosed?.();
   };
   const show = async () => {
     setOpen(true);
@@ -361,6 +379,7 @@ export function BoundaryConnect({
   };
 
   return <>
+    {autoOpen ? null : (
     <button
       type="button"
       className={
@@ -373,6 +392,7 @@ export function BoundaryConnect({
     >
       {t("support.helpSomeone")}
     </button>
+    )}
     {/*
       The shared Dialog primitive, not a native <dialog>.
       A native one is in the TOP LAYER, and top-layer promotion does not reset
