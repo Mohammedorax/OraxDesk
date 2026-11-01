@@ -308,6 +308,28 @@ pub trait SessionSource: Send + Sync {
     /// A [`ToolError`] naming what is missing, never a stub that pretends.
     fn open(&self, request: &OpenRequest) -> Result<Attach, ToolError>;
 
+    /// Tell the source that this limb is being let go.
+    ///
+    /// [`Plane::close`] removes the attachment from this process, but the
+    /// application is the side that holds the attachment, the framebuffer
+    /// mirror and the person's quality preset. Without this the pane went on
+    /// saying an agent was driving after the agent had closed the limb, and
+    /// the preset the mirror moved was never put back.
+    ///
+    /// Defaulted to a no op because a source with no far side (a recorder, a
+    /// fake machine) has nothing to tell. **Best effort by contract**: a close
+    /// must finish even when the socket is already gone, so the caller logs a
+    /// failure rather than refusing to remove its own state.
+    ///
+    /// # Errors
+    ///
+    /// A [`ToolError`] when the source could not be told. The close still
+    /// happens.
+    fn detach(&self, limb: &LimbId) -> Result<(), ToolError> {
+        let _ = limb;
+        Ok(())
+    }
+
     /// What lifecycle state this limb is in, as the source last saw it.
     ///
     /// The plane deliberately does not subscribe to `SessionEvent` itself: the
@@ -923,6 +945,24 @@ impl SessionSource for ShellSource {
             Err(other) => return Err(other),
         };
         build_attach(&attached, request.slot)
+    }
+
+    /// `limb.detach`, so the shell lets go at the same moment this process
+    /// does.
+    ///
+    /// The session id comes from the same map [`Self::state`] and
+    /// [`Self::typing_fence`] use, and it is read before [`Plane::close`]
+    /// forgets the limb. A limb this source never attached has no session to
+    /// name and nothing to release.
+    fn detach(&self, limb: &LimbId) -> Result<(), ToolError> {
+        let Some(session_id) = lock(limb_sessions()).get(limb.as_str()).cloned() else {
+            return Ok(());
+        };
+        call(
+            "limb.detach",
+            serde_json::json!({ "sessionId": session_id }),
+        )
+        .map(|_| ())
     }
 
     /// One file operation, over the shell's own `files.*` verbs.
@@ -2911,6 +2951,10 @@ impl Plane {
 
     /// Take a limb out of the registry.
     ///
+    /// The shell is told (`limb.detach`) before the limb-to-session mapping is
+    /// forgotten, so the pane drops the attachment, the mirror and the quality
+    /// preset instead of keeping all three for an agent that let go.
+    ///
     /// Every outstanding intent is withdrawn first, because `02 §6.2` owes a
     /// settlement on a close and an intent that ends silently forces every
     /// agent to carry its own timeout for every call.
@@ -2928,6 +2972,19 @@ impl Plane {
             }
         }
         self.registry.detach(&self.grant(), &limb_id)?;
+        // The application is the side that holds the attachment, the mirror and
+        // the person's quality preset, so the local removal above is only half
+        // a close. Told BEFORE `forget_answerable`, which drops the limb to
+        // session mapping this call needs. Best effort: if the socket has gone
+        // the close still has to remove this process's own state, so a failure
+        // is logged and not returned.
+        if let Err(error) = self.source.detach(&limb_id) {
+            tracing::warn!(
+                limb = %limb_id,
+                "the shell was not told to detach this limb: {}",
+                error.message
+            );
+        }
         forget_answerable(id);
         lock(&self.leases).remove(id);
         lock(&self.inflight).remove(id);
@@ -4099,6 +4156,78 @@ mod tests {
             settled.map(|refused| refused.code),
             Some("BACKPRESSURE".to_string()),
             "a settle that returned before the queue drained would have missed this"
+        );
+    }
+
+    /// A source that records what it was told to detach.
+    ///
+    /// The shell call itself needs a live socket, so what is tested here is the
+    /// half `Plane::close` owns: that it asks, with the id that was attached,
+    /// before the mapping it needs is forgotten.
+    struct RecordingSource {
+        inner: crate::fake::FakeSource,
+        detached: Mutex<Vec<String>>,
+        /// Whether the limb-to-session mapping was still there when `detach`
+        /// was called: the shell call needs it, and `forget_answerable` removes
+        /// it.
+        mapped_when_detached: Mutex<Vec<bool>>,
+    }
+
+    impl SessionSource for RecordingSource {
+        fn hosts(&self) -> Result<Vec<HostRecord>, ToolError> {
+            self.inner.hosts()
+        }
+
+        fn open(&self, request: &OpenRequest) -> Result<Attach, ToolError> {
+            self.inner.open(request)
+        }
+
+        fn detach(&self, limb: &LimbId) -> Result<(), ToolError> {
+            let mapped = lock(limb_sessions()).contains_key(limb.as_str());
+            lock(&self.mapped_when_detached).push(mapped);
+            lock(&self.detached).push(limb.to_string());
+            Ok(())
+        }
+
+        fn describe(&self) -> &'static str {
+            "a recording fake"
+        }
+    }
+
+    /// `dvv_close` has to tell the shell, or the pane keeps the badge and the
+    /// person keeps the quality preset the mirror moved.
+    #[test]
+    fn closing_a_limb_asks_the_source_to_detach_it() {
+        let recording = Arc::new(RecordingSource {
+            inner: crate::fake::FakeSource::two_machines(),
+            detached: Mutex::new(Vec::new()),
+            mapped_when_detached: Mutex::new(Vec::new()),
+        });
+        let plane = Plane::local(recording.clone()).expect("a local plane");
+        let host = plane.hosts().expect("the fake machines").remove(0);
+        let opened = plane
+            .open(&OpenRequest {
+                host_id: Some(host.host_id),
+                perceive: false,
+                ..OpenRequest::default()
+            })
+            .expect("the fake machine opens");
+        // `ShellSource::open` records this in `build_attach` before it returns.
+        // The fake does not, so record the same mapping here: the point of the
+        // assertion below is that `close` calls the source while it still
+        // exists, exactly as the real source needs.
+        lock(limb_sessions()).insert(opened.limb_id.clone(), "fake-session".to_string());
+
+        plane.close(&opened.limb_id).expect("close");
+        assert_eq!(
+            lock(&recording.detached).as_slice(),
+            std::slice::from_ref(&opened.limb_id),
+            "the close has to name the limb it released"
+        );
+        assert_eq!(
+            lock(&recording.mapped_when_detached).as_slice(),
+            &[true],
+            "detach must run before the mapping the shell call needs is forgotten"
         );
     }
 }

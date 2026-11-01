@@ -100,6 +100,7 @@ use agent_perception::{
 };
 use base64::Engine as _;
 use limb_core::capability::{Capability, CapabilitySet};
+use limb_core::fence::ContentGeneration;
 use parking_lot::Mutex;
 use remote_core::events::SessionEvent;
 use remote_core::intent::{AgentIntent, IntentId, IntentKind, IntentRefused, IntentServed};
@@ -176,6 +177,7 @@ pub struct Peer {
 }
 
 /// A refusal, as JSON-RPC spells it.
+#[derive(Debug)]
 pub struct RpcError {
     pub code: i64,
     pub message: String,
@@ -246,8 +248,19 @@ pub async fn dispatch(
     }
     match method {
         "hello" => hello(ctx, peer, params),
-        "hosts.list" => hosts_list(ctx).await,
-        "limb.list" => Ok(json!({ "limbs": limb_records(ctx) })),
+        // The inventory is not free: `00 R19` scopes a grant to the machines
+        // it names, and the list of them is itself a fact about this computer.
+        "hosts.list" => {
+            require(peer, Capability::HostsRead)?;
+            hosts_list(ctx).await
+        }
+        // Limb state, protocol and size are `view` (`02 §5.2`), and a
+        // connection that asked for nothing must not be able to enumerate the
+        // machines this person has open.
+        "limb.list" => {
+            require(peer, Capability::View)?;
+            Ok(json!({ "limbs": limb_records(ctx) }))
+        }
         "limb.open" => limb_open(ctx, peer, params).await,
         "limb.attach" => limb_attach(ctx, peer, params),
         "limb.detach" => limb_detach(ctx, peer, params),
@@ -711,13 +724,20 @@ fn limb_attach(ctx: &Ctx, peer: &Peer, params: &Value) -> Result<Value, RpcError
         (session_id, value)
     };
 
+    // Before the mirror, deliberately. A revoked session, or a fifth limb,
+    // must be refused before anything is allocated and before the person's
+    // session is renegotiated for a mirror: a refusal that had already moved
+    // their quality preset would cost them bandwidth for a call that never
+    // landed. `attach` repeats this under its own lock.
+    ctx.plane.check_attach(&session_id)?;
+
     // The mirror, before the attachment is recorded: a mirror the budget
     // refuses must not leave a half attached limb behind, and an attachment
     // recorded first would.
     let want = Perceive::parse(params.get("perceive"));
     let perception = perceive(ctx, peer, &session_id, want)?;
 
-    ctx.plane.attach(
+    if let Err(refused) = ctx.plane.attach(
         &session_id,
         Attachment {
             attachment_id: attachment_id.clone(),
@@ -736,7 +756,14 @@ fn limb_attach(ctx: &Ctx, peer: &Peer, params: &Value) -> Result<Value, RpcError
             // which is the whole point.
             observed_content: None,
         },
-    );
+    ) {
+        // `check_attach` passed, so only a second connection winning a race
+        // to the last slot (or revoking in between) can reach this. The mirror
+        // was already allocated, so hand the person's session back rather than
+        // leaving it renegotiated for an attachment that was never recorded.
+        let _ = release_mirror(ctx, &session_id);
+        return Err(refused);
+    }
     (ctx.emit)(json!({
         "type": "attached",
         "sessionId": session_id,
@@ -929,21 +956,7 @@ fn limb_detach(ctx: &Ctx, peer: &Peer, params: &Value) -> Result<Value, RpcError
     // product does not regress because an agent looked once, so the preset the
     // mirror moved is moved back, and the refresh after it repaints whatever
     // the new encoding set changes.
-    let restored = match ctx.plane.mirrors.detach(&session_id) {
-        Some(preset) => {
-            let name = wire::quality_name(preset);
-            let ok = send_now(ctx, &session_id, ClientCommand::SetQuality(preset)).is_ok()
-                && send_now(ctx, &session_id, ClientCommand::Refresh).is_ok();
-            if !ok {
-                tracing::warn!(
-                    session = %session_id,
-                    "could not put the quality preset back to {name}; the session may be gone"
-                );
-            }
-            json!(name)
-        }
-        None => Value::Null,
-    };
+    let restored = release_mirror(ctx, &session_id);
     (ctx.emit)(json!({
         "type": "detached",
         "sessionId": session_id,
@@ -954,7 +967,34 @@ fn limb_detach(ctx: &Ctx, peer: &Peer, params: &Value) -> Result<Value, RpcError
     Ok(json!({ "detached": session_id, "qualityRestored": restored }))
 }
 
+/// Free this session's mirror and put back the preset it moved.
+///
+/// The one place that undo is written, used by `limb.detach` and by the
+/// rollback in `limb.attach`. `Value::Null` when nothing was renegotiated,
+/// which is a session that was never mirrored or only ever watched damage.
+fn release_mirror(ctx: &Ctx, session_id: &str) -> Value {
+    match ctx.plane.mirrors.detach(session_id) {
+        Some(preset) => {
+            let name = wire::quality_name(preset);
+            let ok = send_now(ctx, session_id, ClientCommand::SetQuality(preset)).is_ok()
+                && send_now(ctx, session_id, ClientCommand::Refresh).is_ok();
+            if !ok {
+                tracing::warn!(
+                    session = %session_id,
+                    "could not put the quality preset back to {name}; the session may be gone"
+                );
+            }
+            json!(name)
+        }
+        None => Value::Null,
+    }
+}
+
 fn limb_status(ctx: &Ctx, peer: &Peer, params: &Value) -> Result<Value, RpcError> {
+    // LIMB state is `view` (`02 §5.2`), and the check comes before the session
+    // id is looked at, so a connection holding nothing learns nothing about
+    // which sessions exist.
+    require(peer, Capability::View)?;
     let session_id = session_id_of(params)?;
     let (mut out, has_screen) = {
         let sessions = ctx.sessions.lock();
@@ -1042,10 +1082,10 @@ fn screen_read(ctx: &Ctx, peer: &Peer, params: &Value) -> Result<Value, RpcError
     }
 
     let request = read_request(ctx, &session_id, params)?;
-    let read = ctx
+    let (read, observed_content) = ctx
         .plane
         .mirrors
-        .read(&session_id, &request, crate::agent::now())
+        .read_with_content(&session_id, &request, crate::agent::now())
         .map_err(perception_refusal)?;
 
     match read {
@@ -1070,25 +1110,19 @@ fn screen_read(ctx: &Ctx, peer: &Peer, params: &Value) -> Result<Value, RpcError
             // either of those would be typing into a screen it had still not
             // seen, which is the whole failure.
             //
-            // Read after the mirror answered rather than before, so the number
-            // recorded is the one the pixels in this reply were composited at.
-            // Recording the pre read value would credit the agent with an
-            // observation of a screen that repainted while the read was being
-            // encoded.
-            ctx.plane.note_observed(
+            // The size check comes FIRST. A frame above the cap is refused and
+            // nothing is sent, so it is not an observation: recording it here
+            // would let an IMAGE_TOO_LARGE reply clear the fence for a screen
+            // the agent never received. `observed_content` is the generation
+            // the mirror captured under the same lock as the read, so a
+            // repaint that lands after the read cannot be credited to it.
+            admit_frame(
+                ctx,
                 &session_id,
                 &attachment_id,
-                ctx.plane.mirrors.status(&session_id).content,
-            );
-            if observation.image.bytes.len() > MAX_IMAGE_BYTES {
-                return Err(RpcError::tagged(
-                    "IMAGE_TOO_LARGE",
-                    format!(
-                        "that read encoded to {} bytes and this lane carries at most {MAX_IMAGE_BYTES}: nothing was sent and no smaller image was substituted (00 R5). Ask for a region, or a smaller longEdge",
-                        observation.image.bytes.len()
-                    ),
-                ));
-            }
+                observed_content,
+                &observation.image,
+            )?;
             let mut described = serde_json::to_value(&*observation).map_err(|e| {
                 RpcError::new(
                     -32603,
@@ -1109,6 +1143,33 @@ fn screen_read(ctx: &Ctx, peer: &Peer, params: &Value) -> Result<Value, RpcError
             }))
         }
     }
+}
+
+/// Record one frame as observed, or refuse it for size before doing so.
+///
+/// The order is the whole point: an image over [`MAX_IMAGE_BYTES`] is not
+/// delivered, so it must not clear the content fence. Writing the two steps
+/// here rather than inline is what lets the rule be tested without encoding a
+/// six megabyte PNG.
+fn admit_frame(
+    ctx: &Ctx,
+    session_id: &str,
+    attachment_id: &str,
+    observed_content: ContentGeneration,
+    image: &agent_perception::EncodedImage,
+) -> Result<(), RpcError> {
+    if image.bytes.len() > MAX_IMAGE_BYTES {
+        return Err(RpcError::tagged(
+            "IMAGE_TOO_LARGE",
+            format!(
+                "that read encoded to {} bytes and this lane carries at most {MAX_IMAGE_BYTES}: nothing was sent and no smaller image was substituted (00 R5). Ask for a region, or a smaller longEdge",
+                image.bytes.len()
+            ),
+        ));
+    }
+    ctx.plane
+        .note_observed(session_id, attachment_id, observed_content);
+    Ok(())
 }
 
 /// Rung 1: what changed, as a LIST.
@@ -1312,6 +1373,52 @@ fn perception_refusal(error: PerceptionError) -> RpcError {
     }
 }
 
+/// What one decoded `limb.command` costs.
+///
+/// `limb.command` carries a [`ClientCommand`] and not an intent, so
+/// [`limb_core::capability::capabilities_for`] cannot answer: the lowering has
+/// already happened by the time anything reaches this socket. The mapping is
+/// therefore by the authority each command exercises, using the vocabulary
+/// `capability.rs` already defines.
+///
+/// * Pointer, keys, typed text, quality and resize are ONE authority, and
+///   [`Capability::Control`]'s own doc says so. `set-view-only` and
+///   `set-prefer-scancodes` shape whether and how control reaches the session,
+///   so they belong to the same authority rather than to a weaker one.
+/// * Clipboard and terminal verbs keep the split `capabilities_for` already
+///   gives their intent forms. `control` does not imply either.
+/// * `Refresh` and `set-always-refresh` shape PERCEPTION, so they cost
+///   [`Capability::View`].
+/// * `reconnect-now` dials the machine again, which is what `Open` authorises.
+///   It is not `Close`: the limb is staying, it is being re-established.
+///
+/// `None` is for the variants `wire::decode_command` never produces, and for
+/// `Agent`, which has `limb.exec`. It is a refusal rather than a default arm:
+/// a command this build cannot cost is a command it must not carry.
+fn command_capability(command: &ClientCommand) -> Option<Capability> {
+    match command {
+        ClientCommand::Pointer { .. }
+        | ClientCommand::Key { .. }
+        | ClientCommand::ReleaseAllKeys
+        | ClientCommand::SetQuality(_)
+        | ClientCommand::RequestResize { .. }
+        | ClientCommand::SetViewOnly(_)
+        | ClientCommand::SetPreferScancodes(_) => Some(Capability::Control),
+        ClientCommand::ClipboardText(_) => Some(Capability::ClipboardWrite),
+        ClientCommand::ClipboardRequest { .. } => Some(Capability::ClipboardRead),
+        ClientCommand::TerminalInput(_) | ClientCommand::ResizeTerminal { .. } => {
+            Some(Capability::TerminalWrite)
+        }
+        ClientCommand::Refresh | ClientCommand::SetAlwaysRefresh(_) => Some(Capability::View),
+        ClientCommand::ReconnectNow => Some(Capability::Open),
+        ClientCommand::TrustCertificate { .. }
+        | ClientCommand::ProvideCredentials { .. }
+        | ClientCommand::CancelCredentials
+        | ClientCommand::Disconnect
+        | ClientCommand::Agent(_) => None,
+    }
+}
+
 /// Put one command on a live session's wire.
 ///
 /// `try_send` rather than `send`, and the two failures are told apart rather
@@ -1326,6 +1433,18 @@ fn limb_command(ctx: &Ctx, peer: &Peer, params: &Value) -> Result<Value, RpcErro
         RpcError::bad_params("limb.command needs a `command` object; see IPC_CONTRACT.md")
     })?;
     let command = wire::decode_command(command).map_err(RpcError::bad_params)?;
+    // The lease first (above), then what the command itself costs. A revoked
+    // attachment gets LEASE_REVOKED whatever it asked for; a live one gets
+    // told which authority it lacks. There is no default arm that lets an
+    // unreviewed command through: a command this build cannot price is
+    // refused.
+    let needed = command_capability(&command).ok_or_else(|| {
+        RpcError::bad_params(format!(
+            "`{}` is not carried by limb.command: answering a credential or a certificate prompt is a person's act, and an agent intent has its own verb",
+            wire::command_name(&command)
+        ))
+    })?;
+    require(peer, needed)?;
     let (handle, has_screen) = {
         let sessions = ctx.sessions.lock();
         let entry = sessions
@@ -2901,6 +3020,44 @@ mod tests {
         );
     }
 
+    /// A re-attach is refused before the mirror, so the person's session is
+    /// not renegotiated for an agent the person has already stopped.
+    #[tokio::test]
+    async fn a_revoked_session_cannot_be_reinstated_by_attaching_again() {
+        let mut fixture = fixture();
+        let mut peer = greeted(&fixture.ctx).await;
+        call(
+            &fixture.ctx,
+            &mut peer,
+            "limb.attach",
+            json!({ "address": "10.0.0.5", "protocol": "vnc", "slot": 0 }),
+        )
+        .await;
+        fixture.ctx.plane.revoke("s1");
+        while fixture.commands.try_recv().is_ok() {}
+
+        let refused = dispatch(
+            &fixture.ctx,
+            &mut peer,
+            "limb.attach",
+            &json!({ "address": "10.0.0.5", "protocol": "vnc", "slot": 0, "perceive": true }),
+        )
+        .await
+        .expect_err("a person is driving this machine");
+        assert_eq!(refused.tag, Some("LEASE_REVOKED"));
+        assert!(
+            fixture.commands.try_recv().is_err(),
+            "a refused attach must not put SetQuality or Refresh on the person's wire"
+        );
+        assert_eq!(
+            fixture.ctx.plane.attached_ids().get("s1"),
+            peer.attachment_id.as_ref(),
+            "the refused attach must not replace the attachment the person revoked"
+        );
+        let snapshot = fixture.ctx.plane.snapshot();
+        assert_eq!(snapshot[0]["revoked"], true);
+    }
+
     #[tokio::test]
     async fn an_unknown_method_answers_the_code_a_client_probes_with() {
         let fixture = fixture();
@@ -3267,6 +3424,202 @@ mod tests {
         .await
         .expect_err("view does not imply capture");
         assert_eq!(refused.tag, Some("MISSING_CAPABILITY"));
+    }
+
+    /// Every command `limb.command` can decode costs a capability, and the
+    /// authority is the one `capability.rs` already names for that power.
+    ///
+    /// A command with no mapping is refused on the wire, so this is the table
+    /// that keeps a new command from arriving ungated.
+    #[test]
+    fn every_command_limb_command_carries_costs_the_capability_it_exercises() {
+        let cases = [
+            (
+                json!({ "kind": "pointer", "x": 1, "y": 2, "buttonMask": 0 }),
+                Capability::Control,
+            ),
+            (
+                json!({ "kind": "key", "keysym": 65, "down": true }),
+                Capability::Control,
+            ),
+            (json!({ "kind": "release-all-keys" }), Capability::Control),
+            (
+                json!({ "kind": "clipboard-text", "text": "x" }),
+                Capability::ClipboardWrite,
+            ),
+            (
+                json!({ "kind": "clipboard-request", "formats": 1 }),
+                Capability::ClipboardRead,
+            ),
+            (
+                json!({ "kind": "set-quality", "preset": "high" }),
+                Capability::Control,
+            ),
+            (
+                json!({ "kind": "request-resize", "width": 800, "height": 600 }),
+                Capability::Control,
+            ),
+            (json!({ "kind": "refresh" }), Capability::View),
+            (
+                json!({ "kind": "set-always-refresh", "on": true }),
+                Capability::View,
+            ),
+            (
+                json!({ "kind": "set-view-only", "on": true }),
+                Capability::Control,
+            ),
+            (
+                json!({ "kind": "set-prefer-scancodes", "on": false }),
+                Capability::Control,
+            ),
+            (json!({ "kind": "reconnect-now" }), Capability::Open),
+            (
+                json!({ "kind": "terminal-input", "bytes": [1, 2] }),
+                Capability::TerminalWrite,
+            ),
+            (
+                json!({ "kind": "resize-terminal", "cols": 80, "rows": 24 }),
+                Capability::TerminalWrite,
+            ),
+        ];
+        for (value, expected) in cases {
+            let command = wire::decode_command(&value).expect("a command this wire carries");
+            assert_eq!(
+                command_capability(&command),
+                Some(expected),
+                "{} must cost {}",
+                value["kind"],
+                expected
+            );
+        }
+    }
+
+    /// A connection that asked for no capability cannot drive, and cannot
+    /// shape the session either: `set-view-only` used to be a way to lock the
+    /// person out of their own pane.
+    #[tokio::test]
+    async fn a_connection_without_control_cannot_drive_or_shape_the_session() {
+        let mut fixture = fixture();
+        let mut peer = attached_holding(&fixture.ctx, &["view"]).await;
+        for command in [
+            json!({ "kind": "pointer", "x": 7, "y": 9, "buttonMask": 1 }),
+            json!({ "kind": "key", "keysym": 65, "down": true }),
+            json!({ "kind": "release-all-keys" }),
+            json!({ "kind": "set-view-only", "on": true }),
+            json!({ "kind": "set-prefer-scancodes", "on": true }),
+            json!({ "kind": "set-quality", "preset": "low" }),
+            json!({ "kind": "request-resize", "width": 800, "height": 600 }),
+            json!({ "kind": "reconnect-now" }),
+            json!({ "kind": "terminal-input", "bytes": [1, 2] }),
+        ] {
+            let refused = dispatch(
+                &fixture.ctx,
+                &mut peer,
+                "limb.command",
+                &json!({ "sessionId": "s1", "command": command }),
+            )
+            .await
+            .expect_err("the capability is not held");
+            assert_eq!(refused.tag, Some("MISSING_CAPABILITY"));
+            assert!(
+                fixture.commands.try_recv().is_err(),
+                "a refused command must not reach the wire: {command}"
+            );
+        }
+    }
+
+    /// `hosts.list`, `limb.list` and `limb.status` are inventory. A connection
+    /// holding nothing learns nothing, and the weaker `view` is enough for a
+    /// limb's own state but never for the machine library.
+    #[tokio::test]
+    async fn a_connection_holding_nothing_cannot_enumerate_machines_or_limbs() {
+        let fixture = fixture();
+        let mut peer = Peer::default();
+        call(
+            &fixture.ctx,
+            &mut peer,
+            "hello",
+            json!({
+                "protocol": PROTOCOL,
+                "client": { "name": "nothing" },
+                "capabilities": [],
+            }),
+        )
+        .await;
+        for (method, params) in [
+            ("hosts.list", json!({})),
+            ("limb.list", json!({})),
+            ("limb.status", json!({ "sessionId": "s1" })),
+        ] {
+            let refused = dispatch(&fixture.ctx, &mut peer, method, &params)
+                .await
+                .expect_err("no capability was asked for");
+            assert_eq!(refused.tag, Some("MISSING_CAPABILITY"), "{method}");
+        }
+
+        // `view` reads a limb's state and still not the saved library, which is
+        // `hosts.read` and a different fact about the computer.
+        let mut viewer = attached_holding(&fixture.ctx, &["view"]).await;
+        let limbs = call(&fixture.ctx, &mut viewer, "limb.list", json!({})).await;
+        assert_eq!(limbs["limbs"][0]["sessionId"], "s1");
+        let status = call(
+            &fixture.ctx,
+            &mut viewer,
+            "limb.status",
+            json!({ "sessionId": "s1" }),
+        )
+        .await;
+        assert_eq!(status["sessionId"], "s1");
+        let refused = dispatch(&fixture.ctx, &mut viewer, "hosts.list", &json!({}))
+            .await
+            .expect_err("the machine library costs hosts.read");
+        assert_eq!(refused.tag, Some("MISSING_CAPABILITY"));
+    }
+
+    /// A frame refused for size is not a delivered frame, so it must not clear
+    /// the content fence. The ordering used to record the observation first,
+    /// which made an IMAGE_TOO_LARGE reply an authorisation to type into a
+    /// screen the agent had never been given.
+    #[tokio::test]
+    async fn an_image_refused_for_size_is_not_recorded_as_an_observation() {
+        let fixture = fixture();
+        let peer = attached_holding(&fixture.ctx, &["view", "capture"]).await;
+        let attachment_id = peer.attachment_id.clone().expect("hello mints one");
+        let image = |len: usize| agent_perception::EncodedImage {
+            format: ImageFormat::Png,
+            space: agent_perception::ImageSpace::unscaled(Rect::new(0, 0, 1, 1)),
+            bytes: vec![0; len],
+            encoded_bytes: len,
+        };
+
+        let refused = admit_frame(
+            &fixture.ctx,
+            "s1",
+            &attachment_id,
+            ContentGeneration::FIRST,
+            &image(MAX_IMAGE_BYTES + 1),
+        )
+        .expect_err("above the lane's cap");
+        assert_eq!(refused.tag, Some("IMAGE_TOO_LARGE"));
+        assert_eq!(
+            fixture.ctx.plane.observed_content("s1", &attachment_id),
+            None,
+            "nothing was delivered, so nothing was observed"
+        );
+
+        admit_frame(
+            &fixture.ctx,
+            "s1",
+            &attachment_id,
+            ContentGeneration::FIRST,
+            &image(8),
+        )
+        .expect("a frame under the cap is delivered");
+        assert_eq!(
+            fixture.ctx.plane.observed_content("s1", &attachment_id),
+            Some(ContentGeneration::FIRST),
+            "a delivered frame does clear the fence"
+        );
     }
 
     /// `AGENT_BRIEF` D2. A person watching a pane must not silently lose the

@@ -46,7 +46,7 @@ pub mod mirror;
 pub mod server;
 pub mod wire;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -62,6 +62,15 @@ use server::{Ctx, Peer, RpcError};
 
 /// The protocol string, which is a hard gate (`04 §2.7` rule 1).
 pub const PROTOCOL: &str = "dvvp.v1";
+
+/// The most limbs this shell will hold under attachment at once.
+///
+/// The same four `agent-plane` uses (`MAX_DRIVEN_LIMBS`, `00 R21`): `08 §2`'s
+/// audit names the single session runtime as the binding constraint, and a
+/// fifth session makes the UI hang rather than the agent slow. The shell does
+/// not link `agent-plane`, so the number is repeated here rather than imported;
+/// if one moves, both move.
+pub const MAX_ATTACHED_LIMBS: usize = 4;
 
 /// Preference key: is the agent plane switched on? Default **true**: an agent
 /// on this computer reaches the user's machines with nothing to configure.
@@ -528,7 +537,10 @@ pub struct Attachment {
     pub attachment_id: String,
     pub client: String,
     /// True once a person has taken the wheel. Every further command from this
-    /// attachment is refused with `LEASE_REVOKED` (`04 §5.4`).
+    /// attachment is refused with `LEASE_REVOKED` (`04 §5.4`), and the session
+    /// cannot be entered again by a fresh attach until it ends: the memory of
+    /// the decision lives in `revoked_sessions`, not in this row, because the
+    /// agent can detach.
     pub revoked: bool,
     pub held: bool,
     pub phase: String,
@@ -635,6 +647,16 @@ pub struct AgentPlane {
     /// Keyed by the shell's session id, which is the id every window, every
     /// event and every registry entry already uses.
     attachments: Mutex<HashMap<String, Attachment>>,
+    /// Sessions a person has taken the wheel on, kept after the attachment row
+    /// goes.
+    ///
+    /// [`AgentPlane::detach`] is something the AGENT can do, so forgetting a
+    /// revocation there would let the party it was aimed at undo it by letting
+    /// go and attaching again. `04 §5.4` and D5 make the person's decision
+    /// outrank the agent's, so the memory outlives the attachment row and is
+    /// cleared only when the SESSION ends ([`AgentPlane::forget`]) or the plane
+    /// is switched off.
+    revoked_sessions: Mutex<HashSet<String>>,
     next_attachment: AtomicU64,
     /// One row per connected client, keyed by a per connection number, valued
     /// by the name it gave in `hello`.
@@ -698,6 +720,53 @@ impl Drop for ConnectionGuard {
     }
 }
 
+/// Why a revoked session cannot be entered again by attaching.
+///
+/// The refusal is the one a revoked attachment already gets, because it is the
+/// same decision: a person took the machine, and the agent's answer is to
+/// report back rather than look for another way in.
+fn revoked_reattach(session_id: &str) -> RpcError {
+    RpcError {
+        code: -32000,
+        message: format!(
+            "a person took the wheel on {session_id} in OraxDesk, and a revoked attachment is not reinstated by attaching again. Nothing was attached and nothing will be sent: report back to the user instead"
+        ),
+        tag: Some("LEASE_REVOKED"),
+    }
+}
+
+/// The four-limb ceiling, as this surface spells it.
+fn too_many_limbs(attached: usize) -> RpcError {
+    RpcError {
+        code: -32000,
+        message: format!(
+            "this build drives at most {MAX_ATTACHED_LIMBS} limbs at once and {attached} are attached; call limb.detach on one before attaching another. The ceiling is {MAX_ATTACHED_LIMBS} because 08 §2's audit names the single session runtime as the binding constraint (00 R21), and it is refused rather than degraded"
+        ),
+        tag: Some("RATE_LIMITED"),
+    }
+}
+
+/// May this session take one more attachment?
+///
+/// Pure so the two decisions can be tested without a plane: a person's
+/// revocation outranks everything ([`revoked_reattach`]), and the ceiling
+/// applies to the number of SESSIONS, so re-attaching the same one is never the
+/// fifth limb.
+fn admit_attach(
+    session_id: &str,
+    existing: Option<&Attachment>,
+    revoked_session: bool,
+    attached: usize,
+) -> Result<(), RpcError> {
+    if revoked_session || existing.is_some_and(|held| held.revoked) {
+        return Err(revoked_reattach(session_id));
+    }
+    if existing.is_none() && attached >= MAX_ATTACHED_LIMBS {
+        return Err(too_many_limbs(attached));
+    }
+    Ok(())
+}
+
 impl AgentPlane {
     /// A fresh attachment id, unique within this process run.
     ///
@@ -720,13 +789,59 @@ impl AgentPlane {
         self.running.lock().as_ref().map(|r| r.path.clone())
     }
 
-    pub fn attach(&self, session_id: &str, attachment: Attachment) {
-        self.attachments
-            .lock()
-            .insert(session_id.to_string(), attachment);
-        self.announce();
+    /// Is this session attachable right now?
+    ///
+    /// The same decision [`AgentPlane::attach`] makes, without inserting
+    /// anything, so `limb.attach` can refuse a revoked session or a fifth limb
+    /// BEFORE it allocates a mirror and moves the person's quality preset.
+    /// `attach` repeats the check under the lock, because a second connection
+    /// can get there between the two.
+    ///
+    /// # Errors
+    ///
+    /// `LEASE_REVOKED` for a session a person has taken the wheel on, or
+    /// `RATE_LIMITED` when four limbs are already attached.
+    pub fn check_attach(&self, session_id: &str) -> Result<(), RpcError> {
+        let attachments = self.attachments.lock();
+        let revoked = self.revoked_sessions.lock().contains(session_id);
+        admit_attach(
+            session_id,
+            attachments.get(session_id),
+            revoked,
+            attachments.len(),
+        )
     }
 
+    /// Record one attachment, or say why this session cannot take one.
+    ///
+    /// # Errors
+    ///
+    /// [`check_attach`](AgentPlane::check_attach)'s two refusals, and for the
+    /// same reasons. A refusal leaves the table exactly as it was.
+    pub fn attach(&self, session_id: &str, attachment: Attachment) -> Result<(), RpcError> {
+        {
+            let mut attachments = self.attachments.lock();
+            let revoked = self.revoked_sessions.lock().contains(session_id);
+            admit_attach(
+                session_id,
+                attachments.get(session_id),
+                revoked,
+                attachments.len(),
+            )?;
+            attachments.insert(session_id.to_string(), attachment);
+        }
+        // After the lock is back, never while it is held: `announce` takes the
+        // session registry.
+        self.announce();
+        Ok(())
+    }
+
+    /// Let go of one session's attachment.
+    ///
+    /// The revocation is NOT forgotten here. Detaching is something the agent
+    /// can do, and a person's "take the wheel" that the agent could cancel by
+    /// letting go and attaching again would not be a revocation at all. The
+    /// session itself clears it when it ends (see [`AgentPlane::forget`]).
     pub fn detach(&self, session_id: &str) {
         let removed = self.attachments.lock().remove(session_id);
         if removed.is_some() {
@@ -936,6 +1051,10 @@ impl AgentPlane {
             held.holder_kind = Some("human".to_string());
             held.human_took_over = true;
             held.inflight.clear();
+            // Remembered past the attachment row. See the field's own comment:
+            // the agent can detach, and a detach that forgot this would be an
+            // undo of the person's decision.
+            self.revoked_sessions.lock().insert(session_id.to_string());
             lease_event(session_id, held)
         };
         // The machine just stopped being agent driven, and the agent is still
@@ -1008,6 +1127,10 @@ impl AgentPlane {
     /// is over, so there is no wire to put one on and nobody left to see it.
     pub fn forget(&self, session_id: &str) {
         self.attachments.lock().remove(session_id);
+        // The session is over, so the person's revocation of it has nothing
+        // left to protect. A reopened machine is a new session and a new
+        // decision.
+        self.revoked_sessions.lock().remove(session_id);
         self.mirrors.forget(session_id);
         // The live total just fell, and the driven one may have with it. This
         // is the only session lifecycle edge the plane is told about: a
@@ -1312,6 +1435,11 @@ pub fn stop(plane: &Arc<AgentPlane>) {
         }
     }
     plane.attachments.lock().clear();
+    // A person switching the plane off is a person decision, and the plane
+    // coming back on is a fresh start: the sessions it reattaches are the ones
+    // it is allowed to ask for after that, not the revoked rows of the run
+    // before.
+    plane.revoked_sessions.lock().clear();
     // The socket is gone, so every client on it is gone with it. Cleared here
     // rather than left to each [`ConnectionGuard`] because those drop when the
     // cancelled connection tasks next wake, and a bar that said "1 agent" for
@@ -1575,7 +1703,9 @@ mod tests {
         let plane = Arc::new(AgentPlane::default());
         let _connected = plane.client_connected("dvv");
         for session in ["s1", "s2", "s3", "s4"] {
-            plane.attach(session, attachment_of("att_0", true));
+            plane
+                .attach(session, attachment_of("att_0", true))
+                .expect("inside the four-limb ceiling");
         }
 
         let counts = counts_of(&plane, &sessions);
@@ -1602,8 +1732,12 @@ mod tests {
         let (sessions, _alive) = registry(&["s1", "s2"]);
         let plane = Arc::new(AgentPlane::default());
         let _connected = plane.client_connected("dvv");
-        plane.attach("s1", attachment_of("att_0", false));
-        plane.attach("s2", attachment_of("att_0", false));
+        plane
+            .attach("s1", attachment_of("att_0", false))
+            .expect("a free session takes an attachment");
+        plane
+            .attach("s2", attachment_of("att_0", false))
+            .expect("a second free session takes one too");
 
         let counts = counts_of(&plane, &sessions);
         assert_eq!(counts.agents_connected, 1);
@@ -1636,7 +1770,9 @@ mod tests {
         let (sessions, _alive) = registry(&["s1"]);
         let plane = Arc::new(AgentPlane::default());
         let _connected = plane.client_connected("dvv");
-        plane.attach("s1", attachment_of("att_0", true));
+        plane
+            .attach("s1", attachment_of("att_0", true))
+            .expect("the first attachment");
         assert_eq!(counts_of(&plane, &sessions).sessions_driven, 1);
 
         plane.revoke("s1").expect("something was attached");
@@ -1666,7 +1802,9 @@ mod tests {
         // still a fact about what is attached and connected right now, not
         // about the setting.
         let _connected = plane.client_connected("dvv");
-        plane.attach("s1", attachment_of("att_0", true));
+        plane
+            .attach("s1", attachment_of("att_0", true))
+            .expect("the first attachment");
         assert_eq!(
             counts_of(&plane, &sessions),
             AgentCounts {
@@ -1704,7 +1842,9 @@ mod tests {
         start(&plane, ctx, dir.path().join("agent.sock")).expect("the plane starts");
 
         let _connected = plane.client_connected("dvv");
-        plane.attach("s1", attachment_of("att_0", true));
+        plane
+            .attach("s1", attachment_of("att_0", true))
+            .expect("the first attachment");
         assert_eq!(
             counts_of(&plane, &sessions),
             AgentCounts {
@@ -1743,7 +1883,9 @@ mod tests {
         // Attaching moves no number: the agent was already connected and it is
         // not driving anything yet. The pane hears about the attach on the
         // `attached` payload, and nothing repaints here.
-        plane.attach("s1", attachment_of("att_0", false));
+        plane
+            .attach("s1", attachment_of("att_0", false))
+            .expect("an attach within the ceiling");
         plane.report(
             "s1",
             "att_0",
@@ -1830,21 +1972,23 @@ mod tests {
     #[test]
     fn a_revoked_attachment_cannot_report_itself_back_in() {
         let plane = AgentPlane::default();
-        plane.attach(
-            "s1",
-            Attachment {
-                attachment_id: "att_0".into(),
-                client: "test".into(),
-                revoked: false,
-                held: true,
-                phase: "held".into(),
-                holder_kind: Some("agent".into()),
-                holder_label: None,
-                human_took_over: false,
-                inflight: vec!["type".into()],
-                observed_content: None,
-            },
-        );
+        plane
+            .attach(
+                "s1",
+                Attachment {
+                    attachment_id: "att_0".into(),
+                    client: "test".into(),
+                    revoked: false,
+                    held: true,
+                    phase: "held".into(),
+                    holder_kind: Some("agent".into()),
+                    holder_label: None,
+                    human_took_over: false,
+                    inflight: vec!["type".into()],
+                    observed_content: None,
+                },
+            )
+            .expect("the first attachment");
         let revoked = plane.revoke("s1").expect("something was attached");
         assert_eq!(revoked["humanTookOver"], true);
         assert_eq!(revoked["held"], false);
@@ -1866,6 +2010,88 @@ mod tests {
         );
         let snapshot = plane.snapshot();
         assert_eq!(snapshot[0]["revoked"], true);
+    }
+
+    /// A re-attach is not a way around the person's decision.
+    ///
+    /// `server::limb_attach` used to build a fresh `Attachment` with
+    /// `revoked: false` on every call, so an agent that received
+    /// `LEASE_REVOKED` only had to attach again. The person took the wheel;
+    /// the agent gets the same refusal it already had.
+    #[test]
+    fn a_revoked_session_is_not_reinstated_by_attaching_again() {
+        let plane = AgentPlane::default();
+        plane
+            .attach("s1", attachment_of("att_0", true))
+            .expect("the first attachment");
+        plane.revoke("s1").expect("something was attached");
+
+        let refused = plane
+            .attach("s1", attachment_of("att_1", true))
+            .expect_err("a person is driving this machine");
+        assert_eq!(refused.tag, Some("LEASE_REVOKED"));
+        assert_eq!(
+            plane.snapshot()[0]["attachmentId"],
+            "att_0",
+            "the refused attach must not replace who holds the (revoked) row"
+        );
+        assert_eq!(plane.snapshot()[0]["revoked"], true);
+    }
+
+    /// Detaching is the agent's own action, so it cannot be the undo.
+    ///
+    /// Without this, the fix above would only move the bypass one call away:
+    /// `limb.detach` removes the attachment row, and the next `limb.attach`
+    /// would find nothing revoked.
+    #[test]
+    fn a_revocation_survives_a_detach_until_the_session_ends() {
+        let plane = AgentPlane::default();
+        plane
+            .attach("s1", attachment_of("att_0", true))
+            .expect("the first attachment");
+        plane.revoke("s1").expect("something was attached");
+        plane.detach("s1");
+
+        let refused = plane
+            .attach("s1", attachment_of("att_0", true))
+            .expect_err("detaching does not take the wheel back from the person");
+        assert_eq!(refused.tag, Some("LEASE_REVOKED"));
+
+        // The session ending is the one edge that clears it: a reopened machine
+        // is a new session and a new decision.
+        plane.forget("s1");
+        plane
+            .attach("s1", attachment_of("att_1", true))
+            .expect("a new session may take an agent");
+    }
+
+    /// Four limbs is the ceiling, the same number `agent-plane` enforces, and
+    /// the refusal says which number it is.
+    #[test]
+    fn the_fifth_attached_limb_is_refused_by_name() {
+        let plane = AgentPlane::default();
+        for session in ["s1", "s2", "s3", "s4"] {
+            plane
+                .attach(session, attachment_of("att_0", false))
+                .expect("inside the ceiling");
+        }
+
+        let refused = plane
+            .attach("s5", attachment_of("att_0", false))
+            .expect_err("four is the ceiling");
+        assert_eq!(refused.tag, Some("RATE_LIMITED"));
+        assert!(
+            refused.message.contains(&MAX_ATTACHED_LIMBS.to_string()),
+            "the refusal has to name the ceiling: {}",
+            refused.message
+        );
+        assert_eq!(plane.snapshot().len(), 4);
+
+        // Re-attaching a session already held is not a fifth limb: the ceiling
+        // is a number of sessions, not a number of calls.
+        plane
+            .attach("s1", attachment_of("att_1", false))
+            .expect("the same session is still the same one limb");
     }
 
     /// The whole of "off", and the whole of "on", over a real socket.

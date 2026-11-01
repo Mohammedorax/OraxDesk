@@ -516,18 +516,44 @@ impl Mirrors {
     /// matter and they are deliberately different: priming resolves on its own
     /// once the refresh lands, and staleness resolves only when the session
     /// stops advertising H.264, which is the plane's job and not the agent's.
+    /// A read whose caller does not need the content fence's half.
+    ///
+    /// Test-only: the one production caller is `screen_read`, and it records
+    /// the generation with the pixels, so it uses [`Mirrors::read_with_content`].
+    #[cfg(test)]
     pub fn read(
         &self,
         session_id: &str,
         request: &ReadRequest,
         now: Timestamp,
     ) -> Result<Read, PerceptionError> {
+        self.read_with_content(session_id, request, now)
+            .map(|(read, _)| read)
+    }
+
+    /// The same read, with the content generation it was served at.
+    ///
+    /// Both are taken under the SAME lock as the encode, and `feed` needs that
+    /// lock too, so the number returned is the fence the pixels were actually
+    /// composited at. Reading it afterwards with [`Mirrors::status`] was the
+    /// bug: a repaint could land between the read returning and the status
+    /// call, and the agent would be credited with seeing a screen it had never
+    /// been handed. The caller records this value only when the frame is
+    /// delivered; a read refused for size returns it and records nothing.
+    pub fn read_with_content(
+        &self,
+        session_id: &str,
+        request: &ReadRequest,
+        now: Timestamp,
+    ) -> Result<(Read, ContentGeneration), PerceptionError> {
         let mut mirrors = self.inner.lock();
         let held = mirrors
             .get_mut(session_id)
             .ok_or(PerceptionError::NoMirror)?;
+        let content = held.content.current();
         let damage = &mut held.damage;
-        held.slot.read(request, damage, now)
+        let read = held.slot.read(request, damage, now)?;
+        Ok((read, content))
     }
 
     /// May this attachment type into this session's screen?
@@ -920,6 +946,41 @@ mod tests {
         // judged against a fresh one, so an attachment that asked to perceive
         // nothing is refused rather than waved through.
         assert!(mirrors.admit_typing("nothing-here", None).is_err());
+    }
+
+    /// A read carries the generation it was SERVED at, not the one the mirror
+    /// happens to be at when the caller looks again.
+    ///
+    /// This is the race `screen_read` had: it read the fence with `status`
+    /// after the encode, so a repaint landing in the gap was recorded as
+    /// observed. The value here is captured under the same lock as the pixels,
+    /// and a repaint after the call must leave it alone.
+    #[test]
+    fn a_read_carries_the_content_generation_it_was_served_at() {
+        let mirrors = Mirrors::default();
+        primed(&mirrors, "s1", (64, 64));
+        let before = mirrors.status("s1").content;
+
+        let (read, at) = mirrors
+            .read_with_content("s1", &ReadRequest::frame(), now())
+            .expect("a painted mirror answers");
+        assert!(matches!(read, Read::Frame(_)));
+        assert_eq!(at, before);
+
+        mirrors.feed(
+            "s1",
+            &[rgba(Rect::new(0, 0, 32, 32), [200, 100, 50, 255])],
+            now(),
+        );
+        assert_eq!(
+            at, before,
+            "the value the read carries is a fact about that read, not about later"
+        );
+        assert_eq!(
+            mirrors.status("s1").content,
+            before.next(),
+            "the repaint did happen; it simply was not observed by that read"
+        );
     }
 
     /// The default preset on a capable server is the case, and it is the one
