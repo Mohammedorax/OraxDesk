@@ -216,6 +216,57 @@ async fn a_payload_with_no_pixels_is_still_an_ordinary_labelled_result() {
     assert!(structured(&result)["observation"].is_object());
 }
 
+/// A status call reports the generation; it is not a look at the screen.
+///
+/// `dvv_status` reads no pixels - the manifest says it "must not be able to
+/// say you have looked at it" - but it does report the CURRENT geometry
+/// generation. Recording that as the generation an unfenced click is stamped
+/// with would launder a coordinate computed from an older picture: the click
+/// would be admitted as if it had been computed against the screen as it is
+/// now. Only a result that actually came back with pixels may be the fallback.
+#[tokio::test]
+async fn a_status_call_does_not_fence_a_click_that_came_from_an_older_picture() {
+    use remote_core::intent::{Button, IntentKind, Point};
+
+    let (_source, plane) = fake_plane();
+    let limb = one_limb(&plane);
+    let click = || IntentKind::Click {
+        at: Point::new(10, 20),
+        button: Button::Left,
+        count: 1,
+        modifiers: Vec::new(),
+    };
+
+    // Exactly what `dvv_status` serves: the observation, with no frame.
+    let status = plane.observe(&limb, None);
+    assert_eq!(
+        status.geometry.generation,
+        limb.generation().get(),
+        "status still reports the live generation, it just cannot license a coordinate"
+    );
+
+    let refused = plane
+        .submit(&limb, click(), None)
+        .await
+        .expect_err("a status call cannot stand in for having looked");
+    assert_eq!(refused.code, "UNFENCED", "{}", refused.message);
+    assert!(
+        refused.message.contains("dvv_screen"),
+        "the refusal names the call that would fix it: {}",
+        refused.message
+    );
+
+    // A picture IS a look, and the same click with no generation gets past the
+    // fence afterwards (dispatch may still refuse it for the lease, which is a
+    // different check and not what this test is about).
+    screen_result(&plane, &limb, "full", &shell_frame("png"));
+    let admitted = plane.submit(&limb, click(), None).await;
+    assert!(
+        admitted.is_ok(),
+        "a picture should be the generation an unfenced click falls back to: {admitted:?}"
+    );
+}
+
 /// Nothing in this file may pass by accident because `structured` looked at the
 /// wrong key.
 #[tokio::test]

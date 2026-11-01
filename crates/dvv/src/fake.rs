@@ -174,7 +174,29 @@ impl FrameSource for FakeFrames {
     }
 
     fn damage(&self) -> Option<Damage> {
-        let rects: Vec<Rect> = lock(&self.pending).drain(..).collect();
+        self.damage_at(true)
+    }
+
+    fn damage_peek(&self) -> Option<Damage> {
+        self.damage_at(false)
+    }
+}
+
+impl FakeFrames {
+    /// One damage read from the pending list, taken or peeked.
+    ///
+    /// The list IS the cursor here, so a peek clones and a take drains. Both
+    /// paths report the same rectangles, which is what lets a test see that a
+    /// status call did not eat the changes a read still has to see.
+    fn damage_at(&self, consume: bool) -> Option<Damage> {
+        let rects: Vec<Rect> = {
+            let mut pending = lock(&self.pending);
+            if consume {
+                pending.drain(..).collect()
+            } else {
+                pending.clone()
+            }
+        };
         if rects.is_empty() {
             return None;
         }

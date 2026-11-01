@@ -674,11 +674,33 @@ fn param_port(params: &Value, protocol: ProtocolKind) -> Result<u16, RpcError> {
     }
 }
 
+/// The `slot` an agent named, or the first session against that machine.
+///
+/// Refused rather than truncated, for the same reason [`param_port`] refuses a
+/// port it cannot carry. A slot indexes the sessions this application holds
+/// against one machine, and `65536 as u16` is 0: the person's own session. An
+/// extra digit used to put an agent on the wrong desktop and report success,
+/// which is the one outcome of `limb.attach` nobody can see happen.
+///
+/// `as_u64` already refuses a negative or fractional slot, and both would
+/// otherwise saturate to 0, again the person's session.
+fn param_slot(params: &Value) -> Result<u16, RpcError> {
+    match params.get("slot") {
+        None | Some(Value::Null) => Ok(0),
+        Some(value) => match value.as_u64() {
+            Some(slot) if slot <= u64::from(u16::MAX) => Ok(slot as u16),
+            _ => Err(RpcError::bad_params(
+                "slot must be an integer from 0 to 65535",
+            )),
+        },
+    }
+}
+
 /// Bring one live session under an attachment.
 fn limb_attach(ctx: &Ctx, peer: &Peer, params: &Value) -> Result<Value, RpcError> {
     let attachment_id = peer.attachment_id.clone().unwrap_or_default();
     let (key, address) = machine_from(ctx, params)?;
-    let slot = params.get("slot").and_then(Value::as_u64).unwrap_or(0) as u16;
+    let slot = param_slot(params)?;
 
     let (session_id, value) = {
         let sessions = ctx.sessions.lock();
@@ -1177,21 +1199,33 @@ fn admit_frame(
 /// Costs no framebuffer, which is why it is gated on [`Capability::View`] and
 /// not on [`Capability::Capture`]: damage rectangles leak geometry and timing
 /// and no content at all (`00 R5`, `R48e`).
+///
+/// Consuming by default. `peek: true` answers the same list without advancing
+/// this session's reader, for a caller that is reporting rather than reading.
 fn screen_damage(ctx: &Ctx, peer: &Peer, params: &Value) -> Result<Value, RpcError> {
     let session_id = session_id_of(params)?;
     let attachment_id = peer.attachment_id.clone().unwrap_or_default();
     ctx.plane.check_allowed(&session_id, &attachment_id)?;
     require(peer, Capability::View)?;
 
-    let (delta, bounds, generation) =
-        ctx.plane.mirrors.take_damage(&session_id).ok_or_else(|| {
-            RpcError::tagged(
-                "NO_MIRROR",
-                format!(
-                    "nothing on {session_id} is subscribed to damage; attach again with perceive: \"damage\" or perceive: \"frames\""
-                ),
-            )
-        })?;
+    // `peek` is a report and not a read: `dvv_status` and the damage block of
+    // an observation ask it, and neither is allowed to advance this session's
+    // reader. Default false, because `screen.damage` is a consuming read for
+    // every caller that existed before the flag.
+    let peek = params.get("peek").and_then(Value::as_bool).unwrap_or(false);
+    let damage = if peek {
+        ctx.plane.mirrors.peek_damage(&session_id)
+    } else {
+        ctx.plane.mirrors.take_damage(&session_id)
+    };
+    let (delta, bounds, generation) = damage.ok_or_else(|| {
+        RpcError::tagged(
+            "NO_MIRROR",
+            format!(
+                "nothing on {session_id} is subscribed to damage; attach again with perceive: \"damage\" or perceive: \"frames\""
+            ),
+        )
+    })?;
     Ok(json!({
         "sessionId": session_id,
         // `00 R39b`. THE list, in the order the server sent them. The bounding
@@ -3426,6 +3460,77 @@ mod tests {
         assert_eq!(refused.tag, Some("MISSING_CAPABILITY"));
     }
 
+    /// `dvv_status` and the damage block of an observation REPORT; they do
+    /// not read. Both ask `screen.damage` for `peek: true`, and the change the
+    /// next real read needs must still be there afterwards: a status call is
+    /// the one the manifest recommends as safe to call constantly, so a status
+    /// that ate the damage made a cheap call expensive.
+    #[tokio::test]
+    async fn a_peeked_damage_read_does_not_consume_the_changes() {
+        let fixture = fixture();
+        let mut peer = Peer::default();
+        call(
+            &fixture.ctx,
+            &mut peer,
+            "hello",
+            json!({
+                "protocol": PROTOCOL,
+                "client": { "name": "an observer" },
+                "capabilities": ["view", "control"],
+            }),
+        )
+        .await;
+        call(
+            &fixture.ctx,
+            &mut peer,
+            "limb.attach",
+            json!({ "address": "10.0.0.5", "protocol": "vnc", "slot": 0, "perceive": "damage" }),
+        )
+        .await;
+        fixture.ctx.plane.feed(
+            "s1",
+            &[vnc_core::DecodedRect {
+                rect: Rect::new(4, 8, 16, 32),
+                payload: vnc_core::RectPayload::CopyRect { src_x: 0, src_y: 0 },
+            }],
+        );
+
+        // Twice, because "no cursor moved" is only visible in the second peek.
+        for _ in 0..2 {
+            let peeked = call(
+                &fixture.ctx,
+                &mut peer,
+                "screen.damage",
+                json!({ "sessionId": "s1", "peek": true }),
+            )
+            .await;
+            assert_eq!(
+                peeked["quiet"], false,
+                "a peek sees the change and leaves it: {peeked}"
+            );
+            assert_eq!(peeked["rects"][0]["x"], 4);
+        }
+
+        // The consuming read is the one that moves this session's cursor…
+        let taken = call(
+            &fixture.ctx,
+            &mut peer,
+            "screen.damage",
+            json!({ "sessionId": "s1" }),
+        )
+        .await;
+        assert_eq!(taken["quiet"], false, "the change was still there: {taken}");
+        // …and only after it is there nothing left.
+        let quiet = call(
+            &fixture.ctx,
+            &mut peer,
+            "screen.damage",
+            json!({ "sessionId": "s1" }),
+        )
+        .await;
+        assert_eq!(quiet["quiet"], true, "the take consumed them: {quiet}");
+    }
+
     /// Every command `limb.command` can decode costs a capability, and the
     /// authority is the one `capability.rs` already names for that power.
     ///
@@ -5306,5 +5411,42 @@ mod tests {
             "the pipe was not created at {path:?}"
         );
         crate::agent::stop(&plane);
+    }
+
+    /// `65536 as u16` is 0 and 0 is the person's own session, so a slot typed
+    /// one digit too long used to attach an agent to that desktop and report
+    /// success. The port parser refuses an out of range port for exactly this
+    /// reason; a slot gets the same treatment rather than the same truncation.
+    #[test]
+    fn a_slot_that_does_not_fit_a_u16_is_refused_rather_than_wrapped() {
+        assert_eq!(param_slot(&json!({})).expect("no slot means the first"), 0);
+        assert_eq!(
+            param_slot(&json!({ "slot": 2 })).expect("an ordinary slot"),
+            2
+        );
+        assert_eq!(
+            param_slot(&json!({ "slot": 65535 })).expect("the last slot that fits"),
+            65535
+        );
+        // Wrapping, negative and non integer slots all name something the
+        // caller did not: 65536 wraps to 0, which is the first session and
+        // therefore the person's own desktop rather than a session 65537
+        // along. Every one is refused with the parameter error rather than
+        // resolved to somebody else's screen.
+        for bad in [
+            json!({ "slot": 65536 }),
+            json!({ "slot": u64::MAX }),
+            json!({ "slot": -1 }),
+            json!({ "slot": 1.5 }),
+            json!({ "slot": "0" }),
+        ] {
+            let refused = param_slot(&bad).expect_err("refused rather than wrapped");
+            assert_eq!(refused.code, -32602, "not a parameter error: {refused:?}");
+            assert!(
+                refused.message.contains("slot"),
+                "the refusal names the parameter: {}",
+                refused.message
+            );
+        }
     }
 }

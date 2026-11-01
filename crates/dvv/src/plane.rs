@@ -1576,9 +1576,24 @@ impl FrameSource for ShellFrames {
     }
 
     fn damage(&self) -> Option<Damage> {
+        self.damage_at(false)
+    }
+
+    fn damage_peek(&self) -> Option<Damage> {
+        self.damage_at(true)
+    }
+}
+
+impl ShellFrames {
+    /// One `screen.damage` call, taken or peeked.
+    ///
+    /// `peek` travels to the shell because the per reader cursor lives there,
+    /// beside the mirror. A status call sends `peek: true` so it does not
+    /// consume the changes a real read is about to need.
+    fn damage_at(&self, peek: bool) -> Option<Damage> {
         let answer = call(
             "screen.damage",
-            serde_json::json!({ "sessionId": self.session_id }),
+            serde_json::json!({ "sessionId": self.session_id, "peek": peek }),
         )
         .ok()?;
         // `00 R39b`. THE list, in the order the server sent them. The bounding
@@ -3168,10 +3183,22 @@ impl Plane {
     ///
     /// Serving one records the generation it carried, which is what a later
     /// unfenced actuation is stamped with. See the module comment.
+    ///
+    /// Only an observation that actually delivered pixels records it. A pixel
+    /// less call (`dvv_status`) reports the CURRENT generation, and stamping
+    /// that on a click computed from an older picture would launder it: the
+    /// coordinate would be admitted as if it had been read against the screen
+    /// as it is now. The generation a fence is worth having is the one the
+    /// agent actually looked at, so a status call - which the manifest
+    /// explicitly says "reads no pixels" and "must not be able to say you have
+    /// looked at it" - leaves it where the last picture left it. A limb with a
+    /// cell grid has no grounded intent at all, so this costs it nothing.
     pub fn observe(&self, limb: &AttachedLimb, frame: Option<FrameBlock>) -> Observation {
         self.refresh(limb);
         let generation = limb.generation();
-        lock(&self.observed_at).insert(limb.id().to_string(), generation);
+        if frame.is_some() {
+            lock(&self.observed_at).insert(limb.id().to_string(), generation);
+        }
         let (width, height) = self.size_of(limb);
         let perception = limb.limb().perception();
         Observation {
@@ -3202,7 +3229,7 @@ impl Plane {
             },
             frame,
             locks: Observation::pending(),
-            damage: match limb.observatory().damage_now() {
+            damage: match limb.observatory().damage_peek() {
                 Some(damage) => limb_core::availability::Availability::live(
                     crate::observation::Damage {
                         union: damage.bounds.into(),
@@ -3211,7 +3238,7 @@ impl Plane {
                     },
                 ),
                 None => limb_core::availability::Availability::unknown(
-                    "no damage has arrived on this limb yet, and an absence of damage is not evidence the screen is still: a server whose damage tracking cannot be trusted sends nothing either",
+                    "no damage is pending on this limb: nothing has arrived yet, or a read took the changes it showed. An absence of damage is not evidence the screen is still: a server whose damage tracking cannot be trusted sends nothing either",
                 ),
             },
             desktop_name: Observation::pending(),
@@ -3699,9 +3726,11 @@ impl Plane {
     ///
     /// An explicit one always wins, and a stale one is refused downstream,
     /// which is the whole mechanism. An absent one falls back to the last
-    /// observation this adapter served, and to a refusal when there has been
+    /// observation that DELIVERED PIXELS, and to a refusal when there has been
     /// none, because the alternative is stamping the current generation onto a
-    /// coordinate that came from a screen the agent has never seen.
+    /// coordinate that came from a screen the agent has never seen. A status
+    /// call is deliberately not such an observation: it says what the
+    /// generation is now, not which screen the coordinate was computed on.
     fn fence_for(
         &self,
         limb: &AttachedLimb,
@@ -3722,7 +3751,7 @@ impl Plane {
             None => Err(ToolError::new(
                 "UNFENCED",
                 format!(
-                    "this action carries a coordinate and nothing has been observed on {} yet, so there is no geometry generation the coordinate could have come from. Call dvv_screen or dvv_status first and send its geometry.generation back as generation",
+                    "this action carries a coordinate and nothing has been SEEN on {} yet, so there is no geometry generation the coordinate could have come from. Call dvv_screen first and send its geometry.generation back as generation; dvv_status reports the generation but reads no pixels, so it cannot stand in for having looked",
                     limb.id()
                 ),
             )),

@@ -65,8 +65,8 @@ use agent_lease::{
 use limb_core::capability::capabilities_for;
 use limb_core::fence::GeometryRejected;
 use limb_core::intent::{
-    AgentIntent, CommandExit, Dropped, ExitTier, IntentId, IntentKind, IntentRefused, IntentServed,
-    Point, ServedAnswer, Unanswered, WaitUntil,
+    AgentIntent, CaptureForm, CommandExit, Dropped, ExitTier, IntentId, IntentKind, IntentRefused,
+    IntentServed, Point, ServedAnswer, Unanswered, WaitUntil,
 };
 use limb_core::limb::{Confidence, Support};
 use limb_core::observation::{
@@ -1346,7 +1346,18 @@ impl AttachedLimb {
                 // changes in opposite corners union to the whole screen, and
                 // sizing a read from it would re-read a whole 4K frame to find
                 // two moved pixels.
-                let damage = self.inner.observatory.damage_now();
+                //
+                // Only the form that is ABOUT the changes takes them. A full
+                // or region read used to call the consuming read as well and
+                // so emptied the log for a picture that never used it, which
+                // left the observation beside that picture saying no damage
+                // had ever arrived. A damage crop does take them: it delivers
+                // exactly those changes, and offering them again to the next
+                // call would be the same changes twice.
+                let damage = match form {
+                    CaptureForm::DamageCrop => self.inner.observatory.damage_now(),
+                    CaptureForm::Full | CaptureForm::Region => None,
+                };
                 let region = crate::perception::capture_region(*form, *region, damage.as_ref());
                 match self
                     .inner
@@ -1453,6 +1464,29 @@ impl AttachedLimb {
         let policy = self.inner.driver.quiescence();
         let quiet = quiet.unwrap_or(policy.default_quiet);
         let timeout = timeout.unwrap_or(Duration::from_secs(30));
+        // `screen-stable` and `idle` are answered from the damage stream, and a
+        // limb with no mirror can never have one. The loop below sees
+        // `damage_now() == None` on every poll and cannot tell "nothing has
+        // changed" from "there is nothing to watch", so it used to report a
+        // settled screen after `quiet` without having observed anything at
+        // all. The manifest says this means the picture stopped changing
+        // (`mcp/manifest.rs`), so a limb that has never produced a frame is
+        // refused in the same words the observation path uses for that same
+        // absence rather than settled on evidence it never had.
+        if matches!(until, WaitUntil::ScreenStable | WaitUntil::Idle)
+            && !self.inner.observatory.has_frames()
+        {
+            return Settlement::refuse(
+                id,
+                Refusal::limb(
+                    RefusalCode::NotSupported,
+                    format!(
+                        "{} produces no framebuffer, so there is no picture to watch and no change for this wait to be quiet about; read its grid instead",
+                        self.inner.id
+                    ),
+                ),
+            );
+        }
         let started = tokio::time::Instant::now();
         let mut last_change = started;
         let mut rects: u32 = 0;

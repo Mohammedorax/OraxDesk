@@ -190,7 +190,7 @@ pub fn hint_for(code: &str) -> &'static str {
             "Something large repainted on that machine since you last looked at it. Call dvv_screen once (scale 0.25 is enough), check what has focus and what is selected, then send the same call again. If the message says part of the text went before the refusal, send only the part it says did not. Do not retry without looking: this fires when a window, a dialog or an application has appeared over what you were working on."
         }
         "UNFENCED" => {
-            "This action carries a coordinate and no geometry generation. Read the generation from dvv_screen or dvv_status and send it back as generation."
+            "This action carries a coordinate and no geometry generation. Call dvv_screen first and send the generation from its observation back as generation: dvv_status reports the generation but reads no pixels, so it does not count as having looked."
         }
         "OUT_OF_BOUNDS" => {
             "The coordinate is outside the framebuffer and is rejected rather than clamped. Read the size from dvv_status first."

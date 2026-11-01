@@ -602,6 +602,20 @@ impl Mirrors {
         Some((held.damage.take(held.reader), bounds, generation))
     }
 
+    /// The same damage WITHOUT moving this session's reader.
+    ///
+    /// For a call that reports rather than reads: `dvv_status`, and the damage
+    /// block of an observation. Taking it there destroyed the changes the next
+    /// capture or wait needed, and status is the call the manifest says is
+    /// safe to call constantly.
+    pub fn peek_damage(&self, session_id: &str) -> Option<(DamageDelta, Rect, GeometryGeneration)> {
+        let mirrors = self.inner.lock();
+        let held = mirrors.get(session_id)?;
+        let bounds = held.bounds();
+        let generation = held.generation;
+        Some((held.damage.peek(held.reader), bounds, generation))
+    }
+
     /// What a caller should be told about this session's pixels right now.
     pub fn status(&self, session_id: &str) -> MirrorStatus {
         let mirrors = self.inner.lock();

@@ -1201,6 +1201,32 @@ fn lease_event(session_id: &str, attachment: &Attachment) -> Value {
     })
 }
 
+/// How many failed accepts in a row before the plane stops claiming to listen.
+///
+/// A listening socket fails `accept` for reasons that resolve themselves:
+/// `EMFILE` and `ENFILE` clear when another handle closes, `ECONNABORTED`
+/// when the peer that vanished is reaped, `EINTR` because a signal arrived.
+/// Ending the loop on the first of those left the socket file and
+/// `is_running()` both saying the plane was up while nothing accepted, which
+/// is the one state an agent cannot diagnose and a person cannot see. A
+/// listener that is genuinely broken fails for ever instead, so the retries
+/// are bounded and the loop then STOPS the plane rather than spinning behind
+/// a socket nobody can use.
+#[cfg(any(unix, windows))]
+const ACCEPT_RETRIES: u32 = 8;
+
+/// How long to wait before the next accept after `failed` consecutive
+/// failures.
+///
+/// 25ms doubling to 800ms: a client knocking during an `EMFILE` burst waits a
+/// moment, and a persistent failure costs about one log line a second rather
+/// than a spin.
+#[cfg(any(unix, windows))]
+async fn accept_backoff(failed: u32) {
+    let millis = 25u64.saturating_mul(1u64 << failed.min(5));
+    tokio::time::sleep(std::time::Duration::from_millis(millis)).await;
+}
+
 /// Bind the socket and start accepting, or say why not.
 ///
 /// Binding happens synchronously, before this returns, so a caller that has
@@ -1273,7 +1299,7 @@ pub fn start(plane: &Arc<AgentPlane>, ctx: Arc<Ctx>, path: PathBuf) -> std::io::
 
     tracing::info!(socket = %path.display(), "agent plane listening (dvvp.v1)");
     tauri::async_runtime::spawn(reaper(plane.clone(), cancel.clone()));
-    tauri::async_runtime::spawn(accept_loop(listener, ctx, cancel));
+    tauri::async_runtime::spawn(accept_loop(plane.clone(), listener, ctx, cancel));
     Ok(())
 }
 
@@ -1360,7 +1386,7 @@ pub fn start(plane: &Arc<AgentPlane>, ctx: Arc<Ctx>, path: PathBuf) -> std::io::
 
     tracing::info!(pipe = %name, "agent plane listening (dvvp.v1)");
     tauri::async_runtime::spawn(reaper(plane.clone(), cancel.clone()));
-    tauri::async_runtime::spawn(accept_pipe(first, name, ctx, cancel));
+    tauri::async_runtime::spawn(accept_pipe(plane.clone(), first, name, ctx, cancel));
     Ok(())
 }
 
@@ -1371,6 +1397,7 @@ pub fn start(plane: &Arc<AgentPlane>, ctx: Arc<Ctx>, path: PathBuf) -> std::io::
 /// [`serve`] and creates a fresh one for the next client before waiting again.
 #[cfg(windows)]
 async fn accept_pipe(
+    plane: Arc<AgentPlane>,
     mut listening: tokio::net::windows::named_pipe::NamedPipeServer,
     name: String,
     ctx: Arc<Ctx>,
@@ -1381,15 +1408,17 @@ async fn accept_pipe(
             _ = cancel.cancelled() => return,
             connected = listening.connect() => {
                 if let Err(e) = connected {
+                    // A client that arrived and left before it was served is
+                    // ordinary, and the instance is still listening.
                     tracing::debug!("an agent left the pipe before it was served: {e}");
                     continue;
                 }
-                let next = match local_pipe::create(&name, false) {
-                    Ok(next) => next,
-                    Err(e) => {
-                        tracing::warn!("the agent pipe stopped accepting: {e}");
-                        return;
-                    }
+                // The instance that was taken cannot accept again, so the
+                // next one has to exist before this loop can wait. A failure
+                // here used to end the loop for good while `is_running()` and
+                // the pipe both said the plane was up; see [`ACCEPT_RETRIES`].
+                let Some(next) = next_pipe(&plane, &name, &cancel).await else {
+                    return;
                 };
                 let stream = std::mem::replace(&mut listening, next);
                 tracing::info!("agent attached over dvvp.v1");
@@ -1400,6 +1429,44 @@ async fn accept_pipe(
                         tracing::debug!("agent connection ended: {e}");
                     }
                 });
+            }
+        }
+    }
+}
+
+/// Create the pipe instance for the next client, riding out a transient
+/// failure.
+///
+/// Only a failure of `create` reaches here. The instance just taken has
+/// already connected, so retrying `connect` on it is not an option: the next
+/// instance has to be made first. `None` means the plane stopped listening -
+/// cancelled, or the same failure [`ACCEPT_RETRIES`] times in a row - and in
+/// the latter case [`stop`] is what makes `is_running()` and the pipe agree
+/// with what actually happened.
+#[cfg(windows)]
+async fn next_pipe(
+    plane: &Arc<AgentPlane>,
+    name: &str,
+    cancel: &tokio_util::sync::CancellationToken,
+) -> Option<tokio::net::windows::named_pipe::NamedPipeServer> {
+    let mut failed = 0u32;
+    loop {
+        match local_pipe::create(name, false) {
+            Ok(next) => return Some(next),
+            Err(e) => {
+                failed = failed.saturating_add(1);
+                if failed > ACCEPT_RETRIES {
+                    tracing::warn!(
+                        "the agent pipe stopped accepting after {failed} failures in a row: {e}"
+                    );
+                    stop(plane);
+                    return None;
+                }
+                tracing::debug!("could not create the next agent pipe instance, retrying: {e}");
+                tokio::select! {
+                    _ = cancel.cancelled() => return None,
+                    _ = accept_backoff(failed) => {}
+                }
             }
         }
     }
@@ -1474,15 +1541,20 @@ pub fn stop(plane: &Arc<AgentPlane>) {
 
 #[cfg(unix)]
 async fn accept_loop(
+    plane: Arc<AgentPlane>,
     listener: tokio::net::UnixListener,
     ctx: Arc<Ctx>,
     cancel: tokio_util::sync::CancellationToken,
 ) {
+    // Consecutive failures, reset by a successful accept. See
+    // [`ACCEPT_RETRIES`] for why a failure is not the end of the loop.
+    let mut failed = 0u32;
     loop {
         tokio::select! {
             _ = cancel.cancelled() => return,
             accepted = listener.accept() => match accepted {
                 Ok((stream, _)) => {
+                    failed = 0;
                     // `04 §2.6`: peer identity answers "is this the same
                     // human" and nothing more, on a single user desktop. It is
                     // recorded because the audit trail `10` owns needs to name
@@ -1500,8 +1572,20 @@ async fn accept_loop(
                     });
                 }
                 Err(e) => {
-                    tracing::warn!("the agent socket stopped accepting: {e}");
-                    return;
+                    failed = failed.saturating_add(1);
+                    if failed > ACCEPT_RETRIES {
+                        // Stopping is what keeps `is_running()` and the
+                        // socket file honest: the listener has failed for
+                        // long enough that it is not a transient burst, so
+                        // the plane is not listening and must say so.
+                        tracing::warn!(
+                            "the agent socket stopped accepting after {failed} failures in a row: {e}"
+                        );
+                        stop(&plane);
+                        return;
+                    }
+                    tracing::debug!("an accept on the agent socket failed, retrying: {e}");
+                    accept_backoff(failed).await;
                 }
             },
         }

@@ -26,6 +26,7 @@ use limb_core::Rect;
 use remote_core::driver::ProtocolKind;
 use remote_core::state::SessionState;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 /// A mirror that always has one frame, with whatever damage it was given.
 ///
@@ -96,6 +97,12 @@ impl FrameSource for StubMirror {
             coverage: 0.01,
             generation: GeometryGeneration::FIRST,
         })
+    }
+
+    /// The same list: this stub holds a snapshot rather than a cursor, so the
+    /// two reads cannot disagree.
+    fn damage_peek(&self) -> Option<Damage> {
+        self.damage()
     }
 }
 
@@ -265,9 +272,88 @@ async fn a_limb_with_no_mirror_refuses_rather_than_returning_an_empty_frame() {
     assert!(settlement.payload.is_empty());
 }
 
-/// `00 R39b`, at the one place it can be observed from outside.
+/// A wait for a stable screen, on a limb with no mirror.
 ///
-/// `Rect::union` is a BOUNDING BOX. Two eight pixel changes in opposite
+/// `screen-stable` and `idle` are answered from the damage stream, and the
+/// absence of damage and the absence of a picture are indistinguishable on
+/// every poll. The loop therefore used to report a settled screen after the
+/// quiet window on a blind limb without watching anything, while the manifest
+/// promises the wait means "the picture stopped changing". The same empty
+/// damage stream on a limb that HAS a mirror still settles, which is what says
+/// the refusal is about the missing instrument rather than about an empty
+/// log.
+#[tokio::test]
+async fn screen_stable_without_a_framebuffer_is_refused_rather_than_settled() {
+    use limb_core::intent::WaitUntil;
+
+    let grant = watcher("att_blind_wait", &[Capability::View, Capability::Open]);
+    let registry = LimbRegistry::new(PlaneConfig::default());
+    let (handle, rx) = fake_session("desk.example", 64);
+    std::mem::forget(rx);
+    let blind = registry
+        .attach(
+            &grant,
+            Attach {
+                driver: Arc::new(TestLimb::desktop()),
+                machine: MachineKey::endpoint(ProtocolKind::Vnc, "desk.example", 5900),
+                slot: Slot::ATTACH,
+                host: "desk.example".to_string(),
+                handle,
+                size: (1280, 720),
+                frames: None,
+            },
+        )
+        .expect("attached");
+    blind.note_state(SessionState::Connected);
+
+    let until = IntentKind::Wait {
+        until: WaitUntil::ScreenStable,
+        quiet: Some(Duration::from_millis(1)),
+        timeout: Some(Duration::from_millis(50)),
+    };
+    let refused = blind
+        .dispatch(
+            &grant,
+            intent(&blind, &grant, until.clone()),
+            LeaseInstant::from_millis(1_000),
+        )
+        .await;
+    assert!(
+        refused.refused(),
+        "a limb that never produced a frame cannot be stable: {:?}",
+        refused.outcome
+    );
+    assert_eq!(
+        refused.reason,
+        Some(RefusalReason::Limb(RefusalCode::NotSupported)),
+        "the refusal reuses the observation path's own code for that absence"
+    );
+
+    // The contrast: a mirror with no damage yet. It has the instrument, so it
+    // is allowed to answer, and "nothing changed for the quiet window" is a
+    // claim it can actually support. A fresh registry, because the limb id is
+    // derived from machine and slot and this one must not be the blind limb
+    // above.
+    let seen = attach_to(
+        &LimbRegistry::new(PlaneConfig::default()),
+        &grant,
+        Arc::new(StubMirror::with_damage(Vec::new())),
+    );
+    let settled = seen
+        .dispatch(
+            &grant,
+            intent(&seen, &grant, until),
+            LeaseInstant::from_millis(2_000),
+        )
+        .await;
+    assert!(
+        !settled.refused(),
+        "a limb with a mirror settles on the same empty damage stream: {:?}",
+        settled.outcome
+    );
+}
+
+/// `00 R39b`, at the one place it can be observed from outside. Two eight pixel changes in opposite
 /// corners of a 1280x720 desktop union to 1280x720, so a crop sized from the
 /// union re-reads the whole screen to find 128 moved pixels, which is the
 /// exact opposite of what `damage-crop` is for. The returned bytes look
@@ -396,5 +482,58 @@ fn a_damage_read_carries_the_mirrors_own_generation_and_a_stale_crop_is_refused(
     assert!(
         refused.0.contains("geometry generation"),
         "the refusal names the fence: {refused}"
+    );
+}
+
+/// A report about a limb must not eat the changes a read is about to need.
+///
+/// `dvv_status` is the call the manifest recommends as safe to call constantly.
+/// It is pixel less and used to run the same consuming read as a wait, so the
+/// rung 4 changes the next `dvv_screen` needed were gone - and the observation
+/// beside that screen, which is filled from the same read, then said no damage
+/// had ever arrived. `peek` answers the same list and moves no cursor.
+#[test]
+fn a_peek_reports_the_damage_without_taking_it_from_the_next_read() {
+    use agent_plane::perception::MirrorSource;
+    use remote_core::events::{DecodedRect, RectPayload};
+
+    let framebuffer = Rect::new(0, 0, 64, 64);
+    let mut slot = agent_perception::MirrorSlot::new(agent_perception::MirrorBudget::default());
+    slot.attach(64, 64, GeometryGeneration::FIRST, 0, Timestamp(0))
+        .expect("a 64x64 mirror is inside the budget");
+    let source = MirrorSource::new(
+        slot,
+        agent_perception::DamageLog::default(),
+        agent_perception::ReaderId(1),
+    );
+    let changed = Rect::new(0, 0, 4, 4);
+    source.apply(
+        &[DecodedRect {
+            rect: changed,
+            payload: RectPayload::Rgba(vec![0x20; 4 * 4 * 4]),
+        }],
+        framebuffer,
+        Timestamp(1),
+    );
+
+    let peeked = source.damage_peek().expect("the change is there");
+    assert_eq!(peeked.rects, vec![changed]);
+    let again = source
+        .damage_peek()
+        .expect("a second peek sees the same changes, because the first one took nothing");
+    assert_eq!(again.rects, peeked.rects);
+
+    // Only the consuming read moves the cursor, and it is what the next
+    // damage crop and wait rely on.
+    assert_eq!(
+        source
+            .damage()
+            .expect("still pending after two peeks")
+            .rects,
+        peeked.rects
+    );
+    assert!(
+        source.damage().is_none(),
+        "the take consumed the changes, so they are offered exactly once"
     );
 }

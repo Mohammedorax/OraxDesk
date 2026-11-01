@@ -144,6 +144,17 @@ pub trait FrameSource: Send + Sync {
     /// sends nothing either, which is why `ClientCommand::SetAlwaysRefresh`
     /// exists (`crates/remote-core/src/commands.rs:36`).
     fn damage(&self) -> Option<Damage>;
+
+    /// The same rectangles, WITHOUT advancing whatever this source counts
+    /// from.
+    ///
+    /// For a call that only reports on the limb. A source whose damage is a
+    /// per reader cursor that [`FrameSource::damage`] advances - as
+    /// `MirrorSource` is - must answer this from `peek`, or a status call,
+    /// which the manifest says is safe to call constantly, would destroy the
+    /// rung 4 changes the next capture needed. A source that holds a snapshot
+    /// rather than a cursor can answer both from the same read.
+    fn damage_peek(&self) -> Option<Damage>;
 }
 
 /// How much of a crop is allowed to be pixels nobody asked for.
@@ -317,8 +328,23 @@ impl Observatory {
     /// damage crop costs `capture` through [`Observatory::observe_frame`]. A
     /// second gate here would be a second place the rule is written, and two
     /// places is how the two drift.
+    ///
+    /// This CONSUMES: it is the "what changed since I last asked" half of a
+    /// wait or a crop. Use [`Observatory::damage_peek`] to report.
     pub fn damage_now(&self) -> Option<Damage> {
         self.frames.as_ref().and_then(|source| source.damage())
+    }
+
+    /// The damage without consuming it, for a report about the limb.
+    ///
+    /// `dvv_status` is the call the manifest says is safe to call constantly
+    /// and reads no pixels; taking the changes there left the next
+    /// `dvv_screen` - and the next wait - with nothing to see, which is what
+    /// made a cheap status call expensive. The damage block of an observation
+    /// uses this for the same reason: it describes what is pending, it is not
+    /// a read of it.
+    pub fn damage_peek(&self) -> Option<Damage> {
+        self.frames.as_ref().and_then(|source| source.damage_peek())
     }
 
     /// What this intent costs on the perception path.
@@ -690,6 +716,21 @@ impl FrameSource for MirrorSource {
     }
 
     fn damage(&self) -> Option<Damage> {
+        self.damage_at(true)
+    }
+
+    fn damage_peek(&self) -> Option<Damage> {
+        self.damage_at(false)
+    }
+}
+
+impl MirrorSource {
+    /// One damage read, taken or peeked.
+    ///
+    /// The difference is a single method call on the log, so it is written
+    /// once: a second copy of the "empty means None, generation comes from the
+    /// mirror" arithmetic is a second place the two can drift.
+    fn damage_at(&self, consume: bool) -> Option<Damage> {
         // The mirror is consulted, and it is the only thing here that knows.
         // `00 R10` says the generation rides every perception response, and a
         // constant is not a generation: a caller cannot detect a stale read
@@ -700,7 +741,11 @@ impl FrameSource for MirrorSource {
             .get()
             .map(agent_perception::Mirror::generation)?;
         let mut log = crate::registry::lock(&self.damage);
-        let delta = log.take(self.reader);
+        let delta = if consume {
+            log.take(self.reader)
+        } else {
+            log.peek(self.reader)
+        };
         if delta.is_empty() {
             return None;
         }
