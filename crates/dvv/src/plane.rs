@@ -667,6 +667,67 @@ fn call(method: &str, params: serde_json::Value) -> Result<serde_json::Value, To
     }
 }
 
+/// The capabilities this client asks the shell for, by name.
+///
+/// `dvvp.v1` intersects what is asked with what the shell implements, and its
+/// default for a `hello` that names nothing is the floor (`view`) rather than
+/// the ceiling, so this list is load bearing: a capability missing here turns a
+/// working tool into `MISSING_CAPABILITY` at runtime instead of at connect, and
+/// one listed that no tool uses would be authority nobody asked for.
+///
+/// One entry per thing the bundled tools actually ask the SHELL to do. The
+/// transport is the shell's socket, so a capability is listed only when the
+/// call ends in a `dvvp.v1` request the shell charges for (`command_capability`
+/// in `src-tauri/src/agent/server.rs` is the table this list has to agree
+/// with):
+///
+/// * `view` — `limb.list` and `limb.status` (`dvv_limbs`, `dvv_status`,
+///   `dvv_wait`), `screen.damage` beside every observation (`dvv_screen`), and
+///   the `refresh` / `set-always-refresh` commands.
+/// * `capture` — `screen.read` (`dvv_screen`).
+/// * `control` — pointer, key and typed text commands, the shaping commands
+///   (`set-quality`, `request-resize`, `set-view-only`, `set-prefer-scancodes`)
+///   and the lease's release pair (`dvv_click`, `dvv_type`, `dvv_key`,
+///   `dvv_control`).
+/// * `open` — `limb.attach`, `limb.open` and `reconnect-now` (`dvv_open`,
+///   `dvv_reconnect`, `dvv_group_open`, `dvv_group_grow`). It is also the one
+///   a selector tool spends when `Plane::resolve` adopts a session this
+///   attachment has not attached yet, which is why it is in the list for the
+///   whole client rather than only in front of `dvv_open`.
+/// * `close` — `limb.detach` (`dvv_close`, `dvv_group_close`,
+///   `dvv_group_shrink`).
+/// * `hosts.read` — `hosts.list` (`dvv_hosts`, and reading the saved library
+///   to scope this attachment's grant).
+/// * `clipboard.read` / `clipboard.write` — the two clipboard commands, kept
+///   split because `dvv_clipboard` keeps them split.
+/// * `terminal.write` — `terminal-input` and `resize-terminal`
+///   (`dvv_term_send`).
+/// * `files.read` — `files.home`, `files.list`, `files.get`; `files.write` —
+///   `files.put`, `files.mkdir`, `files.remove`, `files.rename` (`dvv_files`).
+/// * `exec` — `limb.exec` (`dvv_run`, `dvv_job`). In no role bundle and not
+///   implied by anything, which is the point: it is still a real capability of
+///   this product and this client now names it instead of receiving it by
+///   omission.
+///
+/// `terminal.read` is DELIBERATELY absent. `dvv_term_read` is not served on
+/// this build, and the refusal comes from the plane's own bookkeeping before
+/// anything reaches the shell, so there is no terminal output to read over this
+/// socket and no call that would spend the capability.
+const ASKED_CAPABILITIES: &[&str] = &[
+    "view",
+    "capture",
+    "control",
+    "open",
+    "close",
+    "hosts.read",
+    "clipboard.read",
+    "clipboard.write",
+    "terminal.write",
+    "files.read",
+    "files.write",
+    "exec",
+];
+
 fn connect() -> Result<Link, ToolError> {
     use std::io::ErrorKind;
 
@@ -689,6 +750,11 @@ fn connect() -> Result<Link, ToolError> {
         serde_json::json!({
             "protocol": DVVP,
             "client": { "name": "dvv", "version": crate::DVV_VERSION },
+            // Explicit, because the shell's default for a client that names
+            // nothing is the floor (`view`). See `ASKED_CAPABILITIES`: this is
+            // exactly what the bundled tools use, and a missing entry becomes
+            // a `MISSING_CAPABILITY` on the tool that needed it.
+            "capabilities": ASKED_CAPABILITIES,
         }),
     )?;
     link.attachment_id = hello
@@ -4153,6 +4219,84 @@ pub fn state_json(state: &SessionState) -> serde_json::Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Every tool, and the shell capability its own code needs.
+    ///
+    /// Written out by hand because the mapping is a judgement about what each
+    /// call does on the far side of the socket, and the two assertions below
+    /// are what keep the table and the manifest from drifting apart.
+    fn tool_capabilities() -> &'static [(&'static str, &'static [&'static str])] {
+        &[
+            ("dvv_hosts", &["hosts.read"]),
+            ("dvv_limbs", &["view"]),
+            ("dvv_open", &["open"]),
+            ("dvv_close", &["close"]),
+            ("dvv_reconnect", &["view", "open"]),
+            ("dvv_status", &["view"]),
+            ("dvv_control", &["control"]),
+            ("dvv_click", &["control"]),
+            ("dvv_type", &["control"]),
+            ("dvv_key", &["control"]),
+            ("dvv_screen", &["view", "capture"]),
+            ("dvv_wait", &["view"]),
+            ("dvv_clipboard", &["clipboard.read", "clipboard.write"]),
+            ("dvv_run", &["exec"]),
+            ("dvv_job", &["exec"]),
+            // Refused from the plane's own bookkeeping before the socket, so
+            // it costs no shell capability even though it is in the manifest.
+            ("dvv_term_read", &[]),
+            ("dvv_term_send", &["terminal.write"]),
+            ("dvv_files", &["files.read", "files.write"]),
+            // Nothing to report, and it does not reach the shell to say so.
+            ("dvv_transfer", &[]),
+            ("dvv_group_open", &["open"]),
+            ("dvv_group_list", &["view"]),
+            ("dvv_group_grow", &["open"]),
+            ("dvv_group_shrink", &["close"]),
+            ("dvv_group_close", &["close"]),
+            ("dvv_group_run", &["view", "capture", "control", "exec"]),
+            ("dvv_signals", &["view"]),
+        ]
+    }
+
+    /// P2-12's other half. The bundled client names its capabilities now, and
+    /// the list is exactly what its tools use: a missing entry would turn a
+    /// working tool into `MISSING_CAPABILITY` at runtime, and an extra one
+    /// would be authority no tool spends.
+    #[test]
+    fn the_hello_asks_for_exactly_what_the_tools_use() {
+        let table = tool_capabilities();
+        let mut named: Vec<&str> = table.iter().map(|(tool, _)| *tool).collect();
+        named.sort_unstable();
+        let mut manifest = crate::mcp::manifest::names();
+        manifest.sort();
+        assert_eq!(
+            named, manifest,
+            "the capability table and the tool manifest must name the same tools"
+        );
+
+        let mut used: Vec<&str> = table
+            .iter()
+            .flat_map(|(_, capabilities)| capabilities.iter().copied())
+            .collect();
+        used.sort_unstable();
+        used.dedup();
+        let mut asked = ASKED_CAPABILITIES.to_vec();
+        asked.sort_unstable();
+        assert_eq!(
+            asked, used,
+            "the hello asks for exactly the capabilities the tools use"
+        );
+
+        // A typo would narrow to the floor silently on the far side, which is
+        // precisely the failure this list exists to prevent.
+        for name in ASKED_CAPABILITIES {
+            assert!(
+                Capability::parse(name).is_some(),
+                "{name} is not a capability this build knows"
+            );
+        }
+    }
 
     /// The ledger's whole contract, without a socket: a refused press trips
     /// it, later presses are counted as held back, a settle hands back the

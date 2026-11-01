@@ -333,6 +333,12 @@ pub async fn dispatch(
 /// `open` is here for the same shape of reason: [`limb_open`] asks the
 /// application to open a machine the way a person's click does, so the
 /// capability is no longer naming something that does not exist.
+///
+/// This is the CEILING, not the default. A connection holds `asked ∩ GRANTED`,
+/// and a `hello` with no `capabilities` field gets only
+/// [`DEFAULT_CAPABILITIES`]. The list is still written out in full because it
+/// is also what this build implements, which is what the reply's
+/// `protocols`-style honesty needs and what a test can compare against.
 const GRANTED: &[Capability] = &[
     Capability::View,
     Capability::Capture,
@@ -349,6 +355,20 @@ const GRANTED: &[Capability] = &[
     Capability::Exec,
 ];
 
+/// What a `hello` that names no `capabilities` gets.
+///
+/// `view`, and nothing else. Deny by default means an omission is not a request
+/// for everything: a client that forgot the field used to receive the whole of
+/// [`GRANTED`] — `capture`, `files.write`, `exec` and all — because it said
+/// nothing, which is authority nobody asked for and nobody approved. `view` is
+/// the floor a connection needs to be useful at all: it can enumerate limbs and
+/// read their state (`02 §5.2`'s "the floor"), and every stronger power has to
+/// be named in `hello`.
+///
+/// An explicit empty list still means nothing, which is what a client that
+/// wants no authority sends, and stays distinguishable from an omission.
+const DEFAULT_CAPABILITIES: &[Capability] = &[Capability::View];
+
 /// May this connection do that?
 ///
 /// # Errors
@@ -364,7 +384,7 @@ fn require(peer: &Peer, needed: Capability) -> Result<(), RpcError> {
     Err(RpcError::tagged(
         "MISSING_CAPABILITY",
         format!(
-            "this connection does not hold `{}`, which it asked not to hold in hello. {}",
+            "this connection does not hold `{}`. A grant carries only the capabilities named in hello, so this is a power it did not ask for (or asked to leave out). {}",
             needed.as_str(),
             separate_because(needed),
         ),
@@ -404,6 +424,9 @@ fn separate_because(needed: Capability) -> &'static str {
 /// downgrade, for the same reason `connect_session` refuses to fall back to
 /// VNC when a profile names a protocol it does not know: falling back dials
 /// something nobody asked for.
+///
+/// A client that names no capabilities gets [`DEFAULT_CAPABILITIES`], because
+/// deny by default applies to an omission as much as to an empty list.
 fn hello(ctx: &Ctx, peer: &mut Peer, params: &Value) -> Result<Value, RpcError> {
     let asked = params
         .get("protocol")
@@ -436,6 +459,10 @@ fn hello(ctx: &Ctx, peer: &mut Peer, params: &Value) -> Result<Value, RpcError> 
     // replacing is the whole of it: an unrecognised name narrows nothing and
     // grants nothing, so a newer client naming a capability this build has
     // never heard of gets the rest of its set rather than a refusal.
+    //
+    // An ABSENT field is the floor, not the ceiling. See
+    // [`DEFAULT_CAPABILITIES`]: silence is not a request for everything, and a
+    // client that wants a power names it.
     peer.capabilities = match params.get("capabilities").and_then(Value::as_array) {
         Some(asked) => {
             let asked = CapabilitySet::of(
@@ -447,7 +474,7 @@ fn hello(ctx: &Ctx, peer: &mut Peer, params: &Value) -> Result<Value, RpcError> 
             );
             CapabilitySet::of(GRANTED).intersect(asked)
         }
-        None => CapabilitySet::of(GRANTED),
+        None => CapabilitySet::of(DEFAULT_CAPABILITIES),
     };
     Ok(json!({
         "protocol": PROTOCOL,
@@ -458,9 +485,10 @@ fn hello(ctx: &Ctx, peer: &mut Peer, params: &Value) -> Result<Value, RpcError> 
         // on request and `screen.read` answers from it (00 R5, 00 R6,
         // crate::agent::mirror). `open` and `exec` are here because
         // `limb.open` and `limb.exec` reach real work now, and the file pair
-        // is here because the `files.*` verbs reach the SFTP sidecar; a client
-        // that does not want any of them asks for less in `capabilities` and
-        // gets less.
+        // is here because the `files.*` verbs reach the SFTP sidecar. It is the
+        // INTERSECTION of what was asked for and what this build implements,
+        // so a client that names nothing gets the floor rather than all of it
+        // and a client that names `exec` gets it only because it did.
         "capabilities": peer.capabilities.iter().map(Capability::as_str).collect::<Vec<_>>(),
         // What this build IMPLEMENTS, so a client can tell "not granted" from
         // "not built".
@@ -2942,13 +2970,23 @@ mod tests {
             .unwrap_or_else(|e| panic!("{method} failed: {}", e.message))
     }
 
+    /// A connection that asked for everything this build implements.
+    ///
+    /// Read off [`GRANTED`] rather than written out again, so a capability
+    /// added to the ceiling reaches the helper too. It asks EXPLICITLY because
+    /// a `hello` that names nothing now gets [`DEFAULT_CAPABILITIES`], and
+    /// these tests are about the verbs rather than about the default.
     async fn greeted(ctx: &Ctx) -> Peer {
         let mut peer = Peer::default();
         call(
             ctx,
             &mut peer,
             "hello",
-            json!({ "protocol": PROTOCOL, "client": { "name": "test" } }),
+            json!({
+                "protocol": PROTOCOL,
+                "client": { "name": "test" },
+                "capabilities": GRANTED.iter().map(|c| c.as_str()).collect::<Vec<_>>(),
+            }),
         )
         .await;
         peer
@@ -3138,6 +3176,67 @@ mod tests {
         .expect_err("no close, no detach");
         assert_eq!(refused.tag, Some("MISSING_CAPABILITY"));
         assert!(refused.message.contains("close"), "{}", refused.message);
+    }
+
+    /// P2-12. Silence is not a request for everything.
+    ///
+    /// A `hello` with no `capabilities` key used to receive the whole of
+    /// [`GRANTED`] — `exec`, `files.write`, `capture` — because the client said
+    /// nothing. The default is now the floor: `view` is enough to be useful
+    /// (the limb list answers) and every stronger power has to be named.
+    #[tokio::test]
+    async fn a_hello_that_names_no_capabilities_gets_the_floor() {
+        let fixture = fixture();
+        let mut peer = Peer::default();
+        let hello = call(
+            &fixture.ctx,
+            &mut peer,
+            "hello",
+            json!({ "protocol": PROTOCOL, "client": { "name": "silent" } }),
+        )
+        .await;
+        let held: Vec<&str> = hello["capabilities"]
+            .as_array()
+            .expect("an array")
+            .iter()
+            .filter_map(Value::as_str)
+            .collect();
+        assert_eq!(held, vec!["view"], "the floor, and nothing else: {held:?}");
+
+        // Useful at the floor, which is what keeps "deny by default" from
+        // being "the socket is useless until a client guesses".
+        let limbs = call(&fixture.ctx, &mut peer, "limb.list", json!({})).await;
+        assert_eq!(limbs["limbs"][0]["sessionId"], "s1");
+
+        // And every power above the floor is refused by name, before anything
+        // dials or is read.
+        for (method, params) in [
+            ("hosts.list", json!({})),
+            (
+                "limb.attach",
+                json!({ "address": "10.0.0.5", "protocol": "vnc", "slot": 0 }),
+            ),
+        ] {
+            let refused = dispatch(&fixture.ctx, &mut peer, method, &params)
+                .await
+                .expect_err("nothing stronger than view was asked for");
+            assert_eq!(refused.tag, Some("MISSING_CAPABILITY"), "{method}");
+        }
+        assert!(!peer.capabilities.allows(Capability::Capture));
+        assert!(!peer.capabilities.allows(Capability::Exec));
+        assert!(!peer.capabilities.allows(Capability::FilesWrite));
+
+        // An explicit empty list still means nothing, so the two cases stay
+        // distinguishable.
+        let mut nothing = Peer::default();
+        call(
+            &fixture.ctx,
+            &mut nothing,
+            "hello",
+            json!({ "protocol": PROTOCOL, "capabilities": [] }),
+        )
+        .await;
+        assert!(!nothing.capabilities.allows(Capability::View));
     }
 
     #[tokio::test]

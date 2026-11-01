@@ -140,6 +140,25 @@ const ROOM_POLL: Duration = Duration::from_millis(5);
 /// the plane's own bookkeeping and never reaches a limb (`02 §2.4`).
 const WAIT_POLL: Duration = Duration::from_millis(50);
 
+/// How many waits one limb may have in flight at once.
+///
+/// A wait is not an intent batch and must not take the one in-flight slot
+/// `08 §7.3` gives a grant. Two batches to one limb have no defined
+/// interleaving; a wait puts nothing on the wire and has nothing to interleave
+/// with, and the common case is a wait issued WHILE a long `exec` is in flight.
+/// Taking the slot would refuse that wait with `INTENT_IN_FLIGHT`, which turns
+/// the tool an agent reaches for when something is slow into the one tool it
+/// cannot use while something is slow.
+///
+/// What the slot was standing in for — a bound on how much a client can leave
+/// running — is kept by a cap instead, because each wait is a task polling for
+/// up to the caller's timeout (`02 §6.1`, and `dvv` clamps it to
+/// `WAIT_CLAMP_MS`). Four is a few legitimate readers on one limb and low
+/// enough that ten fired waits cost four tasks rather than ten; the rest are
+/// refused at once with [`RefusalReason::IntentInFlight`], which is the same
+/// code the slot race uses and the same instruction: one is already running.
+const MAX_WAITS_PER_LIMB: usize = 4;
+
 /// How long the plane waits for a driver's answer to a natively served intent
 /// when the agent named no deadline of its own.
 ///
@@ -792,10 +811,43 @@ impl AttachedLimb {
         grant: &Grant,
         id: IntentId,
     ) -> Result<(CancellationToken, RunningGuard), Settlement> {
+        self.start_running_as(grant, id, true)
+    }
+
+    /// Take this grant's wait budget on this limb, or say why not.
+    ///
+    /// A wait is in the running table so a `cancel` can reach it (a wait that
+    /// cannot be withdrawn keeps the same task, and the same caller, blocked
+    /// for up to its whole timeout), but it does not hold the batch slot: see
+    /// [`MAX_WAITS_PER_LIMB`] for why the slot would deadlock the common case.
+    ///
+    /// # Errors
+    ///
+    /// The same shape [`AttachedLimb::start_running`] returns, so `wait` has one
+    /// `return refused` arm whether it was refused for the cap or anything else.
+    fn start_waiting(
+        &self,
+        grant: &Grant,
+        id: IntentId,
+    ) -> Result<(CancellationToken, RunningGuard), Settlement> {
+        self.start_running_as(grant, id, false)
+    }
+
+    /// The one table, entered as either a batch or a wait.
+    fn start_running_as(
+        &self,
+        grant: &Grant,
+        id: IntentId,
+        holds_slot: bool,
+    ) -> Result<(CancellationToken, RunningGuard), Settlement> {
         let token = CancellationToken::new();
         {
             let mut running = lock(&self.inner.running);
-            if running.values().any(|r| r.grant == *grant.id()) {
+            if holds_slot
+                && running
+                    .values()
+                    .any(|r| r.holds_slot && r.grant == *grant.id())
+            {
                 return Err(Settlement::refuse(
                     id,
                     Refusal::plane(
@@ -808,11 +860,33 @@ impl AttachedLimb {
                     ),
                 ));
             }
+            // Counted per grant, like the batch slot above: the budget is an
+            // attachment's, so one grant's waits cannot refuse another's. A
+            // limb is attached under one grant today, which is why this also
+            // reads as the limb's total.
+            let waiting = running
+                .values()
+                .filter(|r| !r.holds_slot && r.grant == *grant.id())
+                .count();
+            if !holds_slot && waiting >= MAX_WAITS_PER_LIMB {
+                return Err(Settlement::refuse(
+                    id,
+                    Refusal::plane(
+                        RefusalReason::IntentInFlight,
+                        format!(
+                            "grant {} already has {waiting} waits in flight on {}, which is this plane's cap: a wait is polled here for its whole timeout, so this one was not started rather than leaving another task running. Cancel one, or call again when one settles",
+                            grant.id(),
+                            self.inner.id
+                        ),
+                    ),
+                ));
+            }
             running.insert(
                 id,
                 RunningIntent {
                     grant: grant.id().clone(),
                     cancel: token.clone(),
+                    holds_slot,
                 },
             );
         }
@@ -1500,7 +1574,7 @@ impl AttachedLimb {
                 until,
                 quiet,
                 timeout,
-            } => self.wait(id, until, *quiet, *timeout).await,
+            } => self.wait(grant, id, until, *quiet, *timeout).await,
             IntentKind::Cancel { target } => {
                 let found = self.cancel_running(*target);
                 Settlement {
@@ -1537,8 +1611,15 @@ impl AttachedLimb {
     /// A timeout is an ORDINARY SETTLEMENT with what was observed, never an
     /// error (`04 §4.3`). An agent that gets an error for a timeout will treat
     /// a slow machine as a broken one.
+    ///
+    /// The wait enters the limb's running table as a wait rather than as a
+    /// batch, so `cancel` can reach it and so the number of them is bounded
+    /// ([`MAX_WAITS_PER_LIMB`]). Registration happens only after the limb is
+    /// known to have the instrument the condition needs: a wait refused for a
+    /// missing framebuffer must not spend part of the budget on its way out.
     async fn wait(
         &self,
+        grant: &Grant,
         id: IntentId,
         until: &WaitUntil,
         quiet: Option<Duration>,
@@ -1573,6 +1654,14 @@ impl AttachedLimb {
         let started = tokio::time::Instant::now();
         let mut last_change = started;
         let mut rects: u32 = 0;
+
+        // Taken here rather than at the top so a wait refused above does not
+        // count toward the cap; dropped however this returns, which is what
+        // keeps a cancelled or timed out wait from holding part of the budget.
+        let (token, _guard) = match self.start_waiting(grant, id) {
+            Ok(started) => started,
+            Err(refused) => return refused,
+        };
 
         let met = loop {
             if started.elapsed() >= timeout {
@@ -1621,7 +1710,24 @@ impl AttachedLimb {
                     )
                 }
             }
-            tokio::time::sleep(WAIT_POLL).await;
+            tokio::select! {
+                () = tokio::time::sleep(WAIT_POLL) => {}
+                // `02 §2.4`. A wait that cannot be withdrawn keeps its task,
+                // and the caller's call, blocked for up to the whole timeout,
+                // which is what the running table is for. A wait has delivered
+                // nothing, so `Progress::None` rather than the `Delivered(1)` a
+                // native intent reports for a command it did put on the wire.
+                () = token.cancelled() => {
+                    return Settlement {
+                        id,
+                        outcome: Outcome::Cancelled,
+                        progress: Progress::None,
+                        gaps: Gaps::default(),
+                        reason: None,
+                        payload: Vec::new(),
+                    }
+                }
+            }
         };
 
         let evidence = SettleEvidence {

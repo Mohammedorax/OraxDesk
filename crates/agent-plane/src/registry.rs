@@ -141,6 +141,17 @@ pub(crate) struct LimbInner {
 pub(crate) struct RunningIntent {
     pub(crate) grant: GrantId,
     pub(crate) cancel: CancellationToken,
+    /// Whether this intent takes the grant's one in-flight slot for a batch
+    /// that reaches the wire.
+    ///
+    /// A `wait` is an entry in this table too, because `cancel` has to be able
+    /// to reach it, and it is not a batch: it puts nothing on the session's
+    /// command channel. Counting it against the slot would refuse a `wait`
+    /// issued while a long `exec` is in flight, which is exactly when an agent
+    /// wants to wait. `08 §7.3`'s rule is about interleaved batches reaching
+    /// one limb; a wait has nothing to interleave. Waits are bounded by their
+    /// own cap instead; see `MAX_WAITS_PER_LIMB` in `dispatch.rs`.
+    pub(crate) holds_slot: bool,
 }
 
 /// What the plane remembers about what it put on the wire.

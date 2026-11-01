@@ -2490,7 +2490,13 @@ mod tests {
         for (method, params) in [
             (
                 "hello",
-                json!({ "protocol": PROTOCOL, "client": { "name": "the test" } }),
+                json!({
+                    "protocol": PROTOCOL,
+                    "client": { "name": "the test" },
+                    // A hello that names nothing gets only `view`, so this
+                    // manual proof asks for the powers it is about to use.
+                    "capabilities": ["view", "control", "open"],
+                }),
             ),
             (
                 "limb.attach",
@@ -2737,7 +2743,13 @@ mod tests {
             (
                 1,
                 "hello",
-                json!({ "protocol": PROTOCOL, "client": { "name": "the manual proof" } }),
+                json!({
+                    "protocol": PROTOCOL,
+                    "client": { "name": "the manual proof" },
+                    // Explicit, because the default is `view` only and this
+                    // proof attaches and reads a frame.
+                    "capabilities": ["view", "capture", "open"],
+                }),
             ),
             (
                 2,
