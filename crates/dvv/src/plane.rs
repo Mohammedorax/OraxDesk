@@ -2667,6 +2667,22 @@ pub struct ControlYield {
     pub advice: &'static str,
 }
 
+/// What a lease change's release actually did, as this adapter reports it.
+///
+/// **Queued is not delivered.** `agent-plane` hands the release to the session
+/// channel and a relay thread drains that channel one command at a time; with an
+/// `exec` in flight on the same limb the release sits in the queue behind it.
+/// Reporting that as "released" was the lie this type exists to stop telling. A
+/// command is `queued` when the channel took it and `failed` when it did not,
+/// and neither word claims it reached the machine.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ReleaseReport {
+    /// Command names, in the order the channel took them.
+    pub queued: Vec<String>,
+    /// What the channel refused, one sentence each, in order.
+    pub failed: Vec<String>,
+}
+
 /// What a control call did.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ControlReport {
@@ -2678,10 +2694,16 @@ pub struct ControlReport {
     pub lease_id: Option<u64>,
     pub held: bool,
     pub view: LeaseView,
-    /// What the plane put on the wire to discharge the release a lease change
-    /// owes the limb (`00 R11`). Reported rather than logged, so a caller can
-    /// assert the ordering.
-    pub released: Vec<String>,
+    /// What the plane handed to the limb's command channel to discharge the
+    /// release a lease change owes it (`00 R11`), in order. **Queued, not
+    /// delivered**: see [`ReleaseReport`]. A caller can still assert the
+    /// ordering — buttons before keys — from this, which is what it exists for.
+    pub queued: Vec<String>,
+    /// The release steps the channel refused. Non empty means the lease was
+    /// left in `handing_over` rather than confirmed, and the caller can see
+    /// that in `view.phase`.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub failed: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub control_yield: Option<ControlYield>,
 }
@@ -2690,8 +2712,12 @@ pub struct ControlReport {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct StopReport {
     pub limb_id: String,
-    /// In order. A zero mask pointer, then every key.
-    pub released: Vec<String>,
+    /// In order. A zero mask pointer, then every key. **Queued, not delivered**:
+    /// see [`ReleaseReport`].
+    pub queued: Vec<String>,
+    /// The steps the channel refused, one sentence each.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub failed: Vec<String>,
     /// Which in flight intents were withdrawn.
     pub cancelled: Vec<u64>,
     pub phase: String,
@@ -3316,7 +3342,7 @@ impl Plane {
                 format!("{e}; nothing was sent to {}", limb.id()),
             )
         })?;
-        let released = self.honour(limb, &transition, now).await;
+        let release = self.honour(limb, &transition, now).await;
 
         let lease_id = match &transition.outcome {
             LeaseOutcome::Granted { lease_id, .. } | LeaseOutcome::Renewed { lease_id } => {
@@ -3330,7 +3356,7 @@ impl Plane {
             "acquire",
             outcome_name(&transition.outcome),
             lease_id,
-            released,
+            release,
         ))
     }
 
@@ -3350,13 +3376,13 @@ impl Plane {
             // gets `Unchanged`, which is the honest answer.
             None => limb.release_lease(self.party_id(), LeaseId::from_u64(0), now),
         };
-        let released = self.honour(limb, &transition, now).await;
+        let release = self.honour(limb, &transition, now).await;
         self.control_report(
             limb,
             "release",
             outcome_name(&transition.outcome),
             None,
-            released,
+            release,
         )
     }
 
@@ -3364,8 +3390,8 @@ impl Plane {
     pub async fn control_status(&self, limb: &AttachedLimb) -> ControlReport {
         let now = clock::lease_now();
         let expiries = limb.tick(now);
-        let released = self.honour(limb, &expiries, now).await;
-        self.control_report(limb, "status", "unchanged", None, released)
+        let release = self.honour(limb, &expiries, now).await;
+        self.control_report(limb, "status", "unchanged", None, release)
     }
 
     /// The panic chord, for one limb (`00 R13`).
@@ -3401,17 +3427,19 @@ impl Plane {
             limb.cancel_running(limb_core::intent::IntentId(*intent));
         }
 
-        let released = self.honour(limb, &transition, now).await;
+        let release = self.honour(limb, &transition, now).await;
         lock(&self.leases).remove(limb.id().as_str());
 
         let _ = self.watch.send(WatchEvent::Stopped {
             limb_id: limb.id().to_string(),
-            released: released.clone(),
+            queued: release.queued.clone(),
+            failed: release.failed.clone(),
             at: clock::unix_millis(),
         });
         StopReport {
             limb_id: limb.id().to_string(),
-            released,
+            queued: release.queued,
+            failed: release.failed,
             cancelled,
             phase: format!("{:?}", transition.to).to_lowercase(),
             limb_closed: false,
@@ -3765,15 +3793,33 @@ impl Plane {
     /// where a transition's obligation is dropped. `LeaseTransition` is
     /// `#[must_use]` for exactly that reason and this is where the `must` is
     /// satisfied.
+    ///
+    /// The report says `queued` and `failed`, never `released`. The plane can
+    /// only answer for its own channel, and the relay behind it is one command
+    /// at a time: an `exec` in flight puts the release in a queue, not on the
+    /// wire. Claiming otherwise was the P1 this type exists to close.
     async fn honour(
         &self,
         limb: &AttachedLimb,
         transition: &agent_lease::LeaseTransition,
         now: agent_lease::LeaseInstant,
-    ) -> Vec<String> {
-        let sent = limb.honour(transition, now).await;
-        let released: Vec<String> = sent.iter().map(command_name).collect();
-        if transition.changed() || !released.is_empty() {
+    ) -> ReleaseReport {
+        let release = limb.honour(transition, now).await;
+        let report = ReleaseReport {
+            queued: release.queued.iter().map(command_name).collect(),
+            failed: release
+                .faults
+                .iter()
+                .map(|(command, fault)| {
+                    format!(
+                        "{} was not taken by the limb's command channel ({}), so it may never reach the machine",
+                        command_name(command),
+                        fault.as_str()
+                    )
+                })
+                .collect(),
+        };
+        if transition.changed() || !report.queued.is_empty() || !report.failed.is_empty() {
             let view = limb.lease_view(self.party_id());
             let _ = self.watch.send(WatchEvent::LeaseChanged {
                 limb_id: limb.id().to_string(),
@@ -3782,10 +3828,11 @@ impl Plane {
                 holder_label: view.holder_label.clone(),
                 human_took_over: took_over(&view),
                 queue_depth: view.queue_depth,
-                released: released.clone(),
+                queued: report.queued.clone(),
+                failed: report.failed.clone(),
             });
         }
-        released
+        report
     }
 
     fn control_report(
@@ -3794,7 +3841,7 @@ impl Plane {
         action: &str,
         outcome: &str,
         lease_id: Option<u64>,
-        released: Vec<String>,
+        release: ReleaseReport,
     ) -> ControlReport {
         let view = limb.lease_view(self.party_id());
         let human_took_over = took_over(&view);
@@ -3825,7 +3872,8 @@ impl Plane {
                 },
             }),
             view,
-            released,
+            queued: release.queued,
+            failed: release.failed,
         }
     }
 

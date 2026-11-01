@@ -109,7 +109,7 @@ use vnc_core::{ClientCommand, ProtocolKind, QualityPreset, Rect};
 
 use crate::agent::mirror::{self, MirrorStatus, Perceive};
 use crate::agent::wire;
-use crate::agent::{AgentPlane, Attachment, PROTOCOL};
+use crate::agent::{AgentPlane, Attachment, NO_CONNECTION, PROTOCOL};
 use crate::state::{MachineKey, SessionEntry};
 
 /// The largest encoded image this surface will put in one reply.
@@ -262,8 +262,19 @@ pub async fn dispatch(
             Ok(json!({ "limbs": limb_records(ctx) }))
         }
         "limb.open" => limb_open(ctx, peer, params).await,
-        "limb.attach" => limb_attach(ctx, peer, params),
-        "limb.detach" => limb_detach(ctx, peer, params),
+        // Asking for a limb is `open`, and letting go of one is `close`, for
+        // the reason `00 R19` gives the pair its own names: `view` reads a
+        // machine and `control` types into it, while attaching claims a limb
+        // and detaching hands somebody's session back. A connection that asked
+        // for neither must not be able to take or drop one.
+        "limb.attach" => {
+            require(peer, Capability::Open)?;
+            limb_attach(ctx, peer, params)
+        }
+        "limb.detach" => {
+            require(peer, Capability::Close)?;
+            limb_detach(ctx, peer, params)
+        }
         "limb.status" => limb_status(ctx, peer, params),
         "limb.command" => limb_command(ctx, peer, params),
         // `00 R28`, `00 R51b`. An intent the driver serves natively gets a
@@ -374,6 +385,12 @@ fn separate_because(needed: Capability) -> &'static str {
         }
         Capability::FilesWrite => {
             "files.read does not imply files.write, and neither does control. Reading a machine's disk is observation; writing to it leaves something behind that is still there tomorrow, and holding the keyboard is not authority over the filesystem"
+        }
+        Capability::Open => {
+            "open is not view: looking at a machine somebody already has opened is reading it, and attaching asks for a limb to drive, so a connection that asked only to look is refused rather than quietly promoted"
+        }
+        Capability::Close => {
+            "close is not open, and neither is view: giving a limb back changes who may act on a person's session, and reading one does not carry that authority"
         }
         _ => {
             "view does not imply capture: damage rectangles leak geometry and timing, and a frame leaks whatever is on somebody's screen"
@@ -746,12 +763,13 @@ fn limb_attach(ctx: &Ctx, peer: &Peer, params: &Value) -> Result<Value, RpcError
         (session_id, value)
     };
 
-    // Before the mirror, deliberately. A revoked session, or a fifth limb,
-    // must be refused before anything is allocated and before the person's
-    // session is renegotiated for a mirror: a refusal that had already moved
-    // their quality preset would cost them bandwidth for a call that never
-    // landed. `attach` repeats this under its own lock.
-    ctx.plane.check_attach(&session_id)?;
+    // Before the mirror, deliberately. A revoked session, a fifth limb, or a
+    // limb another live attachment holds, must be refused before anything is
+    // allocated and before the person's session is renegotiated for a mirror: a
+    // refusal that had already moved their quality preset would cost them
+    // bandwidth for a call that never landed. `attach` repeats this under its
+    // own lock.
+    ctx.plane.check_attach(&session_id, &attachment_id)?;
 
     // The mirror, before the attachment is recorded: a mirror the budget
     // refuses must not leave a half attached limb behind, and an attachment
@@ -764,6 +782,12 @@ fn limb_attach(ctx: &Ctx, peer: &Peer, params: &Value) -> Result<Value, RpcError
         Attachment {
             attachment_id: attachment_id.clone(),
             client: peer.client.clone().unwrap_or_default(),
+            // The guard greeting minted, which is the whole of what the plane
+            // knows about whether this holder is still there. `hello` is
+            // mandatory, so a peer with none cannot reach here; a
+            // `NO_CONNECTION` row would read as stale, which is the safe
+            // reading for an attachment nothing is holding.
+            connection: peer.connection.as_ref().map_or(NO_CONNECTION, |guard| guard.id()),
             revoked: false,
             held: false,
             phase: "free".to_string(),
@@ -973,17 +997,26 @@ fn send_now(ctx: &Ctx, session_id: &str, command: ClientCommand) -> Result<(), R
 
 fn limb_detach(ctx: &Ctx, peer: &Peer, params: &Value) -> Result<Value, RpcError> {
     let session_id = session_id_of(params)?;
-    ctx.plane.detach(&session_id);
+    let attachment_id = peer.attachment_id.clone().unwrap_or_default();
+    // Only the attachment that holds the session may let go of it. A detach
+    // keyed on the session id alone let any peer tear down another agent's
+    // limb, and the person's own shell does not need the power: taking the
+    // wheel is `agent_take_the_wheel`, which revokes rather than detaches.
+    let removed = ctx.plane.detach(&session_id, &attachment_id)?;
     // The person gets their session back. `AGENT_BRIEF` D2: the interactive
     // product does not regress because an agent looked once, so the preset the
     // mirror moved is moved back, and the refresh after it repaints whatever
-    // the new encoding set changes.
+    // the new encoding set changes. Reached only when the row was this
+    // attachment's (or there was none): releasing the mirror of a session
+    // another attachment holds would renegotiate that holder's wire.
     let restored = release_mirror(ctx, &session_id);
-    (ctx.emit)(json!({
-        "type": "detached",
-        "sessionId": session_id,
-        "attachmentId": peer.attachment_id,
-    }));
+    if removed {
+        (ctx.emit)(json!({
+            "type": "detached",
+            "sessionId": session_id,
+            "attachmentId": attachment_id,
+        }));
+    }
     // Detaching something that is already gone is an ordinary success: a
     // cleanup path has to be safe to call twice.
     Ok(json!({ "detached": session_id, "qualityRestored": restored }))
@@ -2974,6 +3007,139 @@ mod tests {
         assert_eq!(attached["sessionId"], "s1");
     }
 
+    /// A second live attach is refused, and the first holder keeps the limb.
+    ///
+    /// This is the arbitration `AgentPlane::attach` makes, seen from the
+    /// surface: the loser is told which attachment holds the session, is told
+    /// nothing about who that is, and neither side is silently moved.
+    #[tokio::test]
+    async fn a_second_live_attach_is_refused_and_the_first_keeps_the_limb() {
+        let fixture = fixture();
+        let mut first = greeted(&fixture.ctx).await;
+        call(
+            &fixture.ctx,
+            &mut first,
+            "limb.attach",
+            json!({ "address": "10.0.0.5", "protocol": "vnc", "slot": 0 }),
+        )
+        .await;
+        let holder = first.attachment_id.clone().expect("hello minted one");
+
+        let mut second = greeted(&fixture.ctx).await;
+        let refused = dispatch(
+            &fixture.ctx,
+            &mut second,
+            "limb.attach",
+            &json!({ "address": "10.0.0.5", "protocol": "vnc", "slot": 0 }),
+        )
+        .await
+        .expect_err("a live attachment is not displaced");
+        assert_eq!(refused.tag, Some("RATE_LIMITED"));
+        assert!(
+            refused.message.contains(&holder),
+            "the refusal names the attachment to use: {}",
+            refused.message
+        );
+        assert_eq!(
+            fixture.ctx.plane.attached_ids().get("s1"),
+            Some(&holder),
+            "the first attachment still holds the session"
+        );
+        let attached_events = fixture
+            .events
+            .lock()
+            .iter()
+            .filter(|event| event["type"] == "attached")
+            .count();
+        assert_eq!(attached_events, 1, "the loser attaches nothing and says so");
+    }
+
+    /// A peer cannot detach a limb another attachment holds, and the holder can.
+    #[tokio::test]
+    async fn a_peer_cannot_detach_another_agents_limb() {
+        let fixture = fixture();
+        let mut first = greeted(&fixture.ctx).await;
+        call(
+            &fixture.ctx,
+            &mut first,
+            "limb.attach",
+            json!({ "address": "10.0.0.5", "protocol": "vnc", "slot": 0 }),
+        )
+        .await;
+        let holder = first.attachment_id.clone().expect("hello minted one");
+
+        let mut second = greeted(&fixture.ctx).await;
+        let refused = dispatch(
+            &fixture.ctx,
+            &mut second,
+            "limb.detach",
+            &json!({ "sessionId": "s1" }),
+        )
+        .await
+        .expect_err("somebody else's limb is not this connection's to drop");
+        assert_eq!(refused.tag, Some("NOT_ATTACHED"));
+        assert!(
+            refused.message.contains(&holder),
+            "the refusal names the holder: {}",
+            refused.message
+        );
+        assert_eq!(
+            fixture.ctx.plane.attached_ids().get("s1"),
+            Some(&holder),
+            "nothing was detached"
+        );
+
+        call(
+            &fixture.ctx,
+            &mut first,
+            "limb.detach",
+            json!({ "sessionId": "s1" }),
+        )
+        .await;
+        assert!(
+            !fixture.ctx.plane.attached_ids().contains_key("s1"),
+            "the holder's own detach removes the row"
+        );
+    }
+
+    /// Attaching needs `open` and detaching needs `close`, and neither implies
+    /// the other. A connection that asked for nothing must not be able to take
+    /// or drop a person's limb.
+    #[tokio::test]
+    async fn attaching_and_detaching_need_open_and_close() {
+        let fixture = fixture();
+        let mut peer = Peer::default();
+        call(
+            &fixture.ctx,
+            &mut peer,
+            "hello",
+            json!({ "protocol": PROTOCOL, "capabilities": [] }),
+        )
+        .await;
+
+        let refused = dispatch(
+            &fixture.ctx,
+            &mut peer,
+            "limb.attach",
+            &json!({ "address": "10.0.0.5", "protocol": "vnc", "slot": 0 }),
+        )
+        .await
+        .expect_err("no open, no attach");
+        assert_eq!(refused.tag, Some("MISSING_CAPABILITY"));
+        assert!(refused.message.contains("open"), "{}", refused.message);
+
+        let refused = dispatch(
+            &fixture.ctx,
+            &mut peer,
+            "limb.detach",
+            &json!({ "sessionId": "s1" }),
+        )
+        .await
+        .expect_err("no close, no detach");
+        assert_eq!(refused.tag, Some("MISSING_CAPABILITY"));
+        assert!(refused.message.contains("close"), "{}", refused.message);
+    }
+
     #[tokio::test]
     async fn nothing_works_before_hello_and_a_wrong_protocol_is_a_hard_error() {
         let fixture = fixture();
@@ -3401,7 +3567,7 @@ mod tests {
             json!({
                 "protocol": PROTOCOL,
                 "client": { "name": "an observer" },
-                "capabilities": ["view", "control"],
+                "capabilities": ["view", "control", "open"],
             }),
         )
         .await;
@@ -3476,7 +3642,7 @@ mod tests {
             json!({
                 "protocol": PROTOCOL,
                 "client": { "name": "an observer" },
-                "capabilities": ["view", "control"],
+                "capabilities": ["view", "control", "open"],
             }),
         )
         .await;
@@ -3614,7 +3780,6 @@ mod tests {
             json!({ "kind": "set-prefer-scancodes", "on": true }),
             json!({ "kind": "set-quality", "preset": "low" }),
             json!({ "kind": "request-resize", "width": 800, "height": 600 }),
-            json!({ "kind": "reconnect-now" }),
             json!({ "kind": "terminal-input", "bytes": [1, 2] }),
         ] {
             let refused = dispatch(
@@ -3631,6 +3796,9 @@ mod tests {
                 "a refused command must not reach the wire: {command}"
             );
         }
+        // `reconnect-now` is absent on purpose: it costs `open`, and attaching
+        // costs `open` too, so there is no connection that holds an attachment
+        // and lacks it. `command_capability` proves the cost itself.
     }
 
     /// `hosts.list`, `limb.list` and `limb.status` are inventory. A connection
@@ -4589,7 +4757,7 @@ mod tests {
             json!({
                 "protocol": PROTOCOL,
                 "client": { "name": "test" },
-                "capabilities": ["view", "capture", "control", "close", "hosts.read"],
+                "capabilities": ["view", "capture", "control", "open", "close", "hosts.read"],
             }),
         )
         .await;
@@ -4866,7 +5034,14 @@ mod tests {
 
     /// A connection holding exactly these capabilities, attached to the one
     /// live session the fixture has.
+    ///
+    /// `open` is added to the grant and not to the argument, because attaching
+    /// itself costs `open` now: every test that uses this helper is about some
+    /// OTHER capability, and repeating `open` in eight lists would make the
+    /// capability under test harder to see rather than easier.
     async fn attached_holding(ctx: &Ctx, capabilities: &[&str]) -> Peer {
+        let mut granted: Vec<&str> = capabilities.to_vec();
+        granted.push("open");
         let mut peer = Peer::default();
         call(
             ctx,
@@ -4875,7 +5050,7 @@ mod tests {
             json!({
                 "protocol": PROTOCOL,
                 "client": { "name": "test" },
-                "capabilities": capabilities,
+                "capabilities": granted,
             }),
         )
         .await;

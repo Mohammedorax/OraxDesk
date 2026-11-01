@@ -58,10 +58,14 @@ pub enum WatchEvent {
         holder_label: Option<String>,
         human_took_over: bool,
         queue_depth: usize,
-        /// What the plane owed the limb, and whether it went. A lease change
-        /// that owes a release and did not send one is the bug `00 R11` exists
-        /// to prevent, so it is visible here rather than only in a log.
-        released: Vec<String>,
+        /// What the plane handed to the limb's channel to discharge the release
+        /// a lease change owes (`00 R11`), in order. **Queued, not delivered**:
+        /// the relay carries it, and an `exec` in flight can leave it waiting.
+        queued: Vec<String>,
+        /// The release steps the channel refused. A lease change that owed a
+        /// release and did not even queue one is the bug `00 R11` exists to
+        /// prevent, so it is visible here rather than only in a log.
+        failed: Vec<String>,
     },
     /// An intent is on the wire.
     IntentStarted {
@@ -87,10 +91,13 @@ pub enum WatchEvent {
     /// The stop path ran (`00 R13`). A revocation, not a request.
     Stopped {
         limb_id: String,
-        /// What went on the wire, in order. The assertion a person wants after
-        /// pressing a button labelled stop is that the buttons came up before
-        /// the keys did, and this is where they can see it.
-        released: Vec<String>,
+        /// What the plane handed to the channel, in order. The assertion a
+        /// person wants after pressing a button labelled stop is that the
+        /// buttons came up before the keys did, and this is where they can see
+        /// it. **Queued, not delivered.**
+        queued: Vec<String>,
+        /// The release steps the channel refused.
+        failed: Vec<String>,
         at: u64,
     },
 }
@@ -118,7 +125,8 @@ impl WatchEvent {
                 holder_label,
                 human_took_over,
                 queue_depth,
-                released,
+                queued,
+                failed,
             } => {
                 let who = match (holder_kind, holder_label) {
                     (Some(kind), Some(label)) => format!("{kind} \"{label}\""),
@@ -129,9 +137,14 @@ impl WatchEvent {
                 } else {
                     ""
                 };
+                let refused = if failed.is_empty() {
+                    String::new()
+                } else {
+                    format!("  RELEASE NOT QUEUED: {}", failed.join("; "))
+                };
                 format!(
-                    "{limb_id}  lease      {phase}, held by {who}, {queue_depth} waiting, released {}{took_over}",
-                    released.len()
+                    "{limb_id}  lease      {phase}, held by {who}, {queue_depth} waiting, queued {}{refused}{took_over}",
+                    queued.len()
                 )
             }
             WatchEvent::IntentStarted {
@@ -155,11 +168,21 @@ impl WatchEvent {
                 format!("{limb_id}  intent {intent:<5} {kind} {outcome} {code} ({progress}){lost}")
             }
             WatchEvent::Stopped {
-                limb_id, released, ..
-            } => format!(
-                "{limb_id}  STOPPED    revoked, released: {}",
-                released.join(" then ")
-            ),
+                limb_id,
+                queued,
+                failed,
+                ..
+            } => {
+                let refused = if failed.is_empty() {
+                    String::new()
+                } else {
+                    format!("  RELEASE NOT QUEUED: {}", failed.join("; "))
+                };
+                format!(
+                    "{limb_id}  STOPPED    revoked, queued: {}{refused}",
+                    queued.join(" then ")
+                )
+            }
         }
     }
 }
@@ -236,7 +259,8 @@ mod tests {
             holder_label: Some("Alex".to_string()),
             human_took_over: true,
             queue_depth: 0,
-            released: vec!["pointer(0,0,mask=0)".to_string()],
+            queued: vec!["pointer(0,0,mask=0)".to_string()],
+            failed: Vec::new(),
         };
         assert!(event.human().contains("A PERSON TOOK THE WHEEL"));
     }

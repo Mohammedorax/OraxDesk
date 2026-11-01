@@ -88,9 +88,13 @@ async fn the_stop_path_puts_a_zero_mask_pointer_out_before_the_key_releases() {
     }
 
     assert_eq!(
-        report.released,
+        report.queued,
         vec!["pointer(400,300,mask=0)", "release all keys"],
-        "the report says what went, in order, so a caller can assert it rather than trust it"
+        "the report says what was queued, in order, so a caller can assert the ordering rather than trust it"
+    );
+    assert!(
+        report.failed.is_empty(),
+        "the fake source's channel takes the whole release"
     );
     assert!(
         !report.limb_closed,

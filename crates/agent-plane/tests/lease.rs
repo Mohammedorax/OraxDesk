@@ -19,9 +19,10 @@
 mod common;
 
 use agent_lease::{AcquireRequest, HolderKind, LeaseInstant, LeasePhase, Party};
-use agent_plane::PlaneConfig;
-use common::{as_pointer, connected, drain, fenced, operator, TestLimb};
+use agent_plane::{PlaneConfig, ReleaseFault};
+use common::{as_pointer, connected, drain, fenced, intent, operator, TestLimb};
 use limb_core::intent::{IntentKind, Point};
+use limb_core::observation::Outcome;
 use limb_core::ClientCommand;
 
 #[tokio::test]
@@ -80,7 +81,8 @@ async fn a_preemption_releases_the_buttons_before_the_keys() {
     // through (`08 §6.1` step 5).
     assert!(!limb.fencing(grant.id()).is_allowed());
 
-    let sent = limb.honour(&preempt, t0.plus(10)).await;
+    let release = limb.honour(&preempt, t0.plus(10)).await;
+    let sent = &release.queued;
     assert_eq!(
         sent.len(),
         2,
@@ -95,6 +97,11 @@ async fn a_preemption_releases_the_buttons_before_the_keys() {
         matches!(sent[1], ClientCommand::ReleaseAllKeys),
         "and the keys go second: {:?}",
         sent[1]
+    );
+    assert!(
+        release.complete(),
+        "both steps reached the channel, so the lease may be confirmed: {:?}",
+        release.faults
     );
 
     // The same two, in the same order, actually on the channel.
@@ -123,10 +130,11 @@ async fn the_force_release_owes_the_same_two_commands_even_with_nobody_holding()
     let transition = limb.force_release(now);
     assert!(transition.must_release());
 
-    let sent = limb.honour(&transition, now).await;
-    assert_eq!(sent.len(), 2);
-    assert_eq!(as_pointer(&sent[0]).map(|p| p.2), Some(0));
-    assert!(matches!(sent[1], ClientCommand::ReleaseAllKeys));
+    let release = limb.honour(&transition, now).await;
+    assert_eq!(release.queued.len(), 2);
+    assert_eq!(as_pointer(&release.queued[0]).map(|p| p.2), Some(0));
+    assert!(matches!(release.queued[1], ClientCommand::ReleaseAllKeys));
+    assert!(release.complete());
     assert_eq!(drain(&mut rx).len(), 2);
 }
 
@@ -165,4 +173,100 @@ async fn an_intent_from_a_party_that_does_not_hold_the_wheel_sends_nothing() {
         drain(&mut rx).is_empty(),
         "refused before anything reached the wire"
     );
+}
+
+/// A release that never reached the channel does not confirm the handover.
+///
+/// The failure this guards: `honour` counted every locally accepted command as
+/// sent, confirmed the lease, and reported a release the limb had never been
+/// told about. A channel with room for only one of the two steps is the
+/// deterministic way to make half a release fail without a live session, and it
+/// is the shape of the real bug: the relay is one command at a time, so a long
+/// `exec` in front of the release leaves it waiting exactly like this.
+#[tokio::test]
+async fn a_release_that_did_not_go_does_not_confirm_the_handover() {
+    let grant = operator("att_wedged_release", "desk.example");
+    // Two slots, so the reservation keeps one for the webview and the plane may
+    // use one. `intent_block_ms: 0` makes the block deterministic rather than a
+    // race with the deadline.
+    let (_registry, limb, rx) = connected(
+        PlaneConfig {
+            intent_block_ms: 0,
+            ..PlaneConfig::default()
+        },
+        &grant,
+        "desk.example",
+        TestLimb::desktop(),
+        2,
+    );
+    let now = LeaseInstant::from_millis(1_000);
+
+    // Fill the one slot the plane may use. A clipboard write needs no lease, so
+    // this is one command and no arbitration.
+    let settlement = limb
+        .dispatch(
+            &grant,
+            intent(
+                &limb,
+                &grant,
+                IntentKind::ClipboardSet {
+                    text: "one command into the only slot".to_string(),
+                },
+            ),
+            now,
+        )
+        .await;
+    assert!(
+        matches!(&settlement.outcome, Outcome::Done { .. }),
+        "the fill has to land: {:?}",
+        settlement.outcome
+    );
+    // Left on the channel on purpose, and read with `len` rather than `drain`:
+    // draining hands the slot back, and a release the channel has room for is
+    // exactly the case this test is not about. One of the two slots is taken,
+    // so the pointer lands and the key release does not. That half released
+    // state is the one a settlement must never call "released", because the
+    // remote machine may still be holding a modifier down.
+    assert_eq!(rx.len(), 1, "the fill took one of the two slots");
+
+    let party = Party::new(grant.id().clone(), HolderKind::Agent, "the test");
+    let transition = limb
+        .acquire(AcquireRequest::new(party), now)
+        .expect("an unheld lease is granted");
+    assert!(transition.must_release());
+
+    let release = limb.honour(&transition, now).await;
+    assert_eq!(
+        release.queued.len(),
+        1,
+        "only the pointer had a slot: {:?}",
+        release.queued
+    );
+    assert_eq!(
+        as_pointer(&release.queued[0]).map(|p| p.2),
+        Some(0),
+        "the button release still goes first, so a preempted drag does not stay pressed"
+    );
+    assert_eq!(
+        release.faults.len(),
+        1,
+        "the step that did not go is named: {:?}",
+        release.faults
+    );
+    assert!(
+        matches!(release.faults[0].0, ClientCommand::ReleaseAllKeys),
+        "the step that did not go is the key release: {:?}",
+        release.faults
+    );
+    assert_eq!(release.faults[0].1, ReleaseFault::Blocked);
+    assert!(!release.complete());
+
+    // And the lease did not advance: the holder is still fenced out of a limb
+    // that may be holding a button. `00 R46c` chose this asymmetry on purpose.
+    assert_eq!(
+        limb.lease_view(grant.id()).phase,
+        LeasePhase::HandingOver,
+        "a release that did not go must not confirm the handover"
+    );
+    assert!(!limb.fencing(grant.id()).is_allowed());
 }

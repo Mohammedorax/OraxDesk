@@ -901,7 +901,10 @@ async fn stop(args: &Args) -> i32 {
         println!("{}", serde_json::to_string(&report).unwrap_or_default());
     } else {
         println!("{} is revoked. No grace window.", report.limb_id);
-        println!("released, in order: {}", report.released.join(" then "));
+        println!("queued for the limb, in order: {}", report.queued.join(" then "));
+        if !report.failed.is_empty() {
+            println!("not queued: {}", report.failed.join("; "));
+        }
         println!(
             "{} intent(s) withdrawn. The limb itself is still open: stopping revokes the wheel, it does not close the machine.",
             report.cancelled.len()

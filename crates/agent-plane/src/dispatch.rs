@@ -339,6 +339,56 @@ enum StepResult {
     Gone,
 }
 
+/// Why one release step never reached the limb's own channel.
+///
+/// The release pair carries [`SendPolicy::Jump`], so [`StepResult::Shed`] cannot
+/// arise for it: only these two can.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReleaseFault {
+    /// The channel stayed full past the block ceiling.
+    Blocked,
+    /// The session's task is gone, so nothing further reaches it.
+    Gone,
+}
+
+impl ReleaseFault {
+    /// The word a settlement reports.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            ReleaseFault::Blocked => "blocked",
+            ReleaseFault::Gone => "gone",
+        }
+    }
+}
+
+/// What a lease change's release actually did.
+///
+/// **Queued is not delivered.** `Sent` is a local `try_send` onto the session's
+/// command channel, and that channel is drained by a relay which may be busy on
+/// a long `exec` for the same limb. So a command the plane accepted here has not
+/// necessarily reached the wire, and this type is where that distinction is
+/// kept rather than flattened into "released".
+///
+/// The release still goes out AHEAD of anything the new holder sends, because
+/// both travel the same ordered channel, which is why a queued release is a
+/// completed obligation for the purpose of [`AttachedLimb::honour`]'s
+/// `confirm_release`. A step that was not taken is not, and the lease stays in
+/// `HandingOver` until somebody discharges it.
+#[derive(Debug, Clone, Default)]
+pub struct Release {
+    /// The commands the channel took, in the order the plane handed them over.
+    pub queued: Vec<ClientCommand>,
+    /// The steps it refused, in order, with the reason.
+    pub faults: Vec<(ClientCommand, ReleaseFault)>,
+}
+
+impl Release {
+    /// Did every step reach the channel?
+    pub fn complete(&self) -> bool {
+        self.faults.is_empty()
+    }
+}
+
 /// Running totals while a plan is walked.
 #[derive(Debug, Default)]
 struct Walk {
@@ -475,37 +525,66 @@ impl AttachedLimb {
     /// handler never sees the event kind and silently defeats the asymmetry
     /// above it.
     ///
-    /// Returns what went on the wire, in order, so a trace and a test can both
+    /// **A step that did not go is not a delivery.** The old return value
+    /// counted every `StepResult::Sent` and then confirmed the release
+    /// unconditionally, so a full or closed channel reported a release that
+    /// never left the plane and let the lease advance as if it had. Now the two
+    /// outcomes are named ([`Release`]) and `confirm_release` runs only when
+    /// every step reached the channel; otherwise the lease stays in
+    /// `HandingOver` and the new holder stays fenced until somebody discharges
+    /// it (`00 R46c` chose that asymmetry: a limb nobody can drive is noticed in
+    /// a second, a stuck Ctrl is noticed after a paragraph).
+    ///
+    /// What `Queued` still does not claim is arrival on the wire. The channel is
+    /// drained by the relay, and the relay may be inside a long `exec` for this
+    /// same limb; the release sits ahead of the new holder in that same ordered
+    /// queue, which is why queueing discharges the obligation, but it is not a
+    /// delivery and nothing here says it is.
+    ///
+    /// Returns what the channel took, in order, so a trace and a test can both
     /// assert the ordering rather than trusting it.
     pub async fn honour(
         &self,
         transition: &LeaseTransition,
         now: LeaseInstant,
-    ) -> Vec<ClientCommand> {
+    ) -> Release {
         if !transition.must_release() {
-            return Vec::new();
+            return Release::default();
         }
         let at = lock(&self.inner.input).ctx.last_point;
         let steps = release_sequence(at);
         let deadline =
             tokio::time::Instant::now() + Duration::from_millis(self.inner.config.intent_block_ms);
-        let mut sent = Vec::new();
+        let mut release = Release::default();
         for step in &steps {
             let (result, _waited) = self.send_step(step, deadline).await;
             match result {
                 StepResult::Sent => {
                     self.remember(step);
-                    sent.push(step.command.clone());
+                    release.queued.push(step.command.clone());
                 }
-                other => {
+                StepResult::Blocked | StepResult::Shed => {
+                    release
+                        .faults
+                        .push((step.command.clone(), ReleaseFault::Blocked));
                     // The one place this crate logs rather than returning.
                     // There is nobody to return to: a release is owed to the
                     // limb by the plane itself, not by an agent, so a failure
                     // here is an operational fact and not an intent outcome.
                     tracing::warn!(
                         limb = %self.inner.id,
-                        result = ?other,
-                        "the release owed by a lease change did not reach the limb; a modifier or a button may be held on the remote machine"
+                        result = ?result,
+                        "the release owed by a lease change did not reach the limb's channel; a modifier or a button may be held on the remote machine"
+                    );
+                }
+                StepResult::Gone => {
+                    release
+                        .faults
+                        .push((step.command.clone(), ReleaseFault::Gone));
+                    tracing::warn!(
+                        limb = %self.inner.id,
+                        result = ?result,
+                        "the release owed by a lease change could not be taken: the session is gone"
                     );
                 }
             }
@@ -516,10 +595,14 @@ impl AttachedLimb {
         // by construction, so dropping it owes the limb nothing; it is
         // dropped explicitly rather than by accident because `LeaseTransition`
         // is `#[must_use]` and should stay that way.
-        if lock(&self.inner.lease).phase() == LeasePhase::HandingOver {
+        //
+        // And only when the release actually reached the channel: a confirm
+        // here would tell the new holder it may type on a machine that might
+        // still be holding a button or a modifier down.
+        if release.complete() && lock(&self.inner.lease).phase() == LeasePhase::HandingOver {
             let _confirmed = lock(&self.inner.lease).confirm_release(now);
         }
-        sent
+        release
     }
 
     /// Acquire and discharge in one call, which is what a caller almost always
@@ -527,17 +610,17 @@ impl AttachedLimb {
     ///
     /// # Errors
     ///
-    /// [`LeaseError`] from the acquire. Nothing after the acquire can fail:
-    /// a release that does not reach the limb is logged, because there is no
-    /// caller who could do anything about it.
+    /// [`LeaseError`] from the acquire. Nothing after the acquire can fail: a
+    /// release that does not reach the limb is reported in the [`Release`],
+    /// because there is no caller who could do anything about it.
     pub async fn take_control(
         &self,
         party: Party,
         now: LeaseInstant,
-    ) -> Result<(LeaseTransition, Vec<ClientCommand>), LeaseError> {
+    ) -> Result<(LeaseTransition, Release), LeaseError> {
         let transition = self.acquire(AcquireRequest::new(party), now)?;
-        let sent = self.honour(&transition, now).await;
-        Ok((transition, sent))
+        let release = self.honour(&transition, now).await;
+        Ok((transition, release))
     }
 
     /// Withdraw a running intent.

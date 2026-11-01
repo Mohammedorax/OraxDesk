@@ -536,6 +536,18 @@ fn run_bounded(
 pub struct Attachment {
     pub attachment_id: String,
     pub client: String,
+    /// The connection row this attachment belongs to.
+    ///
+    /// The only liveness signal the plane has. There is no heartbeat and no
+    /// timeout here, and inventing one would refuse a slow agent's re-attach
+    /// or replace a dead one's limb after a delay nobody can see. A row exists
+    /// in [`AgentPlane::connections`] for exactly as long as the connection
+    /// does, because [`ConnectionGuard`]'s drop removes it however the
+    /// connection ends, so membership IS whether the holder is still there.
+    /// A second attach for a session whose holder is connected is refused
+    /// rather than silently displacing it; a row whose connection is gone is
+    /// stale and may be replaced.
+    pub connection: u64,
     /// True once a person has taken the wheel. Every further command from this
     /// attachment is refused with `LEASE_REVOKED` (`04 §5.4`), and the session
     /// cannot be entered again by a fresh attach until it ends: the memory of
@@ -720,6 +732,26 @@ impl Drop for ConnectionGuard {
     }
 }
 
+impl ConnectionGuard {
+    /// Which connection row this guard owns.
+    ///
+    /// Public because the transport records it on every attachment it creates:
+    /// see [`Attachment::connection`] for why that number is the plane's only
+    /// way to tell a live holder from a dead one.
+    pub fn id(&self) -> u64 {
+        self.id
+    }
+}
+
+/// The connection value on an attachment no connection owns.
+///
+/// Only a hand built [`Attachment`] has one: every attachment the socket
+/// records carries the guard that greeted it, and the counter behind
+/// [`ConnectionGuard`] starts at zero and never reaches this value. An
+/// attachment with it is therefore always stale, which is the right reading
+/// for a row nothing is holding.
+pub(crate) const NO_CONNECTION: u64 = u64::MAX;
+
 /// Why a revoked session cannot be entered again by attaching.
 ///
 /// The refusal is the one a revoked attachment already gets, because it is the
@@ -746,25 +778,82 @@ fn too_many_limbs(attached: usize) -> RpcError {
     }
 }
 
+/// Why a session cannot take a second attachment while the first is live.
+///
+/// The refusal names the holder's ATTACHMENT id and never its client name: an
+/// agent is entitled to know that the limb is spoken for and which attachment
+/// to use, and not who the other party is. `RATE_LIMITED` and not
+/// `NOT_ATTACHED`, because the loser's connection is fine and its other limbs
+/// must survive: a `NOT_ATTACHED` here reads as "this socket is not that
+/// attachment" and a client that reconnects on it would trade a refusal for a
+/// new identity and every limb it held.
+fn session_already_attached(session_id: &str, holder: &str) -> RpcError {
+    RpcError {
+        code: -32000,
+        message: format!(
+            "{session_id} already has a live attachment, {holder}, and a second attach does not displace it. Use {holder}, or have it call limb.detach before attaching here. Nothing was attached and nothing was sent"
+        ),
+        tag: Some("RATE_LIMITED"),
+    }
+}
+
 /// May this session take one more attachment?
 ///
-/// Pure so the two decisions can be tested without a plane: a person's
-/// revocation outranks everything ([`revoked_reattach`]), and the ceiling
-/// applies to the number of SESSIONS, so re-attaching the same one is never the
-/// fifth limb.
+/// Pure so the decisions can be tested without a plane, and in this order:
+/// a person's revocation outranks everything ([`revoked_reattach`]); a LIVE
+/// holder is not displaced by a different attachment; a stale one is, because
+/// the connection that owned it is gone and the row would otherwise hold the
+/// limb forever. The same attachment arriving again is an update rather than a
+/// second claim: it is how an agent re-asks for a mirror, and refusing that
+/// would refuse the agent its own limb.
+///
+/// The ceiling applies to the number of SESSIONS, so re-attaching a session
+/// that already has a row is never the fifth limb.
 fn admit_attach(
     session_id: &str,
     existing: Option<&Attachment>,
+    incoming: &str,
     revoked_session: bool,
+    holder_live: bool,
     attached: usize,
 ) -> Result<(), RpcError> {
     if revoked_session || existing.is_some_and(|held| held.revoked) {
         return Err(revoked_reattach(session_id));
     }
-    if existing.is_none() && attached >= MAX_ATTACHED_LIMBS {
-        return Err(too_many_limbs(attached));
+    match existing {
+        Some(held) if held.attachment_id != incoming && holder_live => {
+            Err(session_already_attached(session_id, &held.attachment_id))
+        }
+        Some(_) => Ok(()),
+        None if attached >= MAX_ATTACHED_LIMBS => Err(too_many_limbs(attached)),
+        None => Ok(()),
     }
-    Ok(())
+}
+
+/// May this attachment let go of this session?
+///
+/// Pure, for the same reason [`admit_attach`] is. `Ok` when the session holds
+/// nothing, because a cleanup path has to be safe to call twice, and when it
+/// holds exactly this attachment. Nothing else may remove a row: a detach that
+/// keyed on the session alone was a peer able to tear down another agent's
+/// limb, which is the same decision [`AgentPlane::check_allowed`] refuses one
+/// layer up.
+fn may_detach(
+    session_id: &str,
+    existing: Option<&Attachment>,
+    incoming: &str,
+) -> Result<(), RpcError> {
+    match existing {
+        Some(held) if held.attachment_id != incoming => Err(RpcError {
+            code: -32000,
+            message: format!(
+                "{session_id} is attached by {} and not by this connection, so this connection cannot detach it. Nothing was detached and the other attachment still holds it",
+                held.attachment_id
+            ),
+            tag: Some("NOT_ATTACHED"),
+        }),
+        _ => Ok(()),
+    }
 }
 
 impl AgentPlane {
@@ -792,22 +881,32 @@ impl AgentPlane {
     /// Is this session attachable right now?
     ///
     /// The same decision [`AgentPlane::attach`] makes, without inserting
-    /// anything, so `limb.attach` can refuse a revoked session or a fifth limb
-    /// BEFORE it allocates a mirror and moves the person's quality preset.
-    /// `attach` repeats the check under the lock, because a second connection
-    /// can get there between the two.
+    /// anything, so `limb.attach` can refuse a revoked session, a fifth limb,
+    /// or a limb another live attachment holds BEFORE it allocates a mirror and
+    /// moves the person's quality preset. `attach` repeats the check under the
+    /// lock, because a second connection can get there between the two.
+    ///
+    /// The connections are locked before the attachments, which is the order
+    /// [`AgentPlane::counts`] takes them in and the only order anything here
+    /// may take them in.
     ///
     /// # Errors
     ///
-    /// `LEASE_REVOKED` for a session a person has taken the wheel on, or
-    /// `RATE_LIMITED` when four limbs are already attached.
-    pub fn check_attach(&self, session_id: &str) -> Result<(), RpcError> {
+    /// `LEASE_REVOKED` for a session a person has taken the wheel on,
+    /// `RATE_LIMITED` when four limbs are already attached or when a live
+    /// attachment already holds this session.
+    pub fn check_attach(&self, session_id: &str, attachment_id: &str) -> Result<(), RpcError> {
+        let connections = self.connections.lock();
         let attachments = self.attachments.lock();
         let revoked = self.revoked_sessions.lock().contains(session_id);
+        let existing = attachments.get(session_id);
+        let holder_live = existing.is_some_and(|held| connections.contains_key(&held.connection));
         admit_attach(
             session_id,
-            attachments.get(session_id),
+            existing,
+            attachment_id,
             revoked,
+            holder_live,
             attachments.len(),
         )
     }
@@ -816,16 +915,22 @@ impl AgentPlane {
     ///
     /// # Errors
     ///
-    /// [`check_attach`](AgentPlane::check_attach)'s two refusals, and for the
+    /// [`check_attach`](AgentPlane::check_attach)'s three refusals, and for the
     /// same reasons. A refusal leaves the table exactly as it was.
     pub fn attach(&self, session_id: &str, attachment: Attachment) -> Result<(), RpcError> {
         {
+            let connections = self.connections.lock();
             let mut attachments = self.attachments.lock();
             let revoked = self.revoked_sessions.lock().contains(session_id);
+            let existing = attachments.get(session_id);
+            let holder_live =
+                existing.is_some_and(|held| connections.contains_key(&held.connection));
             admit_attach(
                 session_id,
-                attachments.get(session_id),
+                existing,
+                &attachment.attachment_id,
                 revoked,
+                holder_live,
                 attachments.len(),
             )?;
             attachments.insert(session_id.to_string(), attachment);
@@ -836,17 +941,34 @@ impl AgentPlane {
         Ok(())
     }
 
-    /// Let go of one session's attachment.
+    /// Let go of one session's attachment, if this connection holds it.
     ///
-    /// The revocation is NOT forgotten here. Detaching is something the agent
-    /// can do, and a person's "take the wheel" that the agent could cancel by
-    /// letting go and attaching again would not be a revocation at all. The
-    /// session itself clears it when it ends (see [`AgentPlane::forget`]).
-    pub fn detach(&self, session_id: &str) {
-        let removed = self.attachments.lock().remove(session_id);
-        if removed.is_some() {
+    /// Returns whether a row was removed, so the caller emits a `detached`
+    /// event only for a detach that happened.
+    ///
+    /// The revocation is NOT forgotten here, and the `revoked_sessions` memory
+    /// is why: detaching is something the AGENT can do, and a person's "take
+    /// the wheel" that the agent could cancel by letting go and attaching again
+    /// would not be a revocation at all. Only the session ending clears it (see
+    /// [`AgentPlane::forget`]).
+    ///
+    /// # Errors
+    ///
+    /// `NOT_ATTACHED` when a DIFFERENT attachment holds the session. Detaching
+    /// keyed on the session alone let any peer tear down another agent's limb,
+    /// and the person's own shell does not need that power here: taking the
+    /// wheel is a revocation ([`AgentPlane::revoke`]), and closing the session
+    /// is the registry's job.
+    pub fn detach(&self, session_id: &str, attachment_id: &str) -> Result<bool, RpcError> {
+        let removed = {
+            let mut attachments = self.attachments.lock();
+            may_detach(session_id, attachments.get(session_id), attachment_id)?;
+            attachments.remove(session_id).is_some()
+        };
+        if removed {
             self.announce();
         }
+        Ok(removed)
     }
 
     /// Give the plane the registry it counts and the channel it counts onto.
@@ -1738,10 +1860,16 @@ mod tests {
     }
 
     /// What one agent's attachment looks like, driving or merely watching.
+    ///
+    /// [`NO_CONNECTION`] on purpose: these rows belong to no connection, so
+    /// they are stale by the plane's own rule and a later attach may replace
+    /// them. The arbitration tests that need a LIVE holder build one from a
+    /// real [`ConnectionGuard`] instead.
     fn attachment_of(attachment_id: &str, driving: bool) -> Attachment {
         Attachment {
             attachment_id: attachment_id.into(),
             client: "dvv".into(),
+            connection: NO_CONNECTION,
             revoked: false,
             held: driving,
             phase: if driving { "held" } else { "free" }.into(),
@@ -2062,6 +2190,7 @@ mod tests {
                 Attachment {
                     attachment_id: "att_0".into(),
                     client: "test".into(),
+                    connection: NO_CONNECTION,
                     revoked: false,
                     held: true,
                     phase: "held".into(),
@@ -2134,7 +2263,9 @@ mod tests {
             .attach("s1", attachment_of("att_0", true))
             .expect("the first attachment");
         plane.revoke("s1").expect("something was attached");
-        plane.detach("s1");
+        plane
+            .detach("s1", "att_0")
+            .expect("the holder may let go of its own attachment");
 
         let refused = plane
             .attach("s1", attachment_of("att_0", true))
@@ -2176,6 +2307,104 @@ mod tests {
         plane
             .attach("s1", attachment_of("att_1", false))
             .expect("the same session is still the same one limb");
+    }
+
+    /// A live attachment is not displaced by a second one.
+    ///
+    /// The failure this guards: `attach` inserted over the row unconditionally,
+    /// so a second agent silently took a limb from the first, the loser's next
+    /// call was refused with `NOT_ATTACHED`, and nothing told either side that
+    /// arbitration had happened. The rule now is the honest one: a LIVE holder
+    /// keeps its limb, and only a row whose connection is gone may be replaced.
+    #[test]
+    fn a_live_attachment_is_not_displaced_by_a_second_one() {
+        let plane = Arc::new(AgentPlane::default());
+        let first = plane.client_connected("dvv");
+        let mut held = attachment_of("att_0", true);
+        held.connection = first.id();
+        plane.attach("s1", held).expect("the first attachment");
+
+        let second = plane.client_connected("claude");
+        let mut challenger = attachment_of("att_1", false);
+        challenger.connection = second.id();
+        let refused = plane
+            .attach("s1", challenger)
+            .expect_err("a live attachment is not displaced");
+        assert_eq!(refused.tag, Some("RATE_LIMITED"));
+        assert!(
+            refused.message.contains("att_0"),
+            "the refusal names the holder: {}",
+            refused.message
+        );
+        assert!(
+            !refused.message.contains("claude"),
+            "an attachment id is all the loser is told, and never the other party's identity: {}",
+            refused.message
+        );
+        assert_eq!(
+            plane.snapshot()[0]["attachmentId"],
+            "att_0",
+            "the first holder still has the limb"
+        );
+
+        // The same attachment asking again is its own limb, not a challenge.
+        let mut again = attachment_of("att_0", true);
+        again.connection = first.id();
+        plane
+            .attach("s1", again)
+            .expect("a holder may re-attach to what it already holds");
+
+        // The holder's connection ending is what makes the row stale, and a
+        // stale row may be replaced: the alternative is a limb nobody can ever
+        // attach to, which is the same bug with the sign flipped.
+        drop(first);
+        let mut taker = attachment_of("att_1", false);
+        taker.connection = second.id();
+        plane
+            .attach("s1", taker)
+            .expect("the holder's connection is gone, so the row is stale");
+        assert_eq!(plane.snapshot()[0]["attachmentId"], "att_1");
+    }
+
+    /// Only the attachment that holds a session may detach it.
+    ///
+    /// Detach used to key on the session id alone, so any peer holding any
+    /// attachment could tear down another agent's limb. The person's own shell
+    /// does not need that power: taking the wheel is `revoke`, which is a
+    /// different decision and a different event.
+    #[test]
+    fn only_the_holder_can_detach_a_session() {
+        let plane = AgentPlane::default();
+        plane
+            .attach("s1", attachment_of("att_0", true))
+            .expect("the first attachment");
+
+        let refused = plane
+            .detach("s1", "att_1")
+            .expect_err("a peer cannot tear down another agent's limb");
+        assert_eq!(refused.tag, Some("NOT_ATTACHED"));
+        assert!(
+            refused.message.contains("att_0"),
+            "the refusal names who holds it: {}",
+            refused.message
+        );
+        assert_eq!(plane.snapshot().len(), 1, "nothing was removed");
+
+        assert!(
+            plane
+                .detach("s1", "att_0")
+                .expect("the holder may let go of its own limb"),
+            "the row was there and is gone"
+        );
+        assert!(plane.snapshot().is_empty());
+
+        // A cleanup path has to be safe to call twice.
+        assert!(
+            !plane
+                .detach("s1", "att_0")
+                .expect("nothing to detach is an ordinary success"),
+            "there was nothing left to remove"
+        );
     }
 
     /// The whole of "off", and the whole of "on", over a real socket.

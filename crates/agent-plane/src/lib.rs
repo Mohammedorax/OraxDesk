@@ -78,7 +78,7 @@ pub mod registry;
 
 pub use backpressure::{Gaps, SendPolicy};
 pub use config::{PlaneConfig, MAX_DRIVEN_LIMBS};
-pub use dispatch::Settlement;
+pub use dispatch::{Release, ReleaseFault, Settlement};
 pub use error::{PlaneError, Refusal, RefusalReason};
 pub use grant::{Grant, GrantError};
 pub use lowering::{
