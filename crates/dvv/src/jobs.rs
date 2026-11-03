@@ -64,8 +64,7 @@ pub struct Job {
 /// A plane is one process living as long as the app, which is the lifetime a
 /// job's files have anyway. Nothing is persisted: a restart loses the handles,
 /// and the job's own log is still on the far side under the path it reported.
-static JOBS: LazyLock<Mutex<HashMap<String, Job>>> =
-    LazyLock::new(|| Mutex::new(load_from_disk()));
+static JOBS: LazyLock<Mutex<HashMap<String, Job>>> = LazyLock::new(|| Mutex::new(load_from_disk()));
 
 /// Where the table lives, when a caller says so.
 ///
@@ -216,11 +215,7 @@ fn shell_single_quote(value: &str) -> String {
 }
 
 /// Register a job and return the `dvv_run` command that starts it detached.
-pub fn start(
-    platform: Platform,
-    command: &str,
-    limb: &str,
-) -> Result<(Job, String), String> {
+pub fn start(platform: Platform, command: &str, limb: &str) -> Result<(Job, String), String> {
     if command.trim().is_empty() {
         return Err("a job needs a command".into());
     }
@@ -350,7 +345,10 @@ pub fn list() -> Vec<Job> {
         return Vec::new();
     };
     let mut jobs: Vec<Job> = table.values().cloned().collect();
-    jobs.sort_by(|a, b| b.started_at.cmp(&a.started_at));
+    // Newest first. `sort_by_key` with `Reverse` is the same comparison the
+    // closure spelled out, and it is what clippy asks for by name rather than
+    // as a style preference: it cannot read a key twice, so it cannot drift.
+    jobs.sort_by_key(|a| std::cmp::Reverse(a.started_at));
     jobs
 }
 
@@ -388,10 +386,16 @@ mod tests {
         // and both paths really are inside it.
         let encoded = start.rsplit(' ').next().unwrap();
         let bytes = decode_base64(encoded);
+        // `as_chunks` rather than `chunks_exact(2)`: the size is a constant,
+        // so this is the same decode with a shape the compiler can prove, and
+        // a trailing byte would be dropped by neither of them (the payload is
+        // whole UTF-16 units by construction).
         let script = String::from_utf16(
             &bytes
-                .chunks_exact(2)
-                .map(|c| u16::from_le_bytes([c[0], c[1]]))
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .map(|c| u16::from_le_bytes(*c))
                 .collect::<Vec<_>>(),
         )
         .unwrap();

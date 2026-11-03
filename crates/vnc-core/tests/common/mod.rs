@@ -13,6 +13,11 @@ use vnc_core::types::{
 };
 use vnc_core::{Session, SessionHandle};
 
+// A shared prelude: each integration test includes this module and takes the
+// helpers it needs, so a test that happens to use only `Session` would
+// otherwise warn about the rest. The allow is on the re-export rather than the
+// module because `#![allow(dead_code)]` above does not cover imports.
+#[allow(unused_imports)]
 pub use mock_server::*;
 
 /// Nothing in these tests should ever take longer than this; exceeding it is a

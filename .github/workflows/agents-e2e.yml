@@ -35,10 +35,15 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-22.04
+          # 24.04, not 22.04: the support app's Wayland capture binds PipeWire
+          # 1.0 for `spa_video_info_raw`, and 22.04's PipeWire 0.3.48 generates
+          # bindings without the fields libspa reads, so the build failed there
+          # with "no field named flags". The comment on the install step below
+          # has said 1.0 for a while; the runner did not match it.
+          - os: ubuntu-24.04
             label: Linux (deb)
             bundle: deb
-          - os: ubuntu-22.04
+          - os: ubuntu-24.04
             label: Linux (AppImage)
             bundle: appimage
           - os: macos-latest

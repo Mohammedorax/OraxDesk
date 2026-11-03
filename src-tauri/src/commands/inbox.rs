@@ -25,7 +25,6 @@ use crate::state::AppState;
 use tauri::State;
 use vnc_store::InboxEntry;
 
-
 /// Whether the registry said "no such number" rather than "I could not
 /// answer".
 fn is_not_registered(error: &orax_registry::Error) -> bool {
@@ -39,10 +38,7 @@ fn is_not_registered(error: &orax_registry::Error) -> bool {
 
 /// The digits of a nine-digit number, or a message saying what is wrong.
 fn normalize_number(text: &str) -> Result<String, String> {
-    let digits: String = text
-        .chars()
-        .filter(|c| c.is_ascii_digit())
-        .collect();
+    let digits: String = text.chars().filter(|c| c.is_ascii_digit()).collect();
     if digits.len() != 9 {
         return Err("A device number is nine digits".into());
     }
@@ -169,7 +165,7 @@ pub async fn inbox_refresh(state: State<'_, AppState>) -> Result<Vec<InboxEntry>
             store.inbox_set_state(
                 &id,
                 device_id.as_deref(),
-                &state_name,
+                state_name,
                 detail.as_deref(),
                 now,
             )

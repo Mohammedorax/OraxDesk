@@ -1021,7 +1021,10 @@ fn retire_session(
     if let Some(app_state) = app.try_state::<AppState>() {
         app_state.pending_prompts.lock().remove(session_id);
     }
-    let started_at = sessions.lock().get(session_id).map(|entry| entry.started_at);
+    let started_at = sessions
+        .lock()
+        .get(session_id)
+        .map(|entry| entry.started_at);
     // An attachment must not outlive the session it attached to: the id
     // would otherwise still read as agent driven in a pane, and a later
     // session that happened to reuse it would inherit somebody else's
@@ -1769,11 +1772,14 @@ pub async fn disconnect_session(
         Err(tokio::sync::mpsc::error::TrySendError::Full(command)) => {
             // Full, not gone. Give the loop a moment to make room, then stop
             // waiting on it: the entry is reaped either way.
-            match tokio::time::timeout(std::time::Duration::from_millis(250), sender.send(command))
-                .await
+            // A timeout, a closed channel and a refused send all end the same
+            // way here: stop waiting and let the reaping below decide. Only a
+            // delivered command returns early.
+            if let Ok(Ok(())) =
+                tokio::time::timeout(std::time::Duration::from_millis(250), sender.send(command))
+                    .await
             {
-                Ok(Ok(())) => return Ok(()),
-                _ => {}
+                return Ok(());
             }
         }
         // Closed: the command loop is already gone, force-cancel below.

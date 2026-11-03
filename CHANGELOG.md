@@ -10,6 +10,58 @@ to stored data and to the IPC contract between the Rust core and the frontend.
 
 ## [Unreleased]
 
+### Added
+
+* Command execution is now a person's decision, not a property of a
+  connection: the first agent that asks for `exec` gets a prompt in OraxDesk
+  (allow, or not), the answer is remembered, and it can be changed at any time
+  in the AI Agents panel. Until it is allowed, `dvv_run` and `dvv_job` fail
+  with `CONSENT_REQUIRED` and a sentence saying which of the two it is. Viewing,
+  capture, input, files and opening machines are not gated by it. Changing the
+  answer reaches connections that are already open: no reconnect, no restart.
+* An SSH carrier-sharing design review in `docs/REVIEW-SUPPORT.md`: why one
+  carrier per session is the conservative choice, what sharing would take, and
+  the five risks that make it a trade rather than a win.
+
+### Changed
+
+* An agent connection that names no capabilities now receives `view` only. The
+  ceiling is unchanged; `capture`, `files.*`, `exec`, `open` and `close` must be
+  asked for by name, and the bundled `dvv` asks for exactly the set its own
+  tools spend (a test walks the manifest so the request cannot drift).
+* `Wait` is bounded to four per limb and is cancellable, and it no longer
+  occupies the in-flight slot an actuation needs: waiting while a long command
+  runs is the case it exists for.
+* The "agent driving" badge is an observation rather than a claim: `hello`
+  can no longer self-declare a holder or a human takeover, a crashed client
+  stops counting as driving the moment its connection drops, and an expired
+  lease names the phase (`LeaseLapsed`) instead of claiming a person took the
+  wheel.
+
+### Fixed
+
+* One long `exec` no longer freezes every other tool call. The shell serves
+  requests concurrently through a single writer (replies cannot interleave) and
+  the client correlates by the id it minted, so `dvv_status` and `dvv_screen`
+  answer while a forty-minute install runs. On Windows the link is a single
+  tokio I/O pump: a blocking read and a blocking write on the same pipe object
+  deadlock, and `File::try_clone` shares that object.
+* The Windows installer stops a running `dvv` before copying. Windows will not
+  overwrite a running executable, so an upgrade used to leave the OLD sidecar
+  beside the NEW app and exit 0 - a protocol mismatch with no error anywhere.
+* The app icons are RGBA PNGs. Tauri refuses an RGB icon when building the
+  macOS bundle (`icon 32x32.png is not RGBA`), which broke that build before it
+  compiled the app.
+* The macOS menu builder is `mut` only on macOS, where the application menu is
+  inserted and the builder reassigned; the release build had never compiled
+  that path.
+* Security advisories that did have a fix were taken: `rustls-webpki`,
+  `webpki-roots`, `webpki-root-certs`, `crypto-bigint`, `ctutils` and `tokio`.
+  The four `zip` advisories have no fixed release the updater plugin can use;
+  they are accepted in `.cargo/audit.toml` with their reachability written out
+  (a signed archive, verified before extraction), so a genuinely new advisory
+  still fails the audit.
+
 ## [0.31.9] (2026-10-29)
 
 ### Added

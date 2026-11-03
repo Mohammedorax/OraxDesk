@@ -380,7 +380,6 @@ pub(crate) fn stored_language(app: &AppHandle) -> Lang {
         .unwrap_or(Lang::Ar)
 }
 
-
 /// Live handles into the parts of the menu that mirror a session.
 ///
 /// Everything here is `Send + Sync` (tauri's menu wrappers hop to the main
@@ -536,6 +535,14 @@ pub fn apply(app: &AppHandle, lang: Lang) -> tauri::Result<()> {
 
 fn build(app: &AppHandle, lang: Lang) -> tauri::Result<(Menu<Wry>, SessionMenu)> {
     let t = text(lang);
+    // macOS puts its application menu first, and the builder is consumed by
+    // each `item`, so that one platform reassigns it. The `mut` is conditional
+    // rather than allowed away: `unused_mut` is a warning here, and CI builds
+    // with `-D warnings`, so an unconditional `mut` would fail the build whose
+    // whole point is the other platform.
+    #[cfg(target_os = "macos")]
+    let mut builder = MenuBuilder::new(app);
+    #[cfg(not(target_os = "macos"))]
     let builder = MenuBuilder::new(app);
     let mut checks: HashMap<&'static str, CheckMenuItem<Wry>> = HashMap::new();
     let mut gated_items: Vec<MenuItem<Wry>> = Vec::new();
@@ -669,14 +676,8 @@ fn build(app: &AppHandle, lang: Lang) -> tauri::Result<(Menu<Wry>, SessionMenu)>
     // so the submenu is disabled for a VNC session rather than offering
     // choices that would do nothing.
     let resolution = SubmenuBuilder::new(app, t.resolution)
-        .item(&check!(
-            "menu:res:connect",
-            t.res_connect
-        ))
-        .item(&check!(
-            "menu:res:follow",
-            t.res_follow
-        ))
+        .item(&check!("menu:res:connect", t.res_connect))
+        .item(&check!("menu:res:follow", t.res_follow))
         .separator()
         .item(&check!("menu:res:1280x720", "1280 x 720"))
         .item(&check!("menu:res:1366x768", "1366 x 768"))
@@ -691,10 +692,7 @@ fn build(app: &AppHandle, lang: Lang) -> tauri::Result<(Menu<Wry>, SessionMenu)>
     let pointers = SubmenuBuilder::new(app, t.pointers)
         .item(&check!("menu:remote-cursor", t.remote_cursor))
         .separator()
-        .item(&check!(
-            "menu:cursor:standard",
-            t.cursor_standard
-        ))
+        .item(&check!("menu:cursor:standard", t.cursor_standard))
         .item(&check!("menu:cursor:dot", t.cursor_dot))
         .item(&check!("menu:cursor:off", t.cursor_off))
         .build()?;
@@ -763,35 +761,20 @@ fn build(app: &AppHandle, lang: Lang) -> tauri::Result<(Menu<Wry>, SessionMenu)>
     // video playing on the remote needs (measured: a right-click menu went
     // from 2208 ms to 346 ms once Auto dropped the quality by itself).
     let quality = SubmenuBuilder::new(app, t.quality)
-        .item(&check!(
-            "menu:quality:auto",
-            t.q_auto
-        ))
-        .item(&check!(
-            "menu:quality:high",
-            t.q_high
-        ))
+        .item(&check!("menu:quality:auto", t.q_auto))
+        .item(&check!("menu:quality:high", t.q_high))
         .item(&check!("menu:quality:medium", t.q_medium))
-        .item(&check!(
-            "menu:quality:low",
-            t.q_low
-        ))
+        .item(&check!("menu:quality:low", t.q_low))
         .item(&check!("menu:quality:bw", t.q_bw))
         .separator()
         .item(&gray)
         .separator()
-        .item(&check!(
-            "menu:always-refresh",
-            t.always_refresh
-        ))
+        .item(&check!("menu:always-refresh", t.always_refresh))
         .build()?;
     gated_menus.push(quality.clone());
 
     let keyboard = SubmenuBuilder::new(app, t.keyboard)
-        .item(&check!(
-            "menu:passthrough",
-            t.passthrough
-        ))
+        .item(&check!("menu:passthrough", t.passthrough))
         .separator()
         .item(&action!("menu:send-cad", t.send_cad))
         .item(&action!("menu:send-cmd-tab", t.send_cmd_tab))
@@ -1090,8 +1073,7 @@ fn rebuild_displays(
     if !state.layout_known {
         displays.append(&PredefinedMenuItem::separator(app)?)?;
         displays.append(
-            &MenuItemBuilder::with_id("menu:detect-displays", t.detect_displays)
-                .build(app)?,
+            &MenuItemBuilder::with_id("menu:detect-displays", t.detect_displays).build(app)?,
         )?;
     }
     Ok(())

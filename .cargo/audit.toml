@@ -31,6 +31,32 @@ ignore = [
     # See the module comment in crates/vnc-core/src/security/ra2.rs.
     "RUSTSEC-2023-0071",
 
+    # `zip` 4.6.1, reached ONLY through `tauri-plugin-updater`, which unpacks a
+    # downloaded update. All four are fixed in 9.0.0 and nowhere in the 4.x
+    # line, and `tauri-plugin-updater` 2.x - the newest 2.x, and the only line
+    # that runs on this Tauri - requires `zip = "4"`. The 3.0 line that would
+    # take 9.0 is an alpha for Tauri 3. So there is no version to move to yet;
+    # this is an upstream pin, not a choice, and it should be re-checked when
+    # the updater plugin reaches 3.0.
+    #
+    # What makes it acceptable is reachability. The updater verifies the
+    # archive's signature against the public key compiled into the app BEFORE
+    # it extracts anything, so a hostile archive means the signing key is
+    # already compromised - and an attacker holding that key ships a binary,
+    # not an archive trick. Within that boundary:
+    #   0367 - SUID/SGID bits are preserved, which needs an extraction running
+    #          as root; this app installs and runs as the user.
+    #   0368, 0369 - symlink targets escape the destination; the destination is
+    #          a fresh temporary directory the updater created for this one
+    #          bundle.
+    #   0429 - a symlink entry with a huge declared size aborts the process:
+    #          the updater crashes, the app does not, and only on that signed
+    #          archive.
+    "RUSTSEC-2026-0367",
+    "RUSTSEC-2026-0368",
+    "RUSTSEC-2026-0369",
+    "RUSTSEC-2026-0429",
+
     # --- Unmaintained transitive dependencies --------------------------------
     # None of these are selected by this project.
 

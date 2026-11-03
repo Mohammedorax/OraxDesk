@@ -546,9 +546,6 @@ struct Link {
     next_id: AtomicU64,
     /// Calls waiting for their own reply, by the id this client minted.
     pending: Mutex<HashMap<u64, std::sync::mpsc::Sender<Result<serde_json::Value, ToolError>>>>,
-    /// The attachment id the plane minted for this connection. Held so a
-    /// refusal can name it, which is what makes an audit line joinable.
-    attachment_id: String,
     /// Which incarnation of the connection this is. A reader that saw its
     /// stream end may retire the handle, but only if the global still holds
     /// THIS generation: a late reader must not tear down a fresh link.
@@ -864,24 +861,20 @@ where
                 return;
             }
         };
-        let hello = match handshake(&mut stream).await {
-            Ok(hello) => hello,
-            Err(e) => {
-                let _ = ready.send(Err(e));
-                return;
-            }
-        };
+        // The reply itself is not kept: the attachment id it carries is the
+        // shell's identifier, and every verb that needs it names the limb
+        // rather than the attachment. The handshake still has to happen and
+        // still has to succeed before a link exists.
+        if let Err(e) = handshake(&mut stream).await {
+            let _ = ready.send(Err(e));
+            return;
+        }
         let (frames, outbox) = tokio::sync::mpsc::unbounded_channel();
         let link = Arc::new(Link {
             frames,
             // `hello` used id 1.
             next_id: AtomicU64::new(1),
             pending: Mutex::new(HashMap::new()),
-            attachment_id: hello
-                .get("attachmentId")
-                .and_then(serde_json::Value::as_str)
-                .unwrap_or_default()
-                .to_string(),
             generation: NEXT_GENERATION.fetch_add(1, Ordering::Relaxed),
             dead: AtomicBool::new(false),
             stop: tokio::sync::Notify::new(),
@@ -955,11 +948,7 @@ async fn handshake(stream: &mut Stream) -> Result<serde_json::Value, ToolError> 
 const HELLO_ID: u64 = 1;
 
 /// One request's frame, or the sentence saying it could not be encoded.
-fn encode_request(
-    id: u64,
-    method: &str,
-    params: serde_json::Value,
-) -> Result<Vec<u8>, ToolError> {
+fn encode_request(id: u64, method: &str, params: serde_json::Value) -> Result<Vec<u8>, ToolError> {
     let body = serde_json::to_vec(&serde_json::json!({
         "jsonrpc": "2.0", "id": id, "method": method, "params": params,
     }))
@@ -1171,10 +1160,7 @@ where
                 let _ = waiter.send(answer_of(message));
             }
             None => {
-                tracing::debug!(
-                    id,
-                    "a reply arrived for no call this client is waiting on"
-                );
+                tracing::debug!(id, "a reply arrived for no call this client is waiting on");
             }
         }
     }
@@ -4871,7 +4857,13 @@ mod tests {
         assert_eq!(held["phase"], "held");
         assert_eq!(held["holderLabel"], "dvv");
 
-        let released = lease_report("s1", false, agent_lease::LeasePhase::Unheld, None, Vec::new());
+        let released = lease_report(
+            "s1",
+            false,
+            agent_lease::LeasePhase::Unheld,
+            None,
+            Vec::new(),
+        );
         assert_eq!(released["held"], false, "a released lease is not driving");
         assert_eq!(released["phase"], "unheld");
     }
@@ -4951,7 +4943,10 @@ mod tests {
             assert_eq!(header[0], MSG_JSONRPC, "this client sends one lane");
             let len = u32::from_le_bytes([header[4], header[5], header[6], header[7]]) as usize;
             let mut payload = vec![0u8; len];
-            server.read_exact(&mut payload).await.expect("a whole request");
+            server
+                .read_exact(&mut payload)
+                .await
+                .expect("a whole request");
             serde_json::from_slice(&payload).expect("a request is JSON")
         }
 
@@ -4965,17 +4960,17 @@ mod tests {
             let mut framed = vec![MSG_JSONRPC, 0, 0, 0];
             framed.extend_from_slice(&(body.len() as u32).to_le_bytes());
             framed.extend_from_slice(&body);
-            server.write_all(&framed).await.expect("the client is there");
+            server
+                .write_all(&framed)
+                .await
+                .expect("the client is there");
             server.flush().await.expect("flushed");
         }
 
         /// A status call answers while an exec is outstanding.
         #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
         async fn a_status_call_answers_while_an_exec_is_outstanding() {
-            let name = format!(
-                r"\\.\pipe\dvv-pipeline-both-{}",
-                std::process::id()
-            );
+            let name = format!(r"\\.\pipe\dvv-pipeline-both-{}", std::process::id());
             let (link, mut server) = pipe_link(name).await;
             let release = Arc::new(tokio::sync::Notify::new());
             let stand_in = tokio::spawn({
@@ -5039,10 +5034,7 @@ mod tests {
         /// Killing the plane mid-exec fails the call instead of hanging it.
         #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
         async fn a_dead_plane_fails_an_outstanding_exec_instead_of_hanging() {
-            let name = format!(
-                r"\\.\pipe\dvv-pipeline-dead-{}",
-                std::process::id()
-            );
+            let name = format!(r"\\.\pipe\dvv-pipeline-dead-{}", std::process::id());
             let (link, mut server) = pipe_link(name).await;
             let drop_server = tokio::spawn(async move {
                 // Read the exec and drop the only server handle without

@@ -112,3 +112,28 @@ After every install, compare the two hashes rather than trusting the exit code:
 ```
 
 A mismatch means something held the file: check `Get-Process dvv` and reinstall.
+
+## Continuous integration
+
+Three workflows matter before a release, and two of them have a platform
+constraint that is not obvious from their names.
+
+- `CI` runs on every push: rustfmt, clippy with `-D warnings`, the tests for
+  every crate and for the app, the frontend typecheck/tests/build, the Worker
+  tests and `cargo audit`. It is the gate, so it is the first thing to look at
+  when a push looks fine locally.
+- `linux` builds the deb, rpm and AppImage. It must run on **ubuntu-24.04 or
+  newer**: the app links `boundary-platform`, whose Linux capture binds
+  PipeWire at build time, and `spa_video_info_raw` gained the fields `libspa`
+  reads in PipeWire 1.2. Ubuntu 22.04 ships 0.3.48 and stops with "no field
+  named flags in spa_video_info_raw". Fedora, the target, ships newer.
+  Start it by hand with `gh workflow run linux`; without
+  `TAURI_SIGNING_PRIVATE_KEY` it builds without updater artifacts rather than
+  failing, and says so in the log.
+- `Agents end to end` builds a real bundle, installs the agents and drives a
+  machine. It has the same runner rule, for the same reason.
+
+`cargo audit` reads `.cargo/audit.toml`. An accepted advisory needs a paragraph
+saying why it is not reachable, not just an id: the zip entries are the model,
+because "the archive is signature-checked before it is unpacked" is a claim
+someone can check, while "we accept it" is not.

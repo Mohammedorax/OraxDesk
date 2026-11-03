@@ -7,6 +7,15 @@
 # The rpm is what Fedora installs. It is built on Ubuntu because `rpmbuild` is
 # a package away there and the resulting rpm is not tied to the build distro:
 # it names its dependencies (webkit2gtk4.1, gtk3) and Fedora resolves them.
+#
+# RUNNER, AND WHY IT IS 24.04. The app links `boundary-platform`, which uses
+# `xcap` for screen capture, which on Linux binds PipeWire through `libspa-sys`
+# at build time. Those bindings are generated from the system headers, and
+# `spa_video_info_raw` gained `flags` and `modifier` in PipeWire 1.2. Ubuntu
+# 22.04 ships 0.3.48, whose generated struct has neither, so the build stopped
+# with "no field named flags in spa_video_info_raw". 24.04 ships 1.0.5 and
+# works; Fedora, which is the target, ships newer still. Keep this runner at
+# 24.04 or newer, or the job fails before it bundles anything.
 
 name: linux
 
@@ -18,7 +27,7 @@ on:
 
 jobs:
   bundle:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
 
@@ -35,7 +44,10 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y \
             libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev \
-            librsvg2-dev patchelf rpm
+            librsvg2-dev patchelf rpm \
+            libxcb1-dev libxcb-randr0-dev libxkbcommon-dev libxkbcommon-x11-dev \
+            libwayland-dev libpipewire-0.3-dev libegl1-mesa-dev libgbm-dev \
+            clang libclang-dev
 
       - name: Frontend
         run: npm ci --prefix ui && npm run build --prefix ui
@@ -43,9 +55,28 @@ jobs:
       - name: Stage the sidecar
         run: node scripts/stage-sidecar.mjs
 
+      # `cargo tauri` is not part of the Rust toolchain. Without this the job
+      # stopped at "no such command: tauri" before it compiled anything; the
+      # npm CLI is the same one `tauri-action` uses in the release workflow.
       - name: Bundle
+        env:
+          # The updater artifacts are signed with the same key the release
+          # workflow uses. A fork or a run without the secret still produces
+          # installable packages, because an unsigned bundle is useful and a
+          # build that refuses to run is not: the override below turns the
+          # updater artifact off ONLY when there is no key to sign it with.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
-          cargo tauri build --bundles deb,rpm,appimage
+          set -euo pipefail
+          npx --yes @tauri-apps/cli@^2 --version
+          if [ -n "${TAURI_SIGNING_PRIVATE_KEY:-}" ]; then
+            npx --yes @tauri-apps/cli@^2 build --bundles deb,rpm,appimage
+          else
+            echo "No signing key: building without updater artifacts." 
+            npx --yes @tauri-apps/cli@^2 build --bundles deb,rpm,appimage \
+              --config '{"bundle":{"createUpdaterArtifacts":false}}'
+          fi
 
       - uses: actions/upload-artifact@v4
         with:
