@@ -51,6 +51,28 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
+      # `src-tauri/build.rs` runs `tauri-build`, and `bundle.externalBin` makes
+      # that step copy `binaries/dvv-<triple>` into the app as a resource. The
+      # file is produced by `scripts/stage-sidecar.mjs`, which the app's own
+      # `beforeBuildCommand` calls - but `cargo clippy -p deskvncviewer` and
+      # `cargo test` never run that hook, so on a clean checkout the app's build
+      # script panicked with "resource path binaries/dvv-<triple> doesn't
+      # exist". Nothing on this machine could show it: the file had been staged
+      # by an earlier bundle and `src-tauri/binaries/` is ignored by git.
+      #
+      # A debug build is enough here. The sidecar only has to exist for the
+      # compile; CI builds no installer from it.
+      - name: Stage a sidecar (debug is enough to compile the app)
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo build -p dvv
+          triple=$(rustc -vV | sed -n 's/^host: //p')
+          ext=""
+          case "$triple" in *windows*) ext=".exe";; esac
+          mkdir -p src-tauri/binaries
+          cp "target/debug/dvv$ext" "src-tauri/binaries/dvv-$triple$ext"
+
       - name: Format
         run: cargo fmt --all -- --check
 
