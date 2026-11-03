@@ -1034,9 +1034,25 @@ async fn always_refresh_keeps_requesting_full_updates() {
 
     // ...and switching it off must stop them, or the bandwidth cost would be
     // permanent for anyone who ever tried the switch.
+    //
+    // QUIET is measured, not guessed. A fixed settle used to be 1.5 s, and on
+    // macOS one request that had already been scheduled when the command
+    // landed arrived inside the measurement window: the client had stopped,
+    // the runner had not. So the loop re-baselines until a whole second passes
+    // with nothing new, and only then does it measure. That is not a weaker
+    // assertion, it is a sharper one: a client that ignored the switch keeps
+    // producing a request per tick, so the six-second loop cannot settle and
+    // the three-second window below still sees them and still fails.
     send(&handle, ClientCommand::SetAlwaysRefresh(false)).await;
-    tokio::time::sleep(Duration::from_millis(1500)).await;
-    let quiet_from = server.messages().len();
+    let mut quiet_from = server.messages().len();
+    for _ in 0..6 {
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        let now = server.messages().len();
+        if now == quiet_from {
+            break;
+        }
+        quiet_from = now;
+    }
     tokio::time::sleep(Duration::from_secs(3)).await;
     let after: usize = server.messages()[quiet_from..]
         .iter()
