@@ -75,7 +75,8 @@ use limb_core::observation::Timestamp;
 use limb_core::{ProtocolKind, Rect};
 use remote_core::state::SessionState;
 use serde::Serialize;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use tokio::sync::broadcast;
 
@@ -525,16 +526,47 @@ const MSG_JSONRPC: u8 = 0;
 const MAX_PAYLOAD: u32 = 8 * 1024 * 1024;
 
 /// The one connection, and what it costs to say it is not there.
+///
+/// A handle rather than the connection itself: a call clones the [`Arc`], drops
+/// the global lock and waits on a channel, so a long `exec` no longer owns the
+/// process's only link while it runs. Three things make that safe:
+///
+/// * [`Link::frames`] is the only door to the wire. One task writes the frames
+///   in order, so replies cannot interleave, and a caller never touches the
+///   stream another call is reading.
+/// * [`Link::pending`] is where a call waits, keyed by the id THIS client
+///   chose. The shell echoes that id and never trusts it for authority.
+/// * the I/O thread ([`pump`]) is the only reader, so a reply for one call is
+///   never mistaken for the answer to another and thrown away.
 struct Link {
-    stream: Stream,
-    next_id: u64,
+    /// Frames for the one task that owns the write half. A call never touches
+    /// the stream itself, so two replies can never interleave and a caller
+    /// never waits for another caller's read.
+    frames: tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
+    next_id: AtomicU64,
+    /// Calls waiting for their own reply, by the id this client minted.
+    pending: Mutex<HashMap<u64, std::sync::mpsc::Sender<Result<serde_json::Value, ToolError>>>>,
     /// The attachment id the plane minted for this connection. Held so a
     /// refusal can name it, which is what makes an audit line joinable.
     attachment_id: String,
+    /// Which incarnation of the connection this is. A reader that saw its
+    /// stream end may retire the handle, but only if the global still holds
+    /// THIS generation: a late reader must not tear down a fresh link.
+    generation: u64,
+    /// Set once the connection is known to be gone. Calls stop using it
+    /// immediately; the I/O thread finishes the funeral when it next wakes.
+    dead: AtomicBool,
+    /// How a call asks the I/O thread to end the stream. The I/O thread is the
+    /// only thing that may close it, because it is also the only thing reading
+    /// it: closing a handle under a pending read is the wedge this avoids.
+    stop: tokio::sync::Notify,
 }
 
-fn link() -> &'static Mutex<Option<Link>> {
-    static LINK: std::sync::OnceLock<Mutex<Option<Link>>> = std::sync::OnceLock::new();
+/// The next [`Link`] generation. One process, one counter.
+static NEXT_GENERATION: AtomicU64 = AtomicU64::new(1);
+
+fn link() -> &'static Mutex<Option<Arc<Link>>> {
+    static LINK: std::sync::OnceLock<Mutex<Option<Arc<Link>>>> = std::sync::OnceLock::new();
     LINK.get_or_init(|| Mutex::new(None))
 }
 
@@ -571,7 +603,10 @@ pub fn socket_present() -> bool {
 /// holds is proof enough and costs nothing.
 pub fn alive() -> bool {
     let mut held = lock(link());
-    if held.is_some() {
+    if held
+        .as_ref()
+        .is_some_and(|link| !link.dead.load(Ordering::SeqCst))
+    {
         return true;
     }
     if !socket_present() {
@@ -620,21 +655,48 @@ fn reachable() -> bool {
 }
 
 /// The connection to the plane: a unix socket, or on Windows the named pipe
-/// `04 §2.1` specifies, opened as a blocking file. Both are a byte stream read
-/// and written one request at a time, which is all [`request`] asks of it.
+/// `04 §2.1` specifies.
+///
+/// **Asynchronous on both, and that is not a preference.** On Windows a
+/// synchronous read on a pipe holds the file object's lock, so a background
+/// reader blocked in `ReadFile` makes every simultaneous `WriteFile` wait: a
+/// long `exec` waiting for its reply would wedge the next call's request on
+/// the SAME handle. Overlapped I/O is the only way to read and write one pipe
+/// at once, which is exactly what this client now has to do. Keeping unix on
+/// the same path costs one small runtime thread per link and buys one
+/// implementation instead of two.
 #[cfg(unix)]
-type Stream = std::os::unix::net::UnixStream;
+type Stream = tokio::net::UnixStream;
 #[cfg(windows)]
-type Stream = std::fs::File;
+type Stream = tokio::net::windows::named_pipe::NamedPipeClient;
 
+/// Open the stream. Called inside the link's own runtime, because both
+/// constructors have to register the handle with a reactor.
 #[cfg(unix)]
 fn open_stream(path: &str) -> std::io::Result<Stream> {
-    std::os::unix::net::UnixStream::connect(path)
+    use std::os::unix::net::UnixStream;
+    let stream = UnixStream::connect(path)?;
+    stream.set_nonblocking(true)?;
+    Stream::from_std(stream)
 }
 
 #[cfg(windows)]
 fn open_stream(path: &str) -> std::io::Result<Stream> {
-    local_pipe::connect(path)
+    use std::time::{Duration, Instant};
+
+    // `ERROR_PIPE_BUSY` is the gap between one accepted connection and the
+    // next instance being created. `local_pipe::connect` waits it out for the
+    // blocking callers; this is the same patience for the async one.
+    const ERROR_PIPE_BUSY: i32 = 231;
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        match tokio::net::windows::named_pipe::ClientOptions::new().open(path) {
+            Err(e) if e.raw_os_error() == Some(ERROR_PIPE_BUSY) && Instant::now() < deadline => {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            other => return other,
+        }
+    }
 }
 
 /// One request, one reply, on the one connection.
@@ -642,29 +704,32 @@ fn open_stream(path: &str) -> std::io::Result<Stream> {
 /// Reconnects and says hello when there is no link, and drops the link on any
 /// I/O failure so the next call reconnects rather than talking into a socket
 /// the application has closed.
+///
+/// The global lock is held only long enough to CLONE the handle, never across
+/// the round trip. That is the difference between a long `exec` blocking every
+/// tool in the process and it blocking nothing but its own caller: the I/O
+/// thread delivers each reply to the waiter registered under its own id.
 fn call(method: &str, params: serde_json::Value) -> Result<serde_json::Value, ToolError> {
-    let mut guard = lock(link());
-    if guard.is_none() {
-        *guard = Some(connect()?);
-    }
-    let outcome = {
-        let held = guard.as_mut().expect("just connected");
-        request(held, method, params)
-    };
-    match outcome {
-        Ok(value) => Ok(value),
-        Err(error) => {
-            // A transport failure invalidates the connection, and a
-            // REFUSAL does not. Telling them apart here is what keeps a
-            // policy refusal from silently costing the attachment its
-            // identity, which would look to the shell like an agent that
-            // detached and came back.
-            if error.code == codes::LIMB_GONE {
-                *guard = None;
+    let held = {
+        let mut held = lock(link());
+        match held
+            .as_ref()
+            .filter(|link| !link.dead.load(Ordering::SeqCst))
+            .cloned()
+        {
+            Some(link) => link,
+            None => {
+                // Replace rather than drop in place. The I/O thread holds its
+                // own `Arc` to this link, so the stream is only ever ended by
+                // that thread.
+                *held = None;
+                let fresh = connect()?;
+                *held = Some(fresh.clone());
+                fresh
             }
-            Err(error)
         }
-    }
+    };
+    held.request(method, params)
 }
 
 /// The capabilities this client asks the shell for, by name.
@@ -728,24 +793,125 @@ const ASKED_CAPABILITIES: &[&str] = &[
     "exec",
 ];
 
-fn connect() -> Result<Link, ToolError> {
+fn connect() -> Result<Arc<Link>, ToolError> {
     use std::io::ErrorKind;
 
     let path = crate::cli::socket_path();
-    let stream = open_stream(&path).map_err(|e| match e.kind() {
-        ErrorKind::NotFound | ErrorKind::ConnectionRefused => no_socket(),
-        _ => ToolError::new(
-            codes::LIMB_GONE,
-            format!("the agent plane socket at {path} could not be reached: {e}"),
-        ),
-    })?;
-    let mut link = Link {
-        stream,
-        next_id: 0,
-        attachment_id: String::new(),
+    spawn_link(move || {
+        open_stream(&path).map_err(|e| match e.kind() {
+            ErrorKind::NotFound | ErrorKind::ConnectionRefused => no_socket(),
+            _ => ToolError::new(
+                codes::LIMB_GONE,
+                format!("the agent plane socket at {path} could not be reached: {e}"),
+            ),
+        })
+    })
+}
+
+/// Start the one I/O thread and wait for it to say hello.
+///
+/// The greeting happens on that thread and BEFORE the link is handed out, so a
+/// refusal leaves nothing behind: no reader parked on a stream nobody will
+/// answer on, and no attachment minted for a client that is about to give up.
+/// It also fixes the link's id space: `hello` is id 1 and every call after it
+/// mints its own.
+///
+/// `open` is a closure so the test can hand over the client end of an endpoint
+/// it already stands a server behind, without a second way to build a [`Link`].
+fn spawn_link<F>(open: F) -> Result<Arc<Link>, ToolError>
+where
+    F: FnOnce() -> Result<Stream, ToolError> + Send + 'static,
+{
+    let (ready, greeting) = std::sync::mpsc::channel();
+    std::thread::Builder::new()
+        .name("dvv-plane-io".into())
+        .spawn(move || pump(open, ready))
+        .map_err(transport)?;
+    match greeting.recv() {
+        Ok(result) => result,
+        Err(_) => Err(transport(std::io::Error::other(
+            "the agent plane I/O thread stopped before saying hello",
+        ))),
+    }
+}
+
+/// The link's whole I/O life, on one thread with one small runtime.
+///
+/// One future reads and one writes, and they are not the same future: that is
+/// what lets a status be written and answered while another call's reply is
+/// still on its way. On Windows this is also the only shape that works at all:
+/// a synchronous read on a pipe holds the file object's lock against every
+/// write on the same handle (see [`Stream`]).
+fn pump<F>(open: F, ready: std::sync::mpsc::Sender<Result<Arc<Link>, ToolError>>)
+where
+    F: FnOnce() -> Result<Stream, ToolError>,
+{
+    let runtime = match tokio::runtime::Builder::new_current_thread()
+        .enable_io()
+        .build()
+    {
+        Ok(runtime) => runtime,
+        Err(e) => {
+            let _ = ready.send(Err(transport(e)));
+            return;
+        }
     };
-    let hello = request(
-        &mut link,
+    runtime.block_on(async move {
+        let mut stream = match open() {
+            Ok(stream) => stream,
+            Err(e) => {
+                let _ = ready.send(Err(e));
+                return;
+            }
+        };
+        let hello = match handshake(&mut stream).await {
+            Ok(hello) => hello,
+            Err(e) => {
+                let _ = ready.send(Err(e));
+                return;
+            }
+        };
+        let (frames, outbox) = tokio::sync::mpsc::unbounded_channel();
+        let link = Arc::new(Link {
+            frames,
+            // `hello` used id 1.
+            next_id: AtomicU64::new(1),
+            pending: Mutex::new(HashMap::new()),
+            attachment_id: hello
+                .get("attachmentId")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default()
+                .to_string(),
+            generation: NEXT_GENERATION.fetch_add(1, Ordering::Relaxed),
+            dead: AtomicBool::new(false),
+            stop: tokio::sync::Notify::new(),
+        });
+        if ready.send(Ok(Arc::clone(&link))).is_err() {
+            // Nobody is waiting for this link any more, so do not leave a
+            // connection running that no call can reach.
+            return;
+        }
+        let (reader, writer) = tokio::io::split(stream);
+        let why = tokio::select! {
+            // A call that learned the connection is gone asks this thread to
+            // close it, rather than closing the handle itself under this
+            // thread's pending read.
+            _ = link.stop.notified() => transport(std::io::Error::other(
+                "the connection was abandoned because a call learned it was gone",
+            )),
+            why = read_replies(Arc::clone(&link), reader) => why,
+            why = write_frames(writer, outbox) => why,
+        };
+        link.retire(why);
+    });
+}
+
+/// The greeting, on the raw stream, before anything is shared.
+async fn handshake(stream: &mut Stream) -> Result<serde_json::Value, ToolError> {
+    use tokio::io::AsyncWriteExt;
+
+    let framed = encode_request(
+        HELLO_ID,
         "hello",
         serde_json::json!({
             "protocol": DVVP,
@@ -757,51 +923,15 @@ fn connect() -> Result<Link, ToolError> {
             "capabilities": ASKED_CAPABILITIES,
         }),
     )?;
-    link.attachment_id = hello
-        .get("attachmentId")
-        .and_then(serde_json::Value::as_str)
-        .unwrap_or_default()
-        .to_string();
-    Ok(link)
-}
-
-/// Write one framed request and read the reply that matches its id.
-fn request(
-    link: &mut Link,
-    method: &str,
-    params: serde_json::Value,
-) -> Result<serde_json::Value, ToolError> {
-    use std::io::{Read, Write};
-
-    link.next_id += 1;
-    let id = link.next_id;
-    let body = serde_json::to_vec(&serde_json::json!({
-        "jsonrpc": "2.0", "id": id, "method": method, "params": params,
-    }))
-    .map_err(|e| ToolError::bad_request(format!("that request could not be encoded: {e}")))?;
-
-    let mut framed = Vec::with_capacity(8 + body.len());
-    framed.push(MSG_JSONRPC);
-    // `flags`, then `reserved`, both zero and both ignored on receipt.
-    framed.push(0);
-    framed.extend_from_slice(&0u16.to_le_bytes());
-    framed.extend_from_slice(&(body.len() as u32).to_le_bytes());
-    framed.extend_from_slice(&body);
-    link.stream.write_all(&framed).map_err(transport)?;
-    link.stream.flush().map_err(transport)?;
-
+    stream.write_all(&framed).await.map_err(transport)?;
+    stream.flush().await.map_err(transport)?;
     loop {
-        let mut header = [0u8; 8];
-        link.stream.read_exact(&mut header).map_err(transport)?;
-        let msg_type = header[0];
-        let len = u32::from_le_bytes([header[4], header[5], header[6], header[7]]);
-        if len > MAX_PAYLOAD {
-            return Err(transport(std::io::Error::other(format!(
-                "the plane sent {len} bytes, which is above this client's cap"
-            ))));
-        }
-        let mut payload = vec![0u8; len as usize];
-        link.stream.read_exact(&mut payload).map_err(transport)?;
+        let Some((msg_type, payload)) = read_frame(stream).await.map_err(transport)? else {
+            return Err(transport(std::io::Error::new(
+                std::io::ErrorKind::UnexpectedEof,
+                "the plane closed the connection while saying hello",
+            )));
+        };
         // An unknown `msg_type` is ignored rather than refused, which is what
         // lets the plane grow the pixel lane without this client changing.
         if msg_type != MSG_JSONRPC {
@@ -812,18 +942,264 @@ fn request(
                 "the plane sent something that is not JSON: {e}"
             )))
         })?;
-        // A notification carries no id and is not this call's answer.
-        if message.get("id").and_then(serde_json::Value::as_u64) != Some(id) {
+        // Notifications and any other lane carry no id and are not this
+        // exchange's answer.
+        if message.get("id").and_then(serde_json::Value::as_u64) != Some(HELLO_ID) {
             continue;
         }
-        if let Some(error) = message.get("error") {
-            return Err(from_rpc_error(error));
-        }
-        return Ok(message
-            .get("result")
-            .cloned()
-            .unwrap_or(serde_json::Value::Null));
+        return answer_of(message);
     }
+}
+
+/// The id the greeting uses. Everything after it is minted by [`Link::next_id`].
+const HELLO_ID: u64 = 1;
+
+/// One request's frame, or the sentence saying it could not be encoded.
+fn encode_request(
+    id: u64,
+    method: &str,
+    params: serde_json::Value,
+) -> Result<Vec<u8>, ToolError> {
+    let body = serde_json::to_vec(&serde_json::json!({
+        "jsonrpc": "2.0", "id": id, "method": method, "params": params,
+    }))
+    .map_err(|e| ToolError::bad_request(format!("that request could not be encoded: {e}")))?;
+    let mut framed = Vec::with_capacity(8 + body.len());
+    framed.push(MSG_JSONRPC);
+    // `flags`, then `reserved`, both zero and both ignored on receipt.
+    framed.push(0);
+    framed.extend_from_slice(&0u16.to_le_bytes());
+    framed.extend_from_slice(&(body.len() as u32).to_le_bytes());
+    framed.extend_from_slice(&body);
+    Ok(framed)
+}
+
+/// One frame, or `None` when the stream ended cleanly at a frame boundary.
+async fn read_frame<R>(reader: &mut R) -> std::io::Result<Option<(u8, Vec<u8>)>>
+where
+    R: tokio::io::AsyncRead + Unpin,
+{
+    use tokio::io::AsyncReadExt;
+
+    async fn fill<R>(reader: &mut R, buffer: &mut [u8]) -> std::io::Result<usize>
+    where
+        R: tokio::io::AsyncRead + Unpin,
+    {
+        let mut got = 0;
+        while got < buffer.len() {
+            match reader.read(&mut buffer[got..]).await {
+                // EOF exactly at a frame boundary is the connection ending,
+                // not a truncated frame.
+                Ok(0) if got == 0 => return Ok(0),
+                Ok(0) => {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::UnexpectedEof,
+                        "the plane closed the connection in the middle of a frame",
+                    ));
+                }
+                Ok(n) => got += n,
+                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+                Err(e) => return Err(e),
+            }
+        }
+        Ok(got)
+    }
+
+    let mut header = [0u8; 8];
+    if fill(reader, &mut header).await? == 0 {
+        return Ok(None);
+    }
+    let msg_type = header[0];
+    let len = u32::from_le_bytes([header[4], header[5], header[6], header[7]]);
+    if len > MAX_PAYLOAD {
+        return Err(std::io::Error::other(format!(
+            "the plane sent {len} bytes, which is above this client's cap"
+        )));
+    }
+    let mut payload = vec![0u8; len as usize];
+    fill(reader, &mut payload).await?;
+    Ok(Some((msg_type, payload)))
+}
+
+/// Which of a matched message's two shapes this is.
+fn answer_of(message: serde_json::Value) -> Result<serde_json::Value, ToolError> {
+    if let Some(error) = message.get("error") {
+        return Err(from_rpc_error(error));
+    }
+    Ok(message
+        .get("result")
+        .cloned()
+        .unwrap_or(serde_json::Value::Null))
+}
+
+impl Link {
+    /// Write one request and wait for the reply that carries its id.
+    ///
+    /// The waiter is registered BEFORE the frame is queued, because the reply
+    /// can arrive before this call has finished handing the frame over; a
+    /// waiter registered after would miss it, the reader would drop it as
+    /// unknown, and the call would wait for ever.
+    fn request(
+        &self,
+        method: &str,
+        params: serde_json::Value,
+    ) -> Result<serde_json::Value, ToolError> {
+        let id = self.next_id.fetch_add(1, Ordering::Relaxed) + 1;
+        let framed = encode_request(id, method, params)?;
+        let (sender, waiting) = std::sync::mpsc::channel();
+        lock(&self.pending).insert(id, sender);
+        if self.frames.send(framed).is_err() {
+            // Take our own slot back, so the failure is reported from here
+            // rather than racing the reader's drain for the same channel.
+            let _ = lock(&self.pending).remove(&id);
+            let error = transport(std::io::Error::new(
+                std::io::ErrorKind::BrokenPipe,
+                "the plane's I/O thread has stopped",
+            ));
+            self.fail(error.clone());
+            return Err(error);
+        }
+        match waiting.recv() {
+            Ok(answer) => {
+                if answer
+                    .as_ref()
+                    .is_err_and(|error| error.code == codes::LIMB_GONE)
+                {
+                    // A transport failure invalidates the connection, and a
+                    // REFUSAL does not. Marked rather than closed: the I/O
+                    // thread owns the stream and is the only thing allowed to
+                    // end it, so this cannot pull a handle out from under a
+                    // read. The next call reconnects; the I/O thread retires
+                    // this generation when it next wakes.
+                    self.mark_dead();
+                }
+                answer
+            }
+            // Every waiter is sent its answer before the I/O thread drops the
+            // senders, so a closed channel here is a link that ended between
+            // those two steps.
+            Err(_) => {
+                self.mark_dead();
+                Err(transport(std::io::Error::other(
+                    "the plane stopped before the reply arrived",
+                )))
+            }
+        }
+    }
+
+    /// The connection is gone: stop using it, and wake everyone waiting.
+    fn fail(&self, why: ToolError) {
+        self.mark_dead();
+        let waiters: Vec<_> = lock(&self.pending)
+            .drain()
+            .map(|(_, sender)| sender)
+            .collect();
+        for sender in waiters {
+            let _ = sender.send(Err(why.clone()));
+        }
+    }
+
+    fn mark_dead(&self) {
+        self.dead.store(true, Ordering::SeqCst);
+        // The I/O thread owns the stream, so it is the one that ends it. This
+        // is a wakeup and not a close: a handle closed from here could be
+        // closed underneath that thread's pending read.
+        self.stop.notify_one();
+    }
+
+    /// The I/O thread's way out: fail what it can, then remove this
+    /// incarnation from the global, but only if it is still the one there.
+    ///
+    /// A new connection may already have replaced this handle. Taking the
+    /// global unconditionally would throw that one away and leave the next
+    /// call to reconnect for no reason.
+    fn retire(&self, why: ToolError) {
+        self.fail(why);
+        let mut held = lock(link());
+        if held
+            .as_ref()
+            .is_some_and(|link| link.generation == self.generation)
+        {
+            held.take();
+        }
+    }
+}
+
+/// The one reader: parse a frame, find its id, wake that caller.
+///
+/// Unknown ids are logged and dropped rather than silently discarded. A reply
+/// nobody is waiting for is usually a call that gave up on the way out, and
+/// naming it is what makes that visible instead of looking like a lost
+/// message.
+async fn read_replies<R>(link: Arc<Link>, mut reader: R) -> ToolError
+where
+    R: tokio::io::AsyncRead + Unpin,
+{
+    loop {
+        let (msg_type, payload) = match read_frame(&mut reader).await {
+            Ok(Some(frame)) => frame,
+            Ok(None) => {
+                return transport(std::io::Error::new(
+                    std::io::ErrorKind::UnexpectedEof,
+                    "the plane closed the connection",
+                ));
+            }
+            Err(e) => return transport(e),
+        };
+        // An unknown `msg_type` is ignored rather than refused, which is what
+        // lets the plane grow the pixel lane without this client changing.
+        if msg_type != MSG_JSONRPC {
+            continue;
+        }
+        let message: serde_json::Value = match serde_json::from_slice(&payload) {
+            Ok(message) => message,
+            Err(e) => {
+                return transport(std::io::Error::other(format!(
+                    "the plane sent something that is not JSON: {e}"
+                )));
+            }
+        };
+        // A notification carries no id and is not any call's answer.
+        let Some(id) = message.get("id").and_then(serde_json::Value::as_u64) else {
+            tracing::debug!(
+                "a frame with no id arrived on the agent plane; no call is waiting for it"
+            );
+            continue;
+        };
+        match lock(&link.pending).remove(&id) {
+            Some(waiter) => {
+                let _ = waiter.send(answer_of(message));
+            }
+            None => {
+                tracing::debug!(
+                    id,
+                    "a reply arrived for no call this client is waiting on"
+                );
+            }
+        }
+    }
+}
+
+/// The one writer. Frames are queued by the callers and written here in that
+/// order, so two requests can never interleave bytes on the stream.
+async fn write_frames<W>(
+    mut writer: W,
+    mut outbox: tokio::sync::mpsc::UnboundedReceiver<Vec<u8>>,
+) -> ToolError
+where
+    W: tokio::io::AsyncWrite + Unpin,
+{
+    use tokio::io::AsyncWriteExt;
+
+    while let Some(frame) = outbox.recv().await {
+        if let Err(e) = writer.write_all(&frame).await {
+            return transport(e);
+        }
+        if let Err(e) = writer.flush().await {
+            return transport(e);
+        }
+    }
+    transport(std::io::Error::other("the write lane closed"))
 }
 
 fn transport(error: std::io::Error) -> ToolError {
@@ -4498,5 +4874,194 @@ mod tests {
         let released = lease_report("s1", false, agent_lease::LeasePhase::Unheld, None, Vec::new());
         assert_eq!(released["held"], false, "a released lease is not driving");
         assert_eq!(released["phase"], "unheld");
+    }
+
+    /// The wire demultiplexer, over a real Windows pipe.
+    ///
+    /// The unix socket test (`tests/exec_over_socket.rs`) is `cfg(unix)` and
+    /// this machine cannot run it, and `common/mod.rs` has no server on
+    /// purpose. So this module stands one pipe up itself: the link under test
+    /// is the real [`Link`], with its real I/O thread and real framing, and the
+    /// far side is a fixed responder that decides nothing.
+    ///
+    /// ## Why a pipe and not a duplex
+    ///
+    /// [`Link`] holds a `Stream`, which on Windows is a tokio named pipe client
+    /// and on unix a tokio `UnixStream`; there is no common in-memory type to
+    /// substitute without changing the production type just for the test. A
+    /// named pipe is the actual transport, so the test and the product agree
+    /// about the thing being tested. The demultiplexing above the transport is
+    /// the same code on both platforms, which is why one platform's proof is
+    /// worth something for the other.
+    #[cfg(windows)]
+    mod pipelined {
+        use super::*;
+        use serde_json::{json, Value};
+        use std::time::Duration;
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::net::windows::named_pipe::NamedPipeServer;
+
+        /// A link and the server end of one real pipe instance.
+        ///
+        /// `spawn_link` does not return until `hello` has been answered, so it
+        /// runs on its own thread and this one plays the shell for the
+        /// greeting. That is the same order the product uses, not a shortcut.
+        async fn pipe_link(name: String) -> (Arc<Link>, NamedPipeServer) {
+            let mut server = local_pipe::create(&name, true).expect("the test pipe is created");
+            let (ready, greeting) = std::sync::mpsc::channel();
+            let client_name = name.clone();
+            std::thread::spawn(move || {
+                let link = spawn_link(move || {
+                    tokio::net::windows::named_pipe::ClientOptions::new()
+                        .open(&client_name)
+                        .map_err(transport)
+                });
+                let _ = ready.send(link);
+            });
+            tokio::time::timeout(Duration::from_secs(2), server.connect())
+                .await
+                .expect("the client connected")
+                .expect("the pipe accepted");
+            let hello = read_request(&mut server).await;
+            assert_eq!(hello["method"], json!("hello"), "the first frame is hello");
+            let body = serde_json::to_vec(&json!({
+                "jsonrpc": "2.0",
+                "id": hello["id"].clone(),
+                "result": { "protocol": DVVP, "attachmentId": "att_test" },
+            }))
+            .expect("the greeting encodes");
+            let mut framed = vec![MSG_JSONRPC, 0, 0, 0];
+            framed.extend_from_slice(&(body.len() as u32).to_le_bytes());
+            framed.extend_from_slice(&body);
+            server
+                .write_all(&framed)
+                .await
+                .expect("the client is there");
+            server.flush().await.expect("flushed");
+            let link = greeting
+                .recv_timeout(Duration::from_secs(2))
+                .expect("the link reported its greeting")
+                .expect("the greeting was accepted");
+            (link, server)
+        }
+
+        async fn read_request(server: &mut NamedPipeServer) -> Value {
+            let mut header = [0u8; 8];
+            server.read_exact(&mut header).await.expect("a request");
+            assert_eq!(header[0], MSG_JSONRPC, "this client sends one lane");
+            let len = u32::from_le_bytes([header[4], header[5], header[6], header[7]]) as usize;
+            let mut payload = vec![0u8; len];
+            server.read_exact(&mut payload).await.expect("a whole request");
+            serde_json::from_slice(&payload).expect("a request is JSON")
+        }
+
+        async fn write_answer(server: &mut NamedPipeServer, request: &Value, method: &str) {
+            let body = serde_json::to_vec(&json!({
+                "jsonrpc": "2.0",
+                "id": request["id"].clone(),
+                "result": { "method": method, "requestId": request["id"].clone() },
+            }))
+            .expect("an answer encodes");
+            let mut framed = vec![MSG_JSONRPC, 0, 0, 0];
+            framed.extend_from_slice(&(body.len() as u32).to_le_bytes());
+            framed.extend_from_slice(&body);
+            server.write_all(&framed).await.expect("the client is there");
+            server.flush().await.expect("flushed");
+        }
+
+        /// A status call answers while an exec is outstanding.
+        #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+        async fn a_status_call_answers_while_an_exec_is_outstanding() {
+            let name = format!(
+                r"\\.\pipe\dvv-pipeline-both-{}",
+                std::process::id()
+            );
+            let (link, mut server) = pipe_link(name).await;
+            let release = Arc::new(tokio::sync::Notify::new());
+            let stand_in = tokio::spawn({
+                let release = release.clone();
+                async move {
+                    // The two calls race, so the frames are identified by the
+                    // method rather than by the order they happen to arrive.
+                    let (mut exec, mut status) = (None, None);
+                    while exec.is_none() || status.is_none() {
+                        let request = read_request(&mut server).await;
+                        match request["method"].as_str() {
+                            Some("limb.exec") => exec = Some(request),
+                            Some("limb.status") => status = Some(request),
+                            other => panic!("the test asked for {other:?}"),
+                        }
+                    }
+                    let status = status.expect("the status arrived");
+                    write_answer(&mut server, &status, "limb.status").await;
+                    // Hold the exec until the test has seen the status land.
+                    release.notified().await;
+                    let exec = exec.expect("the exec arrived");
+                    write_answer(&mut server, &exec, "limb.exec").await;
+                }
+            });
+
+            let exec_link = Arc::clone(&link);
+            let (exec_done, exec_replies) = std::sync::mpsc::channel();
+            std::thread::spawn(move || {
+                let _ = exec_done.send(exec_link.request("limb.exec", json!({})));
+            });
+            let status_link = Arc::clone(&link);
+            let (status_done, status_replies) = std::sync::mpsc::channel();
+            std::thread::spawn(move || {
+                let _ = status_done.send(status_link.request("limb.status", json!({})));
+            });
+
+            // The claim: the status is answered while the exec is still
+            // outstanding, not after the exec's driver gets round to it.
+            let status = status_replies
+                .recv_timeout(Duration::from_millis(500))
+                .expect("a status answered inside 500 ms while an exec was outstanding")
+                .expect("the status call succeeded");
+            assert_eq!(status["method"], json!("limb.status"));
+            assert!(
+                exec_replies.try_recv().is_err(),
+                "the exec has not been answered yet"
+            );
+
+            release.notify_one();
+            let exec = exec_replies
+                .recv_timeout(Duration::from_secs(2))
+                .expect("the exec answered once its driver did")
+                .expect("the exec call succeeded");
+            assert_eq!(exec["method"], json!("limb.exec"));
+            // Each call was woken by the reply carrying ITS id. The ids the far
+            // side echoed differ, which is what correlation by id means.
+            assert_ne!(status["requestId"], exec["requestId"]);
+            stand_in.await.expect("the stand in finished");
+        }
+
+        /// Killing the plane mid-exec fails the call instead of hanging it.
+        #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+        async fn a_dead_plane_fails_an_outstanding_exec_instead_of_hanging() {
+            let name = format!(
+                r"\\.\pipe\dvv-pipeline-dead-{}",
+                std::process::id()
+            );
+            let (link, mut server) = pipe_link(name).await;
+            let drop_server = tokio::spawn(async move {
+                // Read the exec and drop the only server handle without
+                // answering it: the client's blocked read must see the pipe
+                // end and turn into an error, not wait for the command's own
+                // deadline.
+                let request = read_request(&mut server).await;
+                assert_eq!(request["method"], json!("limb.exec"));
+            });
+            let (done, replies) = std::sync::mpsc::channel();
+            std::thread::spawn(move || {
+                let _ = done.send(link.request("limb.exec", json!({})));
+            });
+            let error = replies
+                .recv_timeout(Duration::from_secs(2))
+                .expect("the call failed promptly instead of hanging")
+                .expect_err("a dead plane is a failure and not a result");
+            assert_eq!(error.code, codes::LIMB_GONE);
+            drop_server.await.expect("the stand in dropped the pipe");
+        }
     }
 }

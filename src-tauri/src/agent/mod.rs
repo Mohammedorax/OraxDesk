@@ -729,12 +729,23 @@ struct CountsWiring {
 /// orderly close, a read error, a cancelled plane, a panic in a handler, and a
 /// count that leaked on any one of them would tell a person two agents are
 /// connected to an idle machine, forever, with nothing to press to fix it.
+#[derive(Clone)]
 pub struct ConnectionGuard {
+    /// Shared rather than owned, because every request after `hello` runs on
+    /// its own task and carries a copy of the [`Peer`] it was dispatched with.
+    /// A connection is one agent, so those copies must not each open a row;
+    /// they share this one and the row goes when the LAST copy does. That is
+    /// the same liveness rule `Attachment::connection` already relies on: a
+    /// client that vanished is counted out when nothing holds it any more.
+    inner: Arc<ConnectionGuardInner>,
+}
+
+struct ConnectionGuardInner {
     plane: Arc<AgentPlane>,
     id: u64,
 }
 
-impl Drop for ConnectionGuard {
+impl Drop for ConnectionGuardInner {
     fn drop(&mut self) {
         if self.plane.connections.lock().remove(&self.id).is_none() {
             // [`stop`] already cleared the table and announced. Saying it
@@ -752,7 +763,7 @@ impl ConnectionGuard {
     /// see [`Attachment::connection`] for why that number is the plane's only
     /// way to tell a live holder from a dead one.
     pub fn id(&self) -> u64 {
-        self.id
+        self.inner.id
     }
 }
 
@@ -1008,8 +1019,10 @@ impl AgentPlane {
         self.connections.lock().insert(id, client.to_string());
         self.announce();
         ConnectionGuard {
-            plane: self.clone(),
-            id,
+            inner: Arc::new(ConnectionGuardInner {
+                plane: self.clone(),
+                id,
+            }),
         }
     }
 
@@ -1747,26 +1760,73 @@ async fn accept_loop(
     }
 }
 
+/// How many requests one connection may have running at once.
+///
+/// A bounded number of tasks rather than one per frame: a client that polls
+/// `limb.status` every millisecond would otherwise build thousands of tasks
+/// while one `exec` sat in front of them, and the ceiling is high enough that
+/// no honest client, which has a handful of calls in flight, ever meets it.
+const MAX_IN_FLIGHT: usize = 32;
+
 /// One connection, until it closes.
+///
+/// Three pieces, and the split is the whole of what makes a long `exec` not
+/// block everything else on the socket:
+///
+/// * the READER loop below, which is the only thing calling [`wire::read_message`];
+/// * one WRITER task, which is the only thing touching the write half, so two
+///   replies can never interleave bytes even though their handlers raced;
+/// * one spawned task per request after `hello`, because a handler that waits
+///   for a driver's answer must not stop the next frame from being read.
+///
+/// Before `hello` the loop stays inline and ordered. `hello` is the only
+/// handler that mutates the [`Peer`], and `04 §2.3` makes the refusal that
+/// precedes it part of the greeting: a client that skipped it is told so, in
+/// the order it asked.
 async fn serve<S>(
     stream: S,
     ctx: Arc<Ctx>,
     cancel: tokio_util::sync::CancellationToken,
 ) -> std::io::Result<()>
 where
-    S: tokio::io::AsyncRead + tokio::io::AsyncWrite,
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Send + 'static,
 {
     use tokio::io::AsyncWriteExt;
 
-    let (mut reader, mut writer) = tokio::io::split(stream);
+    let (mut reader, writer) = tokio::io::split(stream);
+    // Room for a burst of replies without making every handler wait on the
+    // previous one; the writer drains this in order.
+    let (frames, mut outbox) = tokio::sync::mpsc::channel::<Vec<u8>>(MAX_IN_FLIGHT);
+    let writer_cancel = cancel.clone();
+    let writer_task = tauri::async_runtime::spawn(async move {
+        let mut writer = writer;
+        loop {
+            let frame = tokio::select! {
+                _ = writer_cancel.cancelled() => return,
+                frame = outbox.recv() => frame,
+            };
+            let Some(frame) = frame else {
+                return;
+            };
+            if let Err(e) = writer.write_all(&frame).await {
+                tracing::debug!("an agent connection stopped writing: {e}");
+                return;
+            }
+            if let Err(e) = writer.flush().await {
+                tracing::debug!("an agent connection stopped flushing: {e}");
+                return;
+            }
+        }
+    });
+    let limit = Arc::new(tokio::sync::Semaphore::new(MAX_IN_FLIGHT));
     let mut peer = Peer::default();
     loop {
         let message = tokio::select! {
-            _ = cancel.cancelled() => return Ok(()),
+            _ = cancel.cancelled() => break,
             message = wire::read_message(&mut reader) => message?,
         };
         let Some((msg_type, payload)) = message else {
-            return Ok(());
+            break;
         };
         // An unknown `msg_type` is IGNORED, which is the rule `FRAME_FORMAT.md`
         // already states and what lets a newer client and an older plane ship
@@ -1774,15 +1834,105 @@ where
         if msg_type != wire::MSG_JSONRPC {
             continue;
         }
-        let Some(response) = handle_one(&ctx, &mut peer, &payload).await else {
+        // A frame that is not JSON has no method to route on, so it is answered
+        // here, in order, whether or not the connection has greeted.
+        let request = match parse_request(&payload) {
+            Ok(request) => request,
+            Err(response) => {
+                let encoded = serde_json::to_vec(&response).unwrap_or_default();
+                if frames
+                    .send(wire::encode(wire::MSG_JSONRPC, &encoded))
+                    .await
+                    .is_err()
+                {
+                    break;
+                }
+                continue;
+            }
+        };
+        // `hello` after the greeting is still inline: it is the only handler
+        // that writes the `Peer`, and a second one is still one agent (see
+        // `server::hello`). Everything else has already fixed what it may do.
+        let method = request
+            .get("method")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        if peer.attachment_id.is_some() && method != "hello" {
+            // Correlation is the CLIENT's id and nothing else: it is echoed
+            // and never trusted for authority. A notification gets `null`,
+            // which is what an id-less JSON-RPC error looks like anyway.
+            let id = request.get("id").cloned().unwrap_or(Value::Null);
+            // Acquired BEFORE the spawn, so a poll loop applies backpressure to
+            // the reader rather than growing an unbounded pile of tasks.
+            let permit = match limit.clone().acquire_owned().await {
+                Ok(permit) => permit,
+                Err(_) => break,
+            };
+            let ctx = ctx.clone();
+            let mut peer = peer.clone();
+            let frames = frames.clone();
+            tauri::async_runtime::spawn(async move {
+                let _permit = permit;
+                // The handler runs on a second task so its panic is a
+                // `JoinError` this task can answer, rather than a call that
+                // never gets a reply and strands the client for ever.
+                let answer = tauri::async_runtime::spawn(async move {
+                    handle_message(&ctx, &mut peer, request).await
+                })
+                .await;
+                let response = match answer {
+                    Ok(response) => response,
+                    Err(e) => {
+                        tracing::warn!("an agent request handler panicked: {e}");
+                        Some(json!({
+                            "jsonrpc": "2.0",
+                            "id": id,
+                            "error": {
+                                "code": -32603,
+                                "message": "that handler panicked; nothing was decided",
+                            },
+                        }))
+                    }
+                };
+                if let Some(response) = response {
+                    let encoded = serde_json::to_vec(&response).unwrap_or_default();
+                    let _ = frames
+                        .send(wire::encode(wire::MSG_JSONRPC, &encoded))
+                        .await;
+                }
+            });
+            continue;
+        }
+        let Some(response) = handle_message(&ctx, &mut peer, request).await else {
             continue;
         };
         let encoded = serde_json::to_vec(&response).unwrap_or_default();
-        writer
-            .write_all(&wire::encode(wire::MSG_JSONRPC, &encoded))
-            .await?;
-        writer.flush().await?;
+        if frames
+            .send(wire::encode(wire::MSG_JSONRPC, &encoded))
+            .await
+            .is_err()
+        {
+            break;
+        }
     }
+    // Drop the reader's own sender and let the writer put out whatever the
+    // in-flight handlers already produced. They hold their own clones, so it
+    // closes when the last of them is done, and the connection row goes with
+    // the last [`Peer`] clone.
+    drop(frames);
+    let _ = writer_task.await;
+    Ok(())
+}
+
+/// A frame as a request, or the `-32700` answer a malformed one is owed.
+fn parse_request(payload: &[u8]) -> Result<Value, Value> {
+    serde_json::from_slice(payload).map_err(|e| {
+        json!({
+            "jsonrpc": "2.0",
+            "id": Value::Null,
+            "error": { "code": -32700, "message": format!("that was not JSON: {e}") },
+        })
+    })
 }
 
 /// One JSON-RPC message in, at most one out.
@@ -1790,17 +1940,7 @@ where
 /// `None` for a notification, which by JSON-RPC's own rule is a message with
 /// no `id` and gets no reply. Kept separate from [`serve`] so the framing and
 /// the semantics can be read one at a time.
-async fn handle_one(ctx: &Arc<Ctx>, peer: &mut Peer, payload: &[u8]) -> Option<Value> {
-    let request: Value = match serde_json::from_slice(payload) {
-        Ok(request) => request,
-        Err(e) => {
-            return Some(json!({
-                "jsonrpc": "2.0",
-                "id": Value::Null,
-                "error": { "code": -32700, "message": format!("that was not JSON: {e}") },
-            }))
-        }
-    };
+async fn handle_message(ctx: &Arc<Ctx>, peer: &mut Peer, request: Value) -> Option<Value> {
     let id = request.get("id").cloned();
     let method = request
         .get("method")
@@ -1871,6 +2011,235 @@ mod tests {
                 "this fixture has no SFTP sidecar behind it",
             )));
         })
+    }
+
+    /// A registered session with an address of its own, so two of them are two
+    /// machines at slot 0 rather than one machine at two slots.
+    fn live_session_at(
+        id: &str,
+        address: &str,
+    ) -> (
+        SessionEntry,
+        tokio::sync::mpsc::Receiver<vnc_core::ClientCommand>,
+    ) {
+        let (mut entry, receiver) = live_session(id);
+        entry.address = address.into();
+        (entry, receiver)
+    }
+
+    /// One frame, as `serve` reads it.
+    async fn write_frame<W>(writer: &mut W, message: Value)
+    where
+        W: tokio::io::AsyncWrite + Unpin,
+    {
+        use tokio::io::AsyncWriteExt;
+
+        let body = serde_json::to_vec(&message).expect("a request encodes");
+        let mut framed = vec![wire::MSG_JSONRPC, 0, 0, 0];
+        framed.extend_from_slice(&(body.len() as u32).to_le_bytes());
+        framed.extend_from_slice(&body);
+        writer.write_all(&framed).await.expect("the plane is there");
+        writer.flush().await.expect("flushed");
+    }
+
+    /// One frame, as `serve` writes it.
+    async fn read_frame<R>(reader: &mut R) -> Value
+    where
+        R: tokio::io::AsyncRead + Unpin,
+    {
+        use tokio::io::AsyncReadExt;
+
+        let mut header = [0u8; 8];
+        reader.read_exact(&mut header).await.expect("a reply");
+        assert_eq!(header[0], wire::MSG_JSONRPC, "this build sends one lane");
+        let len = u32::from_le_bytes([header[4], header[5], header[6], header[7]]) as usize;
+        let mut payload = vec![0u8; len];
+        reader.read_exact(&mut payload).await.expect("a whole reply");
+        serde_json::from_slice(&payload).expect("a reply is JSON")
+    }
+
+    /// A long `exec` must not hold the socket against every other call.
+    ///
+    /// `limb.exec` waits for a driver's answer, which can be minutes. Before
+    /// the reader loop and the per-request handlers were split, that wait also
+    /// stopped the next frame from being READ, so a `limb.status` for another,
+    /// untouched limb sat behind the install. Here the two go on the wire back
+    /// to back with nothing read between them, and the status has to come back
+    /// while the exec is still outstanding.
+    ///
+    /// Each reply is also checked against the id of its own request, which is
+    /// the only correlation the wire has.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_slow_exec_does_not_hold_the_socket_for_another_limbs_status() {
+        use remote_core::events::SessionEvent;
+        use remote_core::intent::{
+            CommandExit, CommandRun, ExitTier, IntentName, IntentServed, ServedAnswer, Truncation,
+        };
+        use serde_json::json;
+        use std::time::Duration;
+
+        let dir = tempfile::tempdir().expect("a temporary directory");
+        let store =
+            Arc::new(vnc_store::Store::open(Some(dir.path().to_path_buf())).expect("a store"));
+        let (first, mut keep_s1) = live_session_at("s1", "10.0.0.5");
+        let (second, keep_s2) = live_session_at("s2", "10.0.0.6");
+        let mut sessions = HashMap::new();
+        sessions.insert("s1".to_string(), first);
+        sessions.insert("s2".to_string(), second);
+        let ctx = Arc::new(Ctx {
+            sessions: Arc::new(Mutex::new(sessions)),
+            store,
+            plane: Arc::new(AgentPlane::default()),
+            emit: Arc::new(|_| {}),
+            files: Arc::new(|_session, _ask, tell| {
+                let _ = tell.send(Err(server::FileRefusal::unavailable(
+                    "this fixture has no SFTP sidecar behind it",
+                )));
+            }),
+        });
+
+        let (client, server) = tokio::io::duplex(64 * 1024);
+        let cancel = tokio_util::sync::CancellationToken::new();
+        let serving = tauri::async_runtime::spawn(serve(server, ctx, cancel.clone()));
+        let (mut reader, mut writer) = tokio::io::split(client);
+
+        write_frame(
+            &mut writer,
+            json!({
+                "jsonrpc": "2.0", "id": 1, "method": "hello",
+                "params": {
+                    "protocol": PROTOCOL,
+                    "client": { "name": "the concurrency test" },
+                    "capabilities": ["view", "open", "exec"],
+                },
+            }),
+        )
+        .await;
+        assert_eq!(read_frame(&mut reader).await["id"], json!(1));
+
+        for (id, address) in [(2, "10.0.0.5"), (3, "10.0.0.6")] {
+            write_frame(
+                &mut writer,
+                json!({
+                    "jsonrpc": "2.0", "id": id, "method": "limb.attach",
+                    "params": { "address": address, "protocol": "vnc", "slot": 0 },
+                }),
+            )
+            .await;
+            let reply = read_frame(&mut reader).await;
+            assert_eq!(reply["id"], json!(id));
+            assert!(reply.get("result").is_some(), "the attach was refused: {reply}");
+        }
+
+        // Back to back, with no read between: the exec first, so an inline
+        // loop would answer the exec before it ever looked at the status.
+        write_frame(
+            &mut writer,
+            json!({
+                "jsonrpc": "2.0", "id": 4, "method": "limb.exec",
+                "params": {
+                    "sessionId": "s1",
+                    "command": "apt-get install -y a-very-long-build",
+                    "timeoutMs": 60_000,
+                },
+            }),
+        )
+        .await;
+        write_frame(
+            &mut writer,
+            json!({
+                "jsonrpc": "2.0", "id": 5, "method": "limb.status",
+                "params": { "sessionId": "s2" },
+            }),
+        )
+        .await;
+
+        // The first frame out must be the STATUS, while the exec is still
+        // outstanding. Its id is what proves it is that request's answer.
+        let first_out = tokio::time::timeout(Duration::from_millis(500), read_frame(&mut reader))
+            .await
+            .expect("a status answered inside 500 ms while an exec was outstanding");
+        assert_eq!(
+            first_out["id"],
+            json!(5),
+            "the status reply came back on its own id, not the exec's"
+        );
+        assert!(
+            first_out.get("result").is_some(),
+            "the status was refused: {first_out}"
+        );
+
+        // The exec's intent reached s1's own wire and is still waiting for a
+        // driver. Answer it the way `forward_events` does.
+        let intent = tokio::time::timeout(Duration::from_secs(1), keep_s1.recv())
+            .await
+            .expect("the exec reached the session")
+            .expect("the session is still live");
+        let vnc_core::ClientCommand::Agent(intent) = intent else {
+            panic!("an exec travels as ClientCommand::Agent and nothing else");
+        };
+        let served = SessionEvent::AgentServed(IntentServed {
+            id: intent.id,
+            name: IntentName::Exec,
+            answer: ServedAnswer::Ran(CommandRun {
+                status: CommandExit {
+                    code: Some(0),
+                    signal: None,
+                    source: ExitTier::Exec,
+                    unanswered: None,
+                },
+                stdout: bytes::Bytes::from_static(b"installed\n"),
+                stderr: bytes::Bytes::new(),
+                dropped: Truncation::default(),
+                duration: Duration::from_millis(7),
+            }),
+        });
+        // Held so the second session stays live for the length of the test.
+        let _keep_s2 = keep_s2;
+        assert!(
+            server::note_agent_event("s1", &served),
+            "the exec was still waiting, so the answer found it"
+        );
+
+        let exec_out = tokio::time::timeout(Duration::from_secs(1), read_frame(&mut reader))
+            .await
+            .expect("the exec answered once its driver did");
+        assert_eq!(
+            exec_out["id"],
+            json!(4),
+            "the exec reply came back on its own id"
+        );
+        assert_eq!(exec_out["result"]["served"], json!(true));
+        assert_eq!(exec_out["result"]["sessionId"], json!("s1"));
+
+        cancel.cancel();
+        let _ = serving.await;
+    }
+
+    /// The connection row is one per connection, and it goes when the LAST
+    /// clone does.
+    ///
+    /// Every request after `hello` runs on its own task carrying a [`Peer`]
+    /// clone. If each clone were its own guard, a busy agent would show as
+    /// several agents; if the row went with the first clone, a person's bar
+    /// would say nobody is connected while four calls are in flight.
+    #[test]
+    fn a_connection_row_lives_until_the_last_peer_clone_goes() {
+        let plane = Arc::new(AgentPlane::default());
+        let guard = plane.client_connected("dvv");
+        let clone = guard.clone();
+        let id = guard.id();
+        drop(guard);
+        assert!(
+            plane.connections.lock().contains_key(&id),
+            "a clone still holds the connection open"
+        );
+        drop(clone);
+        assert!(
+            !plane.connections.lock().contains_key(&id),
+            "the row goes with the last clone"
+        );
+        assert_eq!(plane.next_connection.load(Ordering::Relaxed), 1);
     }
 
     /// A registry of live sessions. The receivers come back with it and have

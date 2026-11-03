@@ -154,7 +154,7 @@ pub struct Ctx {
 /// said hello has no attachment id, so there is nothing to key an audit line
 /// on and nothing to revoke, and `04 §2.3` says the connection is useless
 /// until it has happened.
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct Peer {
     pub attachment_id: Option<String>,
     pub client: Option<String>,
