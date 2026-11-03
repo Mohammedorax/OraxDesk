@@ -208,9 +208,7 @@ impl StreamConnector for TunnelConnector {
                 // proved it is not the one we pinned.
                 Ok(Err(SshError::HostKeyChanged {
                     expected, actual, ..
-                })) => {
-                    return Err(TransportError::CertificateMismatch { expected, actual })
-                }
+                })) => return Err(TransportError::CertificateMismatch { expected, actual }),
                 Ok(Err(e)) => return Err(TransportError::Io(std::io::Error::other(e.to_string()))),
             };
             Ok(Box::pin(stream) as BoxedStream)

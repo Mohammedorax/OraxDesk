@@ -239,9 +239,10 @@ pub fn absorb_attempt(
             // (`rn-user-requested`) ended the session. Reconnecting into a
             // session the far end just ended is a loop, so this is the one
             // outcome that stops silently with no retry.
-            Attempt::UserDisconnect | Attempt::ServerDisconnect { user_requested: true } => {
-                Ok(RunOutcome::UserDisconnect)
-            }
+            Attempt::UserDisconnect
+            | Attempt::ServerDisconnect {
+                user_requested: true,
+            } => Ok(RunOutcome::UserDisconnect),
             // Everything else the server did — an `rn-provider-initiated`
             // ultimatum (a farm draining a host before a restart), an
             // unknown reason code MS-RDPBCGR 3.1.5.1.2 says to ignore, or a
@@ -252,11 +253,11 @@ pub fn absorb_attempt(
             // the server's clothes, so it travels as the transient
             // `RdpError::ServerDisconnect` and the reason the user finally
             // sees is "the server ended the session", never "Disconnected".
-            Attempt::ServerDisconnect { user_requested: false } => {
-                Err(RdpError::ServerDisconnect {
-                    user_requested: false,
-                })
-            }
+            Attempt::ServerDisconnect {
+                user_requested: false,
+            } => Err(RdpError::ServerDisconnect {
+                user_requested: false,
+            }),
         },
     }
 }
@@ -337,7 +338,9 @@ mod tests {
 
         for deliberate in [
             Attempt::UserDisconnect,
-            Attempt::ServerDisconnect { user_requested: true },
+            Attempt::ServerDisconnect {
+                user_requested: true,
+            },
         ] {
             let what = format!("{deliberate:?}");
             let mut carry = Continuity::default();

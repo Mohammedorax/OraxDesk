@@ -217,12 +217,7 @@ impl<'a> CredentialSource<'a> {
         // and never degraded: sending credentials to an unidentified server
         // is not a fallback any config may choose.
         let gate = identity
-            .filter(|id| {
-                matches!(
-                    id.decision,
-                    vnc_transport::TrustDecision::Unknown { .. }
-                )
-            })
+            .filter(|id| matches!(id.decision, vnc_transport::TrustDecision::Unknown { .. }))
             .cloned();
 
         let request = CredentialRequest {
@@ -382,7 +377,13 @@ mod tests {
         o.credentials = Credentials::password("swordfish");
         let src = CredentialSource::interactive(&tx, 1, None, None);
         let got = src
-            .obtain("VNC Authentication", CredentialKind::PasswordOnly, true, &o, None)
+            .obtain(
+                "VNC Authentication",
+                CredentialKind::PasswordOnly,
+                true,
+                &o,
+                None,
+            )
             .await
             .unwrap();
         assert_eq!(got.password.as_deref(), Some("swordfish"));
@@ -628,7 +629,10 @@ mod tests {
         };
         let answerer = tokio::spawn(async move {
             let ask = rx.recv().await.unwrap();
-            let id = ask.identity.as_ref().expect("the gate must ride with the ask");
+            let id = ask
+                .identity
+                .as_ref()
+                .expect("the gate must ride with the ask");
             let fingerprint = match &id.decision {
                 TrustDecision::Unknown { fingerprint, .. } => fingerprint.clone(),
                 other => panic!("expected Unknown, got {other:?}"),
@@ -661,10 +665,7 @@ mod tests {
         assert_eq!(got.password.as_deref(), Some("swordfish"));
         // Approving a key is not typing a password: a later server rejection
         // must fail once and stop, not reopen the dialog.
-        assert!(
-            !src.prompted(),
-            "an approval is not a typed credential"
-        );
+        assert!(!src.prompted(), "an approval is not a typed credential");
     }
 
     /// Without a prompt channel there is nowhere to ask for approval, so the

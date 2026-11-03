@@ -432,10 +432,7 @@ pub fn decode_jpeg_to_rgba(data: &[u8]) -> Result<(u32, u32, Vec<u8>)> {
 /// can match a 2×2 destination and still carry a 16384×16384 header, so the
 /// caller passes the rect's own pixel count: a decode that cannot be shown
 /// anywhere is refused before the allocation rather than after it.
-pub fn decode_jpeg_to_rgba_limited(
-    data: &[u8],
-    max_pixels: usize,
-) -> Result<(u32, u32, Vec<u8>)> {
+pub fn decode_jpeg_to_rgba_limited(data: &[u8], max_pixels: usize) -> Result<(u32, u32, Vec<u8>)> {
     use zune_jpeg::zune_core::bytestream::ZCursor;
     use zune_jpeg::zune_core::colorspace::ColorSpace;
     use zune_jpeg::zune_core::options::DecoderOptions;

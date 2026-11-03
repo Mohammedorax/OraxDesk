@@ -1964,9 +1964,7 @@ where
                 };
                 if let Some(response) = response {
                     let encoded = serde_json::to_vec(&response).unwrap_or_default();
-                    let _ = frames
-                        .send(wire::encode(wire::MSG_JSONRPC, &encoded))
-                        .await;
+                    let _ = frames.send(wire::encode(wire::MSG_JSONRPC, &encoded)).await;
                 }
             });
             continue;
@@ -2123,7 +2121,10 @@ mod tests {
         assert_eq!(header[0], wire::MSG_JSONRPC, "this build sends one lane");
         let len = u32::from_le_bytes([header[4], header[5], header[6], header[7]]) as usize;
         let mut payload = vec![0u8; len];
-        reader.read_exact(&mut payload).await.expect("a whole reply");
+        reader
+            .read_exact(&mut payload)
+            .await
+            .expect("a whole reply");
         serde_json::from_slice(&payload).expect("a reply is JSON")
     }
 
@@ -2202,7 +2203,10 @@ mod tests {
             .await;
             let reply = read_frame(&mut reader).await;
             assert_eq!(reply["id"], json!(id));
-            assert!(reply.get("result").is_some(), "the attach was refused: {reply}");
+            assert!(
+                reply.get("result").is_some(),
+                "the attach was refused: {reply}"
+            );
         }
 
         // Back to back, with no read between: the exec first, so an inline
@@ -2405,10 +2409,7 @@ mod tests {
         let _connected = plane.client_connected("dvv");
         for session in ["s1", "s2", "s3", "s4"] {
             plane
-                .attach(
-                    session,
-                    attachment_on(_connected.id(), "att_0", true),
-                )
+                .attach(session, attachment_on(_connected.id(), "att_0", true))
                 .expect("inside the four-limb ceiling");
         }
 
@@ -2453,7 +2454,14 @@ mod tests {
         // `AgentPlane::report` decides that itself, and a report cannot claim
         // a person took over.
         let reported = plane
-            .report("s1", "att_0", true, "held".into(), Some("dvv".into()), Vec::new())
+            .report(
+                "s1",
+                "att_0",
+                true,
+                "held".into(),
+                Some("dvv".into()),
+                Vec::new(),
+            )
             .expect("the row is attached and not revoked");
         assert_eq!(reported["holderKind"], "agent");
         assert_eq!(reported["humanTookOver"], false);
@@ -2754,14 +2762,7 @@ mod tests {
 
         assert!(
             plane
-                .report(
-                    "s1",
-                    "att_0",
-                    true,
-                    "held".into(),
-                    None,
-                    Vec::new(),
-                )
+                .report("s1", "att_0", true, "held".into(), None, Vec::new(),)
                 .is_none(),
             "a revocation is not a request"
         );

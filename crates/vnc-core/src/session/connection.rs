@@ -401,7 +401,8 @@ async fn serve_credential_ask(
         scheme,
         decision:
             vnc_transport::TrustDecision::Unknown {
-                fingerprint, subject,
+                fingerprint,
+                subject,
             },
         ..
     }) = &identity

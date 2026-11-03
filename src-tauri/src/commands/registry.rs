@@ -362,7 +362,8 @@ async fn remember_registration(state: &AppState) {
         .unwrap_or(0);
     // Best effort: a failure here costs one extra registration, never a
     // failed one.
-    let _ = super::blocking(move || store.set_setting(REGISTRY_LAST_OK_KEY, &now.to_string())).await;
+    let _ =
+        super::blocking(move || store.set_setting(REGISTRY_LAST_OK_KEY, &now.to_string())).await;
 }
 
 /// Is the last successful registration recent enough to skip another one?

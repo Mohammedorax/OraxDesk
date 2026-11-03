@@ -105,7 +105,13 @@ pub(crate) async fn handshake_named(
 ) -> Result<AuthOutcome> {
     // DES truncates to 8 characters, silently, the dialog must say so.
     let supplied = creds
-        .obtain(method, CredentialKind::PasswordOnly, true, opts, identity.as_ref())
+        .obtain(
+            method,
+            CredentialKind::PasswordOnly,
+            true,
+            opts,
+            identity.as_ref(),
+        )
         .await?;
     let mut password = supplied.password.unwrap_or_default();
     if password.len() > MAX_PASSWORD_BYTES {

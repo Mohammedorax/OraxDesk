@@ -27,9 +27,7 @@ use russh::client::Msg;
 use russh::ChannelStream;
 
 use crate::config::{host_port, SshConfig};
-use crate::connect::{
-    connect_and_authenticate_with, BoxFuture, ClientHandler, Keepalive,
-};
+use crate::connect::{connect_and_authenticate_with, BoxFuture, ClientHandler, Keepalive};
 use crate::error::{Error, Result};
 use crate::hostkey::HostKeyVerifier;
 
@@ -85,7 +83,8 @@ impl SshTunnel {
     /// or hard-stop (`Error::HostKeyChanged`).
     pub async fn connect(cfg: SshConfig, verifier: impl HostKeyVerifier) -> Result<Self> {
         let verifier: Arc<dyn HostKeyVerifier + Send + Sync + 'static> = Arc::new(verifier);
-        let ssh = connect_and_authenticate_with(&cfg, verifier.clone(), carrier_keepalive()).await?;
+        let ssh =
+            connect_and_authenticate_with(&cfg, verifier.clone(), carrier_keepalive()).await?;
         tracing::info!(gateway = %cfg.endpoint(), auth = cfg.auth.label(), "ssh tunnel established");
         Ok(Self {
             cfg,

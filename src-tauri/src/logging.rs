@@ -130,8 +130,12 @@ impl LogFile {
             }
             Err(error) => Err(error),
         };
-        let reopened = rolled
-            .and_then(|()| OpenOptions::new().create(true).append(true).open(&self.path));
+        let reopened = rolled.and_then(|()| {
+            OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&self.path)
+        });
         match reopened {
             Ok(file) => {
                 self.file = Some(file);
@@ -191,7 +195,10 @@ mod tests {
         }
         let live = std::fs::read(dir.path().join("logs").join(FILE)).unwrap();
         let previous = std::fs::read(dir.path().join("logs").join(PREVIOUS)).unwrap();
-        assert!(live.len() as u64 <= 64 + 64, "the live file stayed near the cap");
+        assert!(
+            live.len() as u64 <= 64 + 64,
+            "the live file stayed near the cap"
+        );
         assert!(
             previous.len() as u64 <= 64 + 64,
             "the previous file stayed near the cap"
@@ -202,8 +209,11 @@ mod tests {
     fn an_event_reaches_the_file_with_the_console_fields() {
         let dir = tempfile::tempdir().unwrap();
         let logs = Logs::open(&dir.path().join("logs"), MAX_BYTES).unwrap();
-        let subscriber = tracing_subscriber::registry()
-            .with(fmt::layer().with_ansi(false).with_writer(Sink(logs.clone())));
+        let subscriber = tracing_subscriber::registry().with(
+            fmt::layer()
+                .with_ansi(false)
+                .with_writer(Sink(logs.clone())),
+        );
         tracing::subscriber::with_default(subscriber, || {
             tracing::info!(answer = 42, "hello from the file sink");
         });

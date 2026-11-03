@@ -17,14 +17,15 @@ async fn main() -> anyhow::Result<()> {
     let key_path = std::path::PathBuf::from(&args[0]);
     let machine = args[1].clone();
     let password = args.get(2).filter(|p| !p.is_empty()).cloned();
-    let seconds: u64 = args
-        .get(3)
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(75);
+    let seconds: u64 = args.get(3).and_then(|s| s.parse().ok()).unwrap_or(75);
 
     let started = Instant::now();
     let key = unattended::load_or_create_key(&key_path)?;
-    println!("{:.1}s helper id: {}", started.elapsed().as_secs_f32(), unattended::machine_id(&key));
+    println!(
+        "{:.1}s helper id: {}",
+        started.elapsed().as_secs_f32(),
+        unattended::machine_id(&key)
+    );
     println!("{:.1}s target: {machine}", started.elapsed().as_secs_f32());
 
     let mut session = unattended::connect_with_tools(

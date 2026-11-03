@@ -366,15 +366,17 @@ fn tool_call(args: &Args) -> Result<(String, Value), ToolError> {
         }
         "job" => {
             let action = args.at(0).ok_or_else(|| {
-                ToolError::bad_request(
-                    "dvv job needs start, status, log, cancel or list",
-                )
+                ToolError::bad_request("dvv job needs start, status, log, cancel or list")
             })?;
             let mut object = json!({ "action": action });
             let map = object.as_object_mut().expect("an object");
             match action {
                 "start" => {
-                    let command = args.positional.get(1..).map(|rest| rest.join(" ")).unwrap_or_default();
+                    let command = args
+                        .positional
+                        .get(1..)
+                        .map(|rest| rest.join(" "))
+                        .unwrap_or_default();
                     if command.trim().is_empty() {
                         return Err(ToolError::bad_request(
                             "dvv job start needs a command after --",
@@ -386,9 +388,9 @@ fn tool_call(args: &Args) -> Result<(String, Value), ToolError> {
                     }
                 }
                 "status" | "log" | "cancel" => {
-                    let id = args.at(1).ok_or_else(|| {
-                        ToolError::bad_request("this job action needs a job id")
-                    })?;
+                    let id = args
+                        .at(1)
+                        .ok_or_else(|| ToolError::bad_request("this job action needs a job id"))?;
                     map.insert("jobId".to_string(), json!(id));
                     if let Some(lines) = args.flag("lines").and_then(|l| l.parse::<u64>().ok()) {
                         map.insert("lines".to_string(), json!(lines));
@@ -901,7 +903,10 @@ async fn stop(args: &Args) -> i32 {
         println!("{}", serde_json::to_string(&report).unwrap_or_default());
     } else {
         println!("{} is revoked. No grace window.", report.limb_id);
-        println!("queued for the limb, in order: {}", report.queued.join(" then "));
+        println!(
+            "queued for the limb, in order: {}",
+            report.queued.join(" then ")
+        );
         if !report.failed.is_empty() {
             println!("not queued: {}", report.failed.join("; "));
         }

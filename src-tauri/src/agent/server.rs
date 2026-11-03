@@ -862,7 +862,10 @@ fn limb_attach(ctx: &Ctx, peer: &Peer, params: &Value) -> Result<Value, RpcError
             // mandatory, so a peer with none cannot reach here; a
             // `NO_CONNECTION` row would read as stale, which is the safe
             // reading for an attachment nothing is holding.
-            connection: peer.connection.as_ref().map_or(NO_CONNECTION, |guard| guard.id()),
+            connection: peer
+                .connection
+                .as_ref()
+                .map_or(NO_CONNECTION, |guard| guard.id()),
             revoked: false,
             held: false,
             phase: "free".to_string(),

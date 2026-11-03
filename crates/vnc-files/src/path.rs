@@ -359,7 +359,14 @@ mod tests {
     #[test]
     fn safe_local_join_refuses_credential_and_startup_names() {
         let root = Path::new("/tmp/deskvnc-downloads");
-        for name in [".ssh", ".bashrc", ".profile", ".gitconfig", "sub/.ssh", ".config"] {
+        for name in [
+            ".ssh",
+            ".bashrc",
+            ".profile",
+            ".gitconfig",
+            "sub/.ssh",
+            ".config",
+        ] {
             assert!(
                 safe_local_join(root, name).is_err(),
                 "a server-supplied {name} must not be written into the destination"

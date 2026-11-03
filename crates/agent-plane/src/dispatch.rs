@@ -562,11 +562,7 @@ impl AttachedLimb {
     ///
     /// Returns what the channel took, in order, so a trace and a test can both
     /// assert the ordering rather than trusting it.
-    pub async fn honour(
-        &self,
-        transition: &LeaseTransition,
-        now: LeaseInstant,
-    ) -> Release {
+    pub async fn honour(&self, transition: &LeaseTransition, now: LeaseInstant) -> Release {
         if !transition.must_release() {
             return Release::default();
         }

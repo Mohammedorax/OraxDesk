@@ -979,7 +979,8 @@ impl RunLoop {
                     .await
             }
             server_msg::SERVER_CUT_TEXT => {
-                self.handle_server_cut_text(events, commands, settings).await
+                self.handle_server_cut_text(events, commands, settings)
+                    .await
             }
             server_msg::END_OF_CONTINUOUS_UPDATES => {
                 self.caps.supports_continuous_updates = true;
@@ -3051,9 +3052,7 @@ fn decoded_payload_len(d: &DecodedRect) -> usize {
         // JPEGs reserve gigabytes of decoded buffers.
         RectPayload::Rgba(b) => b.len(),
         RectPayload::Jpeg(_) => d.rect.area().saturating_mul(4),
-        RectPayload::H264 { data, .. } => {
-            d.rect.area().saturating_mul(4).max(data.len())
-        }
+        RectPayload::H264 { data, .. } => d.rect.area().saturating_mul(4).max(data.len()),
         RectPayload::CopyRect { .. } => d.rect.area().saturating_mul(4),
     }
 }

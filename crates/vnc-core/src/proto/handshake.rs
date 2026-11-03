@@ -21,9 +21,7 @@ pub const MAX_FRAMEBUFFER_PIXELS: u64 = 64 * 1024 * 1024;
 
 /// Whether a server-declared geometry is plausible enough to allocate against.
 pub fn framebuffer_fits(width: u16, height: u16) -> bool {
-    width != 0
-        && height != 0
-        && u64::from(width) * u64::from(height) <= MAX_FRAMEBUFFER_PIXELS
+    width != 0 && height != 0 && u64::from(width) * u64::from(height) <= MAX_FRAMEBUFFER_PIXELS
 }
 
 #[derive(Debug, Clone, PartialEq)]

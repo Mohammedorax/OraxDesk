@@ -170,7 +170,9 @@ fn server_config() -> rustls::ServerConfig {
     .expect("protocol versions")
     .with_no_client_auth()
     .with_single_cert(
-        vec![rustls::pki_types::CertificateDer::from(TEST_CERT_DER.to_vec())],
+        vec![rustls::pki_types::CertificateDer::from(
+            TEST_CERT_DER.to_vec(),
+        )],
         rustls::pki_types::PrivateKeyDer::try_from(TEST_KEY_PKCS8.to_vec()).expect("pkcs#8"),
     )
     .expect("the fixture key pairs with the fixture certificate")
@@ -230,14 +232,17 @@ async fn mock_x509none(
     s.write_all(&[1, 0, 0, 1, 4]).await?;
     let mut subtype = [0u8; 4];
     s.read_exact(&mut subtype).await?;
-    assert_eq!(u32::from_be_bytes(subtype), 260, "X509None and nothing else");
+    assert_eq!(
+        u32::from_be_bytes(subtype),
+        260,
+        "X509None and nothing else"
+    );
     s.write_all(&[1]).await?;
 
     // The TLS handshake. The client has no pin for this key and cannot chain
     // it to a root, so its verifier records `TrustDecision::Unknown` — the
     // first contact the whole file is about.
-    let acceptor =
-        tokio_rustls::TlsAcceptor::from(Arc::new(server_config()));
+    let acceptor = tokio_rustls::TlsAcceptor::from(Arc::new(server_config()));
     let mut tls = acceptor.accept(s).await.expect("tls handshake");
 
     // SecurityResult OK; VeNCrypt always reports one.
@@ -312,8 +317,14 @@ impl Gate {
         let cancel = CancellationToken::new();
         let run_cancel = cancel.clone();
         let attempt = tokio::spawn(async move {
-            establish_interactive(&mut options, &settings, &events_tx, &mut commands_rx, &run_cancel)
-                .await
+            establish_interactive(
+                &mut options,
+                &settings,
+                &events_tx,
+                &mut commands_rx,
+                &run_cancel,
+            )
+            .await
         });
         (
             attempt,
@@ -332,7 +343,11 @@ impl Gate {
     async fn prompt(&mut self) -> (String, String, PinScheme) {
         tokio::time::timeout(WAIT, async {
             loop {
-                let ev = self.events.recv().await.expect("the session keeps emitting");
+                let ev = self
+                    .events
+                    .recv()
+                    .await
+                    .expect("the session keeps emitting");
                 let matched = match &ev {
                     SessionEvent::CertificatePrompt {
                         fingerprint,
@@ -373,12 +388,15 @@ impl Gate {
     async fn negotiating(&mut self) {
         tokio::time::timeout(WAIT, async {
             loop {
-                let ev = self.events.recv().await.expect("the session keeps emitting");
+                let ev = self
+                    .events
+                    .recv()
+                    .await
+                    .expect("the session keeps emitting");
                 if let SessionEvent::Error(e) = &ev {
                     panic!("the approved connect failed: {e}");
                 }
-                let done =
-                    matches!(&ev, SessionEvent::StateChanged(SessionState::Negotiating));
+                let done = matches!(&ev, SessionEvent::StateChanged(SessionState::Negotiating));
                 self.seen.push(ev);
                 if done {
                     break;
@@ -422,13 +440,11 @@ impl Gate {
     /// the prompt.
     fn assert_never_negotiated(&self) {
         assert!(
-            self.seen
-                .iter()
-                .all(|e| !matches!(
-                    e,
-                    SessionEvent::StateChanged(SessionState::Negotiating)
-                        | SessionEvent::StateChanged(SessionState::Connected)
-                )),
+            self.seen.iter().all(|e| !matches!(
+                e,
+                SessionEvent::StateChanged(SessionState::Negotiating)
+                    | SessionEvent::StateChanged(SessionState::Connected)
+            )),
             "a refused key must stop the session before Negotiating: {:?}",
             self.seen
         );

@@ -159,11 +159,7 @@ impl VeNCryptSubtype {
     pub fn needs_credentials(self) -> bool {
         matches!(
             self,
-            Self::TlsVnc
-                | Self::X509Vnc
-                | Self::Plain
-                | Self::TlsPlain
-                | Self::X509Plain
+            Self::TlsVnc | Self::X509Vnc | Self::Plain | Self::TlsPlain | Self::X509Plain
         )
     }
 
@@ -221,9 +217,10 @@ pub fn select_subtype(
     // start, exposes the session just as plainly. An explicit TLS + X.509
     // choice is different: there the user asked for the encrypted subtype and
     // silently getting `Plain` would be a downgrade of that choice.
-    let usable = ranked.iter().copied().find(|s| {
-        !s.is_anonymous_tls() && (!require_x509 || s.uses_x509())
-    });
+    let usable = ranked
+        .iter()
+        .copied()
+        .find(|s| !s.is_anonymous_tls() && (!require_x509 || s.uses_x509()));
 
     if let Some(s) = usable {
         return Ok(s);
@@ -380,10 +377,8 @@ pub(crate) async fn handshake(
     // nothing sensitive moves before ClientInit either way.
     let gate_identity = match &trust {
         Some(id)
-            if matches!(
-                id.decision,
-                vnc_transport::TrustDecision::Unknown { .. }
-            ) && chosen.needs_credentials() =>
+            if matches!(id.decision, vnc_transport::TrustDecision::Unknown { .. })
+                && chosen.needs_credentials() =>
         {
             Some(id.clone())
         }

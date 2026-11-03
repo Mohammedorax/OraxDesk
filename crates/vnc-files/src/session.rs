@@ -131,15 +131,13 @@ impl SftpSession {
         // connection and then simply never answer. The connect deadline
         // covers it too, so the Files panel cannot sit on "connecting"
         // forever behind a server that accepted TCP and then went quiet.
-        let sftp = match tokio::time::timeout(
-            cfg.ssh.connect_timeout(),
-            open_sftp_subsystem(&mut ssh),
-        )
-        .await
-        {
-            Ok(result) => result?,
-            Err(_) => return Err(Error::Timeout),
-        };
+        let sftp =
+            match tokio::time::timeout(cfg.ssh.connect_timeout(), open_sftp_subsystem(&mut ssh))
+                .await
+            {
+                Ok(result) => result?,
+                Err(_) => return Err(Error::Timeout),
+            };
 
         tracing::info!(endpoint = %cfg.endpoint(), auth = cfg.ssh.auth.label(), "sftp sidecar connected");
         Ok(Self {

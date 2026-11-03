@@ -50,8 +50,8 @@ pub fn set_language(app: &AppHandle, lang: Lang) {
 
 fn build_menu(app: &AppHandle, lang: Lang) -> tauri::Result<Menu<Wry>> {
     let (open_label, quit_label) = menu::tray_labels(lang);
-    let mut builder = MenuBuilder::new(app)
-        .item(&MenuItemBuilder::with_id("tray:open", open_label).build(app)?);
+    let mut builder =
+        MenuBuilder::new(app).item(&MenuItemBuilder::with_id("tray:open", open_label).build(app)?);
 
     let recent = recent_hosts(app);
     if !recent.is_empty() {

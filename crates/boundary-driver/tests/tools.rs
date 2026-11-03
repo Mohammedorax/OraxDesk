@@ -195,11 +195,7 @@ async fn an_agent_runs_commands_and_moves_files_only_while_the_person_allows_it(
         // be enforced without a round trip to the machine being revoked, so
         // this pins the refusal to `drive()`'s `client.allowed()` check
         // rather than to the host having said no over the wire.
-        assert!(
-            refused.reason.contains("Nothing ran"),
-            "{}",
-            refused.reason
-        );
+        assert!(refused.reason.contains("Nothing ran"), "{}", refused.reason);
         let (reply, _) = client
             .call(
                 &Request::Remove {

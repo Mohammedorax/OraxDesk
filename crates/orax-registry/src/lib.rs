@@ -38,8 +38,8 @@ use sha2::{Digest, Sha256};
 use std::{
     collections::HashMap,
     sync::{
-        Arc, Mutex, OnceLock,
         atomic::{AtomicI64, Ordering},
+        Arc, Mutex, OnceLock,
     },
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
@@ -612,10 +612,7 @@ impl Client {
             // server's time and sign the same call again. The retry is
             // bounded to one, and the request body is rebuilt each time so
             // the new timestamp and nonce are covered by the new signature.
-            if !corrected
-                && keys.is_some()
-                && status.as_u16() == 401
-                && is_clock_rejection(&bytes)
+            if !corrected && keys.is_some() && status.as_u16() == 401 && is_clock_rejection(&bytes)
             {
                 match self.sync_time().await {
                     Ok(()) => {
@@ -1013,9 +1010,15 @@ mod tests {
     fn offset_removes_half_of_the_round_trip() {
         // The registry says 1_700_000_000; this computer's clock reads
         // 1_699_996_400 at the start and 1_699_996_402 at the end.
-        assert_eq!(measured_offset(1_700_000_000, 1_699_996_400, 1_699_996_402), 3_599);
+        assert_eq!(
+            measured_offset(1_700_000_000, 1_699_996_400, 1_699_996_402),
+            3_599
+        );
         // And it works in the other direction too.
-        assert_eq!(measured_offset(1_699_990_000, 1_700_000_000, 1_700_000_002), -10_001);
+        assert_eq!(
+            measured_offset(1_699_990_000, 1_700_000_000, 1_700_000_002),
+            -10_001
+        );
     }
 
     #[test]
@@ -1040,18 +1043,13 @@ mod tests {
             let mut request = [0u8; 1024];
             let _ = socket.read(&mut request).await.expect("read");
             let server_time = local_seconds() + 3_600;
-            let body = format!(
-                r#"{{"status":"ok","api":"v1","server_time":{server_time}}}"#
-            );
+            let body = format!(r#"{{"status":"ok","api":"v1","server_time":{server_time}}}"#);
             let date = httpdate::fmt_http_date(SystemTime::now());
             let response = format!(
                 "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nDate: {date}\r\nConnection: close\r\n\r\n{body}",
                 body.len()
             );
-            socket
-                .write_all(response.as_bytes())
-                .await
-                .expect("write");
+            socket.write_all(response.as_bytes()).await.expect("write");
         });
 
         let client = Client::new(&format!("http://{address}")).expect("loopback client");

@@ -308,9 +308,9 @@ impl PpkFile {
 /// `Private-Lines` count puts a base64 private-key line here, and embedding it
 /// in an error hands the key to every log and error dialog that shows one.
 fn split_field(line: &str, line_no: usize) -> Result<(&str, &str), PpkError> {
-    let (key, value) = line.split_once(':').ok_or_else(|| {
-        PpkError::Malformed(format!("line {line_no} is not a field"))
-    })?;
+    let (key, value) = line
+        .split_once(':')
+        .ok_or_else(|| PpkError::Malformed(format!("line {line_no} is not a field")))?;
     Ok((key.trim(), value.trim()))
 }
 

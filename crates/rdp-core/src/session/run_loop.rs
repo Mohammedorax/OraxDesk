@@ -2180,14 +2180,16 @@ mod tests {
 
         // Any bytes at all are the answer, and the probe closes on them: a
         // stream carrying traffic is a server that answers for itself.
-        rl.received.fetch_add(64, std::sync::atomic::Ordering::Relaxed);
+        rl.received
+            .fetch_add(64, std::sync::atomic::Ordering::Relaxed);
         rl.tick(&events).await.expect("tick");
         assert!(rx.try_recv().is_err(), "the answer closed the probe");
         assert!(rl.probe_sent.is_none() && rl.probe_unanswered_since.is_none());
 
         // A fresh quiet streak arms a fresh probe.
         rl.tick(&events).await.expect("tick");
-        rx.try_recv().expect("a new probe once the stream is quiet again");
+        rx.try_recv()
+            .expect("a new probe once the stream is quiet again");
     }
 
     /// A peer that never answers a probe the specification says it MUST
@@ -2211,9 +2213,12 @@ mod tests {
             .await
             .expect_err("silence past the budget is a dead peer");
         assert!(
-            matches!(err, RdpError::Timeout {
-                stage: ConnectStage::Connected,
-            }),
+            matches!(
+                err,
+                RdpError::Timeout {
+                    stage: ConnectStage::Connected,
+                }
+            ),
             "{err:?}"
         );
         assert!(err.is_transient(), "the ladder must redial: {err}");
@@ -2246,7 +2251,11 @@ mod tests {
         };
         assert!(sent_at.elapsed() < PROBE_STALE, "a fresh answer clock");
         assert_eq!(baseline, 0);
-        assert_eq!(rl.probe_unanswered_since, Some(anchor), "the anchor is not moved");
+        assert_eq!(
+            rl.probe_unanswered_since,
+            Some(anchor),
+            "the anchor is not moved"
+        );
 
         // Now the anchor itself is past the budget while a re-send just went
         // out: the verdict stands, because it was the streak and not the last
@@ -2274,15 +2283,19 @@ mod tests {
 
         rl.tick(&events).await.expect("tick");
         let _first = rx.try_recv().expect("the first probe");
-        rl.received
-            .fetch_add(PROBE_ANSWER_MAX_BYTES + 1, std::sync::atomic::Ordering::Relaxed);
+        rl.received.fetch_add(
+            PROBE_ANSWER_MAX_BYTES + 1,
+            std::sync::atomic::Ordering::Relaxed,
+        );
         rl.tick(&events).await.expect("tick");
         assert!(!rl.probe_disabled, "one repaint is not a pattern yet");
 
         rl.tick(&events).await.expect("tick");
         let _second = rx.try_recv().expect("the second probe");
-        rl.received
-            .fetch_add(PROBE_ANSWER_MAX_BYTES + 1, std::sync::atomic::Ordering::Relaxed);
+        rl.received.fetch_add(
+            PROBE_ANSWER_MAX_BYTES + 1,
+            std::sync::atomic::Ordering::Relaxed,
+        );
         rl.tick(&events).await.expect("tick");
         assert!(rl.probe_disabled, "two repaints in a row are enough");
 

@@ -530,14 +530,15 @@ pub(crate) async fn handshake(
     // ask can carry it and the user approves the key BEFORE this password is
     // encrypted to it. First contact with a server that wants credentials is
     // the exact case the gate exists for.
-    let gated = matches!(trust, vnc_transport::TrustDecision::Unknown { .. }).then(|| {
-        ServerIdentity {
+    let gated =
+        matches!(trust, vnc_transport::TrustDecision::Unknown { .. }).then(|| ServerIdentity {
             scheme: PinScheme::Ra2,
             decision: trust.clone(),
             surfaced: false,
-        }
-    });
-    let supplied = creds.obtain(METHOD, kind, false, opts, gated.as_ref()).await?;
+        });
+    let supplied = creds
+        .obtain(METHOD, kind, false, opts, gated.as_ref())
+        .await?;
     let password = supplied.password.unwrap_or_default();
     let username = match kind {
         CredentialKind::UsernameAndPassword => {
@@ -1128,7 +1129,13 @@ mod tests {
             let outcome = if pinned {
                 handshake(s, security_type, &o, &CredentialSource::none()).await
             } else {
-                handshake(s, security_type, &o, &CredentialSource::interactive(&ask_tx, 1, None, None)).await
+                handshake(
+                    s,
+                    security_type,
+                    &o,
+                    &CredentialSource::interactive(&ask_tx, 1, None, None),
+                )
+                .await
             }
             .unwrap();
             if pinned {

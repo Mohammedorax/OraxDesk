@@ -1476,10 +1476,7 @@ async fn require_profile_endpoint(
     if saved == wanted && profile.port == port {
         return Ok(());
     }
-    Err(
-        "the saved credentials belong to a different machine than the one being connected"
-            .into(),
-    )
+    Err("the saved credentials belong to a different machine than the one being connected".into())
 }
 
 /// Load the SSH passphrase saved for a host profile (blocking keychain IO on a
