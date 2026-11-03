@@ -90,7 +90,7 @@
 //! be silently wrong rather than merely absent.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -109,7 +109,7 @@ use vnc_core::{ClientCommand, ProtocolKind, QualityPreset, Rect};
 
 use crate::agent::mirror::{self, MirrorStatus, Perceive};
 use crate::agent::wire;
-use crate::agent::{AgentPlane, Attachment, NO_CONNECTION, PROTOCOL};
+use crate::agent::{AgentPlane, Attachment, ExecConsent, NO_CONNECTION, PROTOCOL};
 use crate::state::{MachineKey, SessionEntry};
 
 /// The largest encoded image this surface will put in one reply.
@@ -146,6 +146,21 @@ pub struct Ctx {
     /// sidecar would be at the mercy of whichever test ran before it. Every
     /// [`Ctx`] carries its own.
     pub files: Filer,
+    /// Whether a person has allowed `limb.exec` on this computer.
+    ///
+    /// Shared with `AppState` rather than copied, so an answer given in the AI
+    /// Agents panel is seen by a connection that is already open. [`limb_exec`]
+    /// reads it at the moment of use; a copy taken at `hello` would let a
+    /// revocation wait for a reconnect, which is the one thing it must not do.
+    pub exec_consent: Arc<AtomicU8>,
+    /// How the shell puts the consent question in front of a person.
+    ///
+    /// A closure like `emit` and `files`, so this module still names no Tauri
+    /// type and the whole dispatch stays testable. It is called at most once
+    /// per connection, from [`hello`] when `exec` is asked for and from
+    /// [`limb_exec`] when the answer had not arrived yet; the flag lives on
+    /// [`Peer`], so ten refused calls cannot stack ten dialogs.
+    pub ask: Arc<dyn Fn() + Send + Sync>,
 }
 
 /// One connection's own state.
@@ -174,6 +189,15 @@ pub struct Peer {
     /// transport that builds a `Peer` and calls [`dispatch`] is counted with
     /// no further work.
     pub connection: Option<crate::agent::ConnectionGuard>,
+    /// Whether this connection has already put the exec consent question in
+    /// front of a person.
+    ///
+    /// Per connection, and shared through an `Arc` only because `Peer` is
+    /// cloned. The shell's event is fire and forget, so a second `ask` would
+    /// stack a second dialog on the same unanswered question; the flag makes
+    /// "at most once here" a property of the connection rather than of the
+    /// code path that happened to run first.
+    pub exec_prompted: Arc<AtomicBool>,
 }
 
 /// A refusal, as JSON-RPC spells it.
@@ -418,6 +442,19 @@ fn separate_because(needed: Capability) -> &'static str {
     }
 }
 
+/// Put the exec consent question in front of a person, once per connection.
+///
+/// `swap` is the whole of "at most once": [`hello`] asks when a connection
+/// that can run commands has not been answered, and the first refused
+/// [`limb_exec`] asks as the fallback, and only the first of those ever reaches
+/// the shell's dialog. The answer itself is never cached here; only the fact
+/// that the question was asked is.
+fn ask_for_exec_consent(ctx: &Ctx, peer: &Peer) {
+    if !peer.exec_prompted.swap(true, Ordering::Relaxed) {
+        (ctx.ask)();
+    }
+}
+
 /// Establish, and learn the grant.
 ///
 /// A `protocol` this build does not know is a HARD ERROR and never a
@@ -476,6 +513,16 @@ fn hello(ctx: &Ctx, peer: &mut Peer, params: &Value) -> Result<Value, RpcError> 
         }
         None => CapabilitySet::of(DEFAULT_CAPABILITIES),
     };
+    // The prompt should be waiting, not only appear after a failure. A
+    // connection that asked for `exec` and found the question unanswered has
+    // done the one thing that needs a person, so ask now; `limb.exec` still
+    // refuses until they answer, and this is the same once-per-connection flag
+    // the refusal uses.
+    if peer.capabilities.allows(Capability::Exec)
+        && ExecConsent::load(&ctx.exec_consent) == ExecConsent::Unasked
+    {
+        ask_for_exec_consent(ctx, peer);
+    }
     Ok(json!({
         "protocol": PROTOCOL,
         "server": { "name": "OraxDesk", "version": env!("CARGO_PKG_VERSION") },
@@ -1848,6 +1895,29 @@ async fn limb_exec(ctx: &Ctx, peer: &Peer, params: &Value) -> Result<Value, RpcE
     // in no role bundle (`00 R19`), so a connection holding it holds it
     // because a grant named the string.
     require(peer, Capability::Exec)?;
+    // A grant names `exec`; it does not answer whether commands may run on
+    // THIS computer. That is a person's decision, read here at the moment of
+    // use rather than cached at hello, so allow and deny both reach a
+    // connection that is already open.
+    match ExecConsent::load(&ctx.exec_consent) {
+        ExecConsent::Allowed => {}
+        ExecConsent::Denied => {
+            return Err(RpcError::tagged(
+                "CONSENT_REQUIRED",
+                "the person at this computer denied command execution, so nothing was run and nothing will be until they allow it. The decision can be changed at any time in OraxDesk's AI Agents panel; until then dvv_run and dvv_job cannot work on this machine",
+            ))
+        }
+        ExecConsent::Unasked => {
+            // The dialog is not a substitute for the answer: the command is
+            // refused now, exactly as it is while denied. The sentence says
+            // the question has been put, rather than implying a run happened.
+            ask_for_exec_consent(ctx, peer);
+            return Err(RpcError::tagged(
+                "CONSENT_REQUIRED",
+                "the person at this computer has not been asked yet whether agents may run commands, so nothing was run. OraxDesk is showing them the prompt now; ask again once they answer. dvv_run and dvv_job stay stopped until they allow it",
+            ));
+        }
+    }
     let spec = wire::decode_exec(params).map_err(RpcError::bad_params)?;
 
     let wait = spec.timeout.saturating_add(EXEC_SLACK);
@@ -2713,6 +2783,9 @@ mod tests {
         /// What the fake sidecar holds, so a test can seed a file and then
         /// read back exactly what a `files.put` left behind.
         disk: Arc<Disk>,
+        /// How many times the shell was asked to put the exec consent question
+        /// in front of a person. The gate's tests count dialogs with it.
+        asked: Arc<std::sync::atomic::AtomicUsize>,
         _dir: tempfile::TempDir,
     }
 
@@ -2755,6 +2828,12 @@ mod tests {
         // so a test sees the `counts` payloads a real window would and the two
         // emit paths cannot silently be two.
         plane.wire_counts(sessions.clone(), emit.clone());
+        // A person who has already allowed commands, which is the state most
+        // of these tests are about: the exec verbs, not the gate. A test that
+        // is about the gate writes this cell itself.
+        let exec_consent = Arc::new(AtomicU8::new(ExecConsent::Allowed.as_u8()));
+        let asked = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counter = asked.clone();
         Fixture {
             ctx: Ctx {
                 sessions,
@@ -2762,10 +2841,15 @@ mod tests {
                 plane,
                 emit,
                 files: disk.clone().filer(),
+                exec_consent,
+                ask: Arc::new(move || {
+                    counter.fetch_add(1, Ordering::Relaxed);
+                }),
             },
             commands,
             events,
             disk,
+            asked,
             _dir: dir,
         }
     }
@@ -4730,6 +4814,7 @@ mod tests {
             mut commands,
             events: _events,
             disk: _disk,
+            asked: _asked,
             _dir,
         } = fixture;
         let mut peer = greeted(&ctx).await;
@@ -5006,6 +5091,162 @@ mod tests {
         .await
         .expect_err("timeoutMs has no default");
         assert!(refused.message.contains("timeoutMs"), "{}", refused.message);
+    }
+
+    // ---------------------------------------------------------------------
+    // Exec consent: a person's answer, checked at the moment of use.
+    // ---------------------------------------------------------------------
+
+    /// The question should be waiting, not only appear after a failure.
+    ///
+    /// A connection that asks for `exec` and finds no answer has already done
+    /// the one thing that needs a person, so `hello` asks. A second `hello` on
+    /// the same connection does not stack a second dialog on the same question.
+    #[tokio::test]
+    async fn hello_that_asks_for_exec_while_unasked_fires_the_prompt_once() {
+        let fixture = fixture();
+        ExecConsent::Unasked.store(&fixture.ctx.exec_consent);
+        let mut peer = Peer::default();
+        let hello = || {
+            json!({
+                "protocol": PROTOCOL,
+                "client": { "name": "test" },
+                "capabilities": ["view", "exec"],
+            })
+        };
+
+        call(&fixture.ctx, &mut peer, "hello", hello()).await;
+        assert_eq!(
+            fixture.asked.load(Ordering::Relaxed),
+            1,
+            "the prompt is due at hello, not only after the first refusal"
+        );
+        call(&fixture.ctx, &mut peer, "hello", hello()).await;
+        assert_eq!(
+            fixture.asked.load(Ordering::Relaxed),
+            1,
+            "one question per connection, however often hello is said"
+        );
+    }
+
+    /// No answer yet: the call is refused by name, and repeated calls leave one
+    /// dialog rather than one per call.
+    ///
+    /// The greeting ran while the answer was still `Allowed`, which is the
+    /// state a connection opened before this build's `hello` check (or before
+    /// the question existed) is in. `limb.exec` is the fallback that still puts
+    /// the question in front of somebody.
+    #[tokio::test]
+    async fn exec_while_unasked_is_refused_and_asks_once_across_calls() {
+        let mut fixture = fixture();
+        let mut peer = greeted(&fixture.ctx).await;
+        ExecConsent::Unasked.store(&fixture.ctx.exec_consent);
+        call(
+            &fixture.ctx,
+            &mut peer,
+            "limb.attach",
+            json!({ "address": "10.0.0.5", "protocol": "vnc", "slot": 0 }),
+        )
+        .await;
+
+        for _ in 0..2 {
+            let refused = dispatch(
+                &fixture.ctx,
+                &mut peer,
+                "limb.exec",
+                &json!({ "sessionId": "s1", "command": "uname", "timeoutMs": 2000 }),
+            )
+            .await
+            .expect_err("no answer means no command");
+            assert_eq!(refused.tag, Some("CONSENT_REQUIRED"));
+            assert!(
+                refused.message.contains("not been asked"),
+                "the refusal has to say which state this is: {}",
+                refused.message
+            );
+            assert!(
+                refused.message.contains("dvv_run"),
+                "and be honest about what is stopped: {}",
+                refused.message
+            );
+        }
+        assert_eq!(
+            fixture.asked.load(Ordering::Relaxed),
+            1,
+            "ten refused calls must not stack ten dialogs"
+        );
+        // Nothing went near the machine: a refusal is before the decode and
+        // before the intent.
+        assert!(
+            fixture.commands.try_recv().is_err(),
+            "a refused exec puts nothing on the wire"
+        );
+    }
+
+    /// A denial is an answer. The command is refused and nothing is asked
+    /// again, because there is no question left until a person changes it.
+    #[tokio::test]
+    async fn exec_while_denied_is_refused_without_asking_again() {
+        let fixture = fixture();
+        let mut peer = greeted(&fixture.ctx).await;
+        ExecConsent::Denied.store(&fixture.ctx.exec_consent);
+        call(
+            &fixture.ctx,
+            &mut peer,
+            "limb.attach",
+            json!({ "address": "10.0.0.5", "protocol": "vnc", "slot": 0 }),
+        )
+        .await;
+
+        let refused = dispatch(
+            &fixture.ctx,
+            &mut peer,
+            "limb.exec",
+            &json!({ "sessionId": "s1", "command": "uname", "timeoutMs": 2000 }),
+        )
+        .await
+        .expect_err("a denial is a refusal");
+        assert_eq!(refused.tag, Some("CONSENT_REQUIRED"));
+        assert!(
+            refused.message.contains("denied"),
+            "the sentence says WHO said no: {}",
+            refused.message
+        );
+        assert!(
+            refused.message.contains("AI Agents panel"),
+            "and where the person can change it: {}",
+            refused.message
+        );
+        assert_eq!(
+            fixture.asked.load(Ordering::Relaxed),
+            0,
+            "a denial is an answer, so there is nothing to ask"
+        );
+    }
+
+    /// The gate is `exec` and only `exec`. Looking at a machine neither needs
+    /// the answer nor causes the question to appear.
+    #[tokio::test]
+    async fn a_non_exec_verb_is_unaffected_by_the_exec_consent_state() {
+        let fixture = fixture();
+        let mut peer = greeted(&fixture.ctx).await;
+
+        for state in [ExecConsent::Unasked, ExecConsent::Denied] {
+            state.store(&fixture.ctx.exec_consent);
+            let status = call(
+                &fixture.ctx,
+                &mut peer,
+                "limb.status",
+                json!({ "sessionId": "s1" }),
+            )
+            .await;
+            assert_eq!(status["sessionId"], "s1", "{state:?}");
+        }
+        assert_eq!(
+            fixture.asked.load(Ordering::Relaxed),
+            0,
+            "viewing a machine is not running a command on it"
+        );
     }
 
     // ---------------------------------------------------------------------

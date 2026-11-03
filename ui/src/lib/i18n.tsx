@@ -730,6 +730,19 @@ const ar = {
   "agent.startFailed": "أخفقت آخر محاولة لبدءها: {reason}",
   "agent.turnBackOn": "أعد تشغيلها",
   "agent.oneSocket": "مقبس واحد، على هذا الجهاز وحده. لا شيء يُفتح على الشبكة.",
+  "agent.execConsentTitle": "تشغيل الأوامر",
+  "agent.execConsentNote":
+    "يعمل العرض والتحكم بدون هذه الموافقة. الأوامر وحدها تتوقف حتى تسمح، وتقدر تغيّر القرار في أي وقت.",
+  "agent.execConsentAllowed": "مسموح",
+  "agent.execConsentDenied": "ممنوع",
+  "agent.execConsentUnasked": "لم يُسأل بعد",
+  "agent.execAskTitle": "هل تسمح للوكيل بتشغيل الأوامر؟",
+  "agent.execAskBody":
+    "طلب وكيل تشغيل أمر على إحدى أجهزتك. الأمر يُنفَّذ على الجهاز البعيد بجلسة OraxDesk المفتوحة، لا على هذا الجهاز. العرض والتحكم يعملان بدون هذه الموافقة، وتقدر تغيّر القرار في أي وقت من لوحة الوكلاء.",
+  "agent.execAskAllow": "السماح بتشغيل الأوامر",
+  "agent.execAskDeny": "ليس الآن",
+  "agent.execAskDeniedNote":
+    "بعد الرفض يتوقف dvv_run وdvv_job على هذا الجهاز حتى تسمح.",
 
   // نافذة الشهادة
   "cert.changedTitle": "تغيّرت هوية الخادم",
@@ -2345,6 +2358,19 @@ const en: Record<keyof typeof ar, string> = {
   "agent.startFailed": "The last attempt to start it failed: {reason}",
   "agent.turnBackOn": "Turn it back on",
   "agent.oneSocket": "One socket, on this computer only. Nothing opens on the network.",
+  "agent.execConsentTitle": "Command execution",
+  "agent.execConsentNote":
+    "Viewing and control work without this permission. Commands alone stop until you allow them, and you can change the decision at any time.",
+  "agent.execConsentAllowed": "Allowed",
+  "agent.execConsentDenied": "Denied",
+  "agent.execConsentUnasked": "Not asked yet",
+  "agent.execAskTitle": "Allow the agent to run commands?",
+  "agent.execAskBody":
+    "An agent asked to run a command on one of your machines. The command runs on the remote machine through your open OraxDesk session, not on this computer. Viewing and control work without this permission, and you can change the decision at any time from the AI Agents panel.",
+  "agent.execAskAllow": "Allow command execution",
+  "agent.execAskDeny": "Not now",
+  "agent.execAskDeniedNote":
+    "After a denial, dvv_run and dvv_job stop working on this computer until you allow them.",
 
   // The certificate prompt
   "cert.changedTitle": "Server identity has CHANGED",

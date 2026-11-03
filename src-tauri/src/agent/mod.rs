@@ -48,7 +48,7 @@ pub mod wire;
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicU8, Ordering};
 use std::sync::Arc;
 
 use crate::state::SessionEntry;
@@ -82,6 +82,74 @@ pub const MAX_ATTACHED_LIMBS: usize = 4;
 /// a webview that had to be running for it to take effect would make a
 /// headless build impossible to configure.
 pub const AGENT_PLANE_ENABLED_KEY: &str = "agent_plane_enabled";
+
+/// Preference key: may an agent run commands on this computer? Default
+/// **unasked**, which is not a decision: `limb.exec` is refused until a person
+/// answers, and the answer is remembered.
+///
+/// Only `allowed` and `denied` mean anything. A missing row, an empty value or
+/// anything this build cannot read is [`ExecConsent::Unasked`], which refuses,
+/// because an unreadable setting must never be a permission.
+pub const EXEC_CONSENT_KEY: &str = "agent_exec_consent";
+
+/// What a person has said about command execution on this computer.
+///
+/// Held in an `AtomicU8` on `AppState` and read at the moment of use, so an
+/// answer in the AI Agents panel reaches connections that are already open:
+/// no reconnect and no second `hello`. [`Self::parse`] fails closed, and so
+/// does [`Self::from_u8`], because both are on the path to a permission.
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExecConsent {
+    /// Nobody has been asked yet. `limb.exec` is refused with
+    /// `CONSENT_REQUIRED` and the shell puts the question in front of them.
+    Unasked = 0,
+    /// A person said yes. The answer survives a restart.
+    Allowed = 1,
+    /// A person said no. Remembered too, and reversible in the panel.
+    Denied = 2,
+}
+
+impl ExecConsent {
+    /// Interpret the stored value. Only the two words this build writes are a
+    /// decision: `"allowed"` is the only thing that permits, and every other
+    /// string, including one a newer build wrote, is `Unasked`.
+    pub fn parse(raw: Option<&str>) -> Self {
+        match raw
+            .map(|value| value.trim().to_ascii_lowercase())
+            .as_deref()
+        {
+            Some("allowed") => Self::Allowed,
+            Some("denied") => Self::Denied,
+            _ => Self::Unasked,
+        }
+    }
+
+    pub fn as_u8(self) -> u8 {
+        self as u8
+    }
+
+    /// The inverse of [`Self::as_u8`]. An unknown byte is `Unasked`, never
+    /// `Allowed`: a cell this build cannot read has to fail closed exactly as
+    /// a row it cannot read does.
+    pub fn from_u8(value: u8) -> Self {
+        match value {
+            1 => Self::Allowed,
+            2 => Self::Denied,
+            _ => Self::Unasked,
+        }
+    }
+
+    /// Read the shared cell, for the verbs that need the answer now.
+    pub fn load(cell: &AtomicU8) -> Self {
+        Self::from_u8(cell.load(Ordering::Relaxed))
+    }
+
+    /// Publish a new answer to every connection already open.
+    pub fn store(self, cell: &AtomicU8) {
+        cell.store(self.as_u8(), Ordering::Relaxed);
+    }
+}
 
 /// App-wide agent lifecycle broadcast (`emit`, every window), so a pane can
 /// show who is driving its machine without owning the socket.
@@ -1959,6 +2027,7 @@ async fn handle_message(ctx: &Arc<Ctx>, peer: &mut Peer, request: Value) -> Opti
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::AtomicU8;
 
     /// One live session, plus the receiver that keeps it looking alive:
     /// `SessionEntry::is_live` reads the command channel, so a dropped
@@ -2096,6 +2165,11 @@ mod tests {
                     "this fixture has no SFTP sidecar behind it",
                 )));
             }),
+            // These tests are about the listener and the wire, not about the
+            // consent gate, so exec is allowed the way it was before the gate
+            // existed. The gate has its own tests in `server.rs`.
+            exec_consent: Arc::new(AtomicU8::new(ExecConsent::Allowed.as_u8())),
+            ask: Arc::new(|| {}),
         });
 
         let (client, server) = tokio::io::duplex(64 * 1024);
@@ -2493,6 +2567,8 @@ mod tests {
             plane: plane.clone(),
             emit: Arc::new(|_| {}),
             files: no_sidecar(),
+            exec_consent: Arc::new(AtomicU8::new(ExecConsent::Allowed.as_u8())),
+            ask: Arc::new(|| {}),
         });
         start(&plane, ctx, dir.path().join("agent.sock")).expect("the plane starts");
 
@@ -2574,6 +2650,34 @@ mod tests {
             events.lock().last().cloned().unwrap(),
             counts_of(&plane, &sessions).event()
         );
+    }
+
+    /// Only the two words this build writes are a decision, and an unknown
+    /// word is never a yes.
+    ///
+    /// `exec` hands an agent a shell on somebody's machine, so the failure
+    /// direction is the whole test: a missing row, an empty value and a typo
+    /// all have to land on `Unasked` (refused, prompt due) rather than on
+    /// `Allowed`.
+    #[test]
+    fn exec_consent_reads_only_allowed_and_denied_and_defaults_to_unasked() {
+        assert_eq!(ExecConsent::parse(None), ExecConsent::Unasked);
+        assert_eq!(ExecConsent::parse(Some("")), ExecConsent::Unasked);
+        assert_eq!(ExecConsent::parse(Some("allowed")), ExecConsent::Allowed);
+        assert_eq!(
+            ExecConsent::parse(Some(" ALLOWED ")),
+            ExecConsent::Allowed,
+            "the write trims and lowercases, so the read has to agree"
+        );
+        assert_eq!(ExecConsent::parse(Some("denied")), ExecConsent::Denied);
+        for unknown in ["true", "yes", "on", "1", "allow", "deny", "unasked"] {
+            assert_eq!(
+                ExecConsent::parse(Some(unknown)),
+                ExecConsent::Unasked,
+                "{unknown} must never be read as permission"
+            );
+        }
+        assert_eq!(ExecConsent::from_u8(9), ExecConsent::Unasked);
     }
 
     #[test]
@@ -2898,6 +3002,8 @@ mod tests {
             plane: plane.clone(),
             emit: Arc::new(|_| {}),
             files: no_sidecar(),
+            exec_consent: Arc::new(AtomicU8::new(ExecConsent::Allowed.as_u8())),
+            ask: Arc::new(|| {}),
         });
 
         // Off. Nothing exists, and that is the default every install gets.
@@ -3034,6 +3140,8 @@ mod tests {
             plane: plane.clone(),
             emit: Arc::new(|_| {}),
             files: no_sidecar(),
+            exec_consent: Arc::new(AtomicU8::new(ExecConsent::Allowed.as_u8())),
+            ask: Arc::new(|| {}),
         });
         let path = socket_path();
         start(&plane, ctx, path.clone()).expect("the plane starts at its published path");

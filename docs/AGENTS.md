@@ -337,6 +337,16 @@ never instructions to follow.
   permission and the same person's consent, and `platform` names the shell the
   far side will use (`windows` for `cmd.exe`, `posix` for `/bin/sh`), because
   the way work is detached differs.
+- It **cannot** run a command until the person at that computer says so. The
+  first `hello` that names `exec` puts a question in OraxDesk — allow command
+  execution, or not — and the answer is remembered and reversible in the AI
+  Agents panel. Until it is allowed, `dvv_run` and `dvv_job` fail with
+  `CONSENT_REQUIRED` and a sentence saying which of the two it is: the person
+  denied it, or has not been asked and the prompt is on their screen. Nothing
+  is run either way, so an agent should stop and tell its human rather than
+  retry; after they answer, the same call works with no reconnect and no
+  restart. Viewing, screenshots, input, files and opening machines are not
+  gated by this.
 
 ## Building this into your own product
 

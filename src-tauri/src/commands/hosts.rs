@@ -244,12 +244,14 @@ pub async fn get_app_setting(
 
 /// Write a global app setting.
 ///
-/// One setting has an effect beyond being stored: `agent_plane_enabled` binds
-/// or unlinks the `dvvp.v1` socket. It is applied here rather than at the next
-/// launch so that switching the plane on is a switch and not a restart, and so
-/// that switching it off means the socket is gone at that moment rather than
-/// at the next one. `app` is injected by Tauri and is not part of the invoke
-/// surface, so the webview's call is unchanged.
+/// Two settings have an effect beyond being stored. `agent_plane_enabled`
+/// binds or unlinks the `dvvp.v1` socket; `agent_exec_consent` decides whether
+/// `limb.exec` is refused. Both are applied here rather than at the next
+/// launch so that the change is a switch and not a restart: switching the
+/// plane off means the socket is gone at that moment, and allowing or denying
+/// commands reaches the connections that are already open, with no reconnect
+/// and no second `hello`. `app` is injected by Tauri and is not part of the
+/// invoke surface, so the webview's call is unchanged.
 #[tauri::command]
 pub async fn set_app_setting(
     app: AppHandle,
@@ -263,6 +265,12 @@ pub async fn set_app_setting(
     super::blocking(move || store.set_setting(&written, &wanted)).await?;
     if key == crate::agent::AGENT_PLANE_ENABLED_KEY {
         crate::commands::agent::apply(&app, crate::agent::plane_enabled(Some(&value)));
+    }
+    if key == crate::agent::EXEC_CONSENT_KEY {
+        // The same parser the startup read uses, so a stored value and a live
+        // one cannot disagree. An unrecognised value becomes `Unasked`, which
+        // refuses, rather than leaving the previous permission standing.
+        crate::agent::ExecConsent::parse(Some(&value)).store(&state.agent_exec_consent);
     }
     Ok(())
 }

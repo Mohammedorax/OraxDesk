@@ -27,6 +27,14 @@ use crate::state::AppState;
 /// measured about half a second, so this is several of those, not one.
 const AGENT_OPEN_CLAIM_WINDOW: Duration = Duration::from_secs(5);
 
+/// App-wide event asking a person whether agents may run commands here.
+///
+/// A dedicated event rather than a `type` on [`agent::AGENT_EVENT`]: that
+/// surface is a status stream whose decoder merges flat payloads, and this is a
+/// question that has to be answered. The prompt listens to this name alone, so
+/// nothing a status row says can open a dialog.
+pub const EXEC_CONSENT_EVENT: &str = "agent://exec-consent";
+
 /// Build the context the socket answers requests from.
 ///
 /// The emitter is a closure over the `AppHandle` rather than the handle
@@ -39,6 +47,24 @@ fn ctx_for(app: &AppHandle, state: &AppState) -> Arc<agent::server::Ctx> {
         plane: state.agent.clone(),
         emit: emitter(app),
         files: filer(app),
+        exec_consent: state.agent_exec_consent.clone(),
+        ask: consent_asker(app),
+    })
+}
+
+/// How the socket puts the exec consent question in front of a person.
+///
+/// A closure over the `AppHandle`, for the same reason [`emitter`] is one:
+/// `crate::agent::server` names no Tauri type. It emits and returns; the answer
+/// arrives through `set_app_setting`, which is where the shared atomic is
+/// written, so the connection that asked reads it on its next call.
+fn consent_asker(app: &AppHandle) -> Arc<dyn Fn() + Send + Sync> {
+    let app = app.clone();
+    Arc::new(move || {
+        // `{}` deliberately: the question is a rule for this computer, not a
+        // detail of whichever connection happened to ask first, and one dialog
+        // serves every open connection that finds it unanswered.
+        let _ = app.emit(EXEC_CONSENT_EVENT, serde_json::json!({}));
     })
 }
 

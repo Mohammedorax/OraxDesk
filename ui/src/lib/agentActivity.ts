@@ -765,6 +765,44 @@ export const AGENT_PLANE_ON = "true";
 export const AGENT_PLANE_OFF = "false";
 
 /**
+ * The store key that records whether a person allowed agents to run commands.
+ *
+ * `crate::agent::EXEC_CONSENT_KEY`, written with `set_app_setting` exactly like
+ * the plane's switch. Only `allowed` and `denied` are answers; a missing value
+ * is `unasked`, which is not permission. The shell reads the same cell at the
+ * moment of use, so an answer here reaches connections that are already open.
+ */
+export const AGENT_EXEC_CONSENT_KEY = "agent_exec_consent";
+export const AGENT_EXEC_CONSENT_ALLOWED = "allowed";
+export const AGENT_EXEC_CONSENT_DENIED = "denied";
+
+/**
+ * The question a first command asks, and the dialog only this event opens.
+ *
+ * AGREED. `crate::commands::agent::EXEC_CONSENT_EVENT`. Deliberately not a
+ * `type` on {@link AGENT_ACTIVITY_EVENT}: that stream is status the app merges,
+ * and this is a decision a person has to make.
+ */
+export const AGENT_EXEC_CONSENT_EVENT = "agent://exec-consent";
+
+/** What a person has said about commands on this computer. */
+export type ExecConsent = "unasked" | "allowed" | "denied";
+
+/**
+ * Read the stored answer, failing closed.
+ *
+ * `allowed` is the only value that permits. An unknown string, a value a later
+ * build writes, or a read that failed all become `unasked`, which shows the
+ * prompt rather than granting something nobody agreed to.
+ */
+export function parseExecConsent(raw: string | null | undefined): ExecConsent {
+  const value = (raw ?? "").trim().toLowerCase();
+  if (value === AGENT_EXEC_CONSENT_ALLOWED) return "allowed";
+  if (value === AGENT_EXEC_CONSENT_DENIED) return "denied";
+  return "unasked";
+}
+
+/**
  * The HTTP half of the plane exposes its URL and the `claude mcp add` line;
  * there is no bearer token for the webview to hand out.
  */

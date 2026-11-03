@@ -19,6 +19,7 @@ import { TabStrip, tabPanelId } from "./components/TabStrip";
 import { Pane } from "./components/Pane";
 import { SplitView } from "./components/SplitView";
 import { AgentWall } from "./components/AgentWall";
+import { ExecConsentPrompt } from "./components/ExecConsentPrompt";
 import { SupportOverlay } from "./components/SupportOverlay";
 import { ToastShelf } from "./components/primitives";
 import { panes } from "./lib/layout";
@@ -533,6 +534,13 @@ function MainShell(): ReactNode {
         it. See the file header of `AgentWall`.
       */}
       <AgentWall onShowSession={selectSession} />
+
+      {/*
+        The one decision an agent cannot make for a person: whether commands
+        may run on this computer. App wide and beside the wall because it is
+        about the plane rather than about the session that happened to ask.
+      */}
+      <ExecConsentPrompt />
 
       {/*
         About replaces Preferences rather than opening on top of it: two

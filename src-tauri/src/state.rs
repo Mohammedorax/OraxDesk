@@ -1,13 +1,14 @@
 //! Shared application state managed by Tauri (PRD/01 §6).
 
 use std::collections::HashMap;
+use std::sync::atomic::AtomicU8;
 use std::sync::Arc;
 use std::time::Instant;
 
 use parking_lot::Mutex;
 use vnc_core::{ProtocolDriver, ProtocolKind, SessionHandle, SessionState, VncDriver};
 
-use crate::agent::AgentPlane;
+use crate::agent::{AgentPlane, ExecConsent};
 use crate::thumbnail::ThumbnailPolicy;
 
 /// Global app state, `app.manage`d in `lib.rs::run`.
@@ -63,6 +64,14 @@ pub struct AppState {
     /// file descriptor, which is what makes "off" cost nothing (`AGENT_BRIEF`
     /// D2, `00 R40`).
     pub agent: Arc<AgentPlane>,
+    /// What a person has said about `limb.exec` on this computer.
+    ///
+    /// A shared atomic rather than a field on the socket's context, because
+    /// the answer has to reach a connection that is already open: `set_app_setting`
+    /// writes it and the next `limb.exec` on any connection reads it, with no
+    /// reconnect and no second `hello`. Initialised from [`crate::agent::EXEC_CONSENT_KEY`]
+    /// at startup; absent means [`ExecConsent::Unasked`], which refuses.
+    pub agent_exec_consent: Arc<AtomicU8>,
 }
 
 /// A session window that exists but has not registered a session yet.
@@ -610,6 +619,16 @@ impl AppState {
         credentials: Arc<vnc_store::CredentialStore>,
         host_keys: Arc<Mutex<ssh_transport::HostKeyStore>>,
     ) -> Self {
+        // Read before `store` is moved into the struct. A failed read is
+        // `Unasked` rather than an error: the agent plane must still start,
+        // and the verb that needs consent refuses until somebody answers.
+        let exec_consent = ExecConsent::parse(
+            store
+                .get_setting(crate::agent::EXEC_CONSENT_KEY)
+                .ok()
+                .flatten()
+                .as_deref(),
+        );
         Self {
             store,
             credentials,
@@ -621,6 +640,7 @@ impl AppState {
             opening_windows: Arc::new(Mutex::new(HashMap::new())),
             protocols: Arc::new(ProtocolRegistry::new(host_keys)),
             agent: Arc::new(AgentPlane::default()),
+            agent_exec_consent: Arc::new(AtomicU8::new(exec_consent.as_u8())),
         }
     }
 

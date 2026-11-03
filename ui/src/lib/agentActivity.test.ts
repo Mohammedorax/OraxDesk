@@ -16,6 +16,7 @@ import {
   noticeFresh,
   parseActivityEvent,
   mergePlaneStatus,
+  parseExecConsent,
   parsePlaneStatus,
   planeStatusDetail,
   planeStatusLine,

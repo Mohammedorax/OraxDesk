@@ -55,6 +55,13 @@ import {
   registerTone,
   type RegisterResult,
 } from "../lib/agentSetup";
+import {
+  AGENT_EXEC_CONSENT_ALLOWED,
+  AGENT_EXEC_CONSENT_DENIED,
+  AGENT_EXEC_CONSENT_KEY,
+  parseExecConsent,
+  type ExecConsent as ConsentState,
+} from "../lib/agentActivity";
 import { useAgentActivity } from "../state/AgentActivityContext";
 import { Dialog } from "./primitives";
 import { useT } from "../lib/i18n";
@@ -485,6 +492,95 @@ function ManualSetup({
   );
 }
 
+/**
+ * Whether agents may run commands, and the two ways to change the answer.
+ *
+ * This is the reversible half of the first-time prompt. A person who denied by
+ * accident, or who has changed their mind, should not have to find a store key:
+ * the current state is written out, and both answers stay one press away. A
+ * write reaches the shell's shared cell, so it applies to connections that are
+ * open right now rather than at their next `hello`.
+ */
+function CommandConsent(): ReactNode {
+  const t = useT();
+  const [consent, setConsent] = useState<ConsentState>("unasked");
+
+  useEffect(() => {
+    let alive = true;
+    void safeInvoke<string | null>(
+      "get_app_setting",
+      { key: AGENT_EXEC_CONSENT_KEY },
+      null,
+    ).then((raw) => {
+      if (alive) setConsent(parseExecConsent(raw));
+    });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  const decide = useCallback((next: "allowed" | "denied"): void => {
+    // Shown at once, because the write is what the person asked for and the
+    // shell has no event to echo it back. The next `limb.exec` reads the cell.
+    setConsent(next);
+    void safeInvoke("set_app_setting", { key: AGENT_EXEC_CONSENT_KEY, value: next }, null);
+  }, []);
+
+  const label =
+    consent === "allowed"
+      ? t("agent.execConsentAllowed")
+      : consent === "denied"
+        ? t("agent.execConsentDenied")
+        : t("agent.execConsentUnasked");
+
+  return (
+    <section className="rounded-lg border border-subtle p-4">
+      <div className="flex items-start justify-between gap-4">
+        <div className="min-w-0">
+          <h3 className="text-sm font-semibold text-primary">{t("agent.execConsentTitle")}</h3>
+          <p className="mt-0.5 text-xs text-secondary">{t("agent.execConsentNote")}</p>
+        </div>
+        <span
+          className={classNames(
+            "shrink-0 rounded-full px-2.5 py-0.5 text-2xs font-medium",
+            consent === "allowed"
+              ? "bg-success-subtle text-success"
+              : consent === "denied"
+                ? "bg-warning-subtle text-warning"
+                : "bg-inset text-tertiary",
+          )}
+        >
+          {label}
+        </span>
+      </div>
+      <div className="mt-3 flex flex-wrap gap-2">
+        <button
+          type="button"
+          disabled={consent === "allowed"}
+          className={classNames(
+            "btn-secondary",
+            consent === "allowed" && "cursor-default opacity-60",
+          )}
+          onClick={() => decide(AGENT_EXEC_CONSENT_ALLOWED)}
+        >
+          {t("agent.execAskAllow")}
+        </button>
+        <button
+          type="button"
+          disabled={consent === "denied"}
+          className={classNames(
+            "btn-secondary",
+            consent === "denied" && "cursor-default opacity-60",
+          )}
+          onClick={() => decide(AGENT_EXEC_CONSENT_DENIED)}
+        >
+          {t("agent.execAskDeny")}
+        </button>
+      </div>
+    </section>
+  );
+}
+
 export function AgentConnect({ onClose }: { onClose: () => void }): ReactNode {
   const t = useT();
   const { plane, setPlaneEnabled } = useAgentActivity();
@@ -504,6 +600,8 @@ export function AgentConnect({ onClose }: { onClose: () => void }): ReactNode {
             <p className="text-xs text-secondary">
               {t("agent.thenAsk")}
             </p>
+
+            <CommandConsent />
 
             <Limits />
 
@@ -567,6 +665,7 @@ export function AgentConnect({ onClose }: { onClose: () => void }): ReactNode {
               feature does not work, and a button that cannot succeed is worse
               than no button. Both appear the moment the switch above takes.
             */}
+            <CommandConsent />
             <Limits />
           </>
         )}
