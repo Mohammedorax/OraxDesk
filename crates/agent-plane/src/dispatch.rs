@@ -933,7 +933,7 @@ impl AttachedLimb {
         let mut waited = Duration::ZERO;
         let mut walk = Walk::default();
         let mut stopped_at = steps.len();
-        let mut superseded: Option<HolderKind> = None;
+        let mut superseded: Option<Option<HolderKind>> = None;
         let mut blocked = false;
         let mut gone = false;
         let mut cancelled = false;
@@ -1043,7 +1043,22 @@ impl AttachedLimb {
                 Some(RefusalReason::LimbGone),
             )
         } else if let Some(by) = superseded {
-            (Outcome::Superseded { by, progress }, None)
+            // `None` is not somebody taking the wheel, and saying `Human` here
+            // was how an expired or released lease told an agent that a person
+            // was driving: the model is required to stand down on that, so the
+            // lie stopped a working agent for good. The phase is the honest
+            // answer, and it also covers a preemption whose pending party
+            // `agent-lease` does not expose.
+            match by {
+                Some(by) => (Outcome::Superseded { by, progress }, None),
+                None => (
+                    Outcome::LeaseLapsed {
+                        phase: self.lease_phase_word(),
+                        progress,
+                    },
+                    None,
+                ),
+            }
         } else if blocked && walk.delivered == 0 {
             let refusal = Refusal::plane(
                 RefusalReason::IntentBlocked,
@@ -1908,24 +1923,39 @@ impl AttachedLimb {
 
     /// Who took the wheel, for a supersession.
     ///
+    /// `None` when the holder is this party or nobody: neither is somebody
+    /// taking the wheel, and the old `HolderKind::Human` fallback told an agent
+    /// a person had taken a lease that had merely expired or been released.
+    /// The settlement names the lease's phase in that case instead of
+    /// inventing a holder.
+    ///
     /// The party a preemption is running FOR is not reachable from
     /// `agent-lease`'s public API: it lives in the lease's private `pending`
     /// field and neither `holder()` nor `queue()` shows it, so during
     /// `PreemptPending` the holder is still the preempted party and there is
     /// nothing to read. `agent-lease` owes a `pending_party()` accessor, and
-    /// it is recorded here rather than worked around silently.
-    ///
-    /// Until it lands, `Human` is the reading rather than a guess: a
-    /// preemption requires strictly higher priority than the holder, and every
-    /// DEFAULT rung above an agent on `08 §5.2`'s ladder is person shaped. A
-    /// deployment that raised one agent above another with
-    /// `Party::with_priority` gets a settlement naming the wrong kind, which
-    /// is exactly why the accessor is owed.
-    fn superseder(&self, party: &GrantId) -> HolderKind {
+    /// it is recorded here rather than worked around silently. Until it lands,
+    /// a preemption names its phase (`preempt-pending`) rather than a guessed
+    /// kind, which is both honest and still tells the agent to wait.
+    fn superseder(&self, party: &GrantId) -> Option<HolderKind> {
         let lease = lock(&self.inner.lease);
         match lease.holder() {
-            Some(holder) if &holder.party.id != party => holder.party.kind,
-            _ => HolderKind::Human,
+            Some(holder) if &holder.party.id != party => Some(holder.party.kind),
+            _ => None,
+        }
+    }
+
+    /// The lease's phase, in the words a settlement carries.
+    ///
+    /// Hand written rather than `format!("{:?}")` because this string travels
+    /// to an agent and the debug spelling is not a contract.
+    fn lease_phase_word(&self) -> &'static str {
+        match lock(&self.inner.lease).phase() {
+            LeasePhase::Unheld => "unheld",
+            LeasePhase::Held => "held",
+            LeasePhase::HeldGrace => "held-grace",
+            LeasePhase::PreemptPending => "preempt-pending",
+            LeasePhase::HandingOver => "handing-over",
         }
     }
 }

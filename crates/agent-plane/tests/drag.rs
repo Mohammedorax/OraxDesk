@@ -159,7 +159,16 @@ async fn a_preemption_mid_drag_releases_the_button_and_says_where_it_landed() {
         }
         other => panic!("an interrupted drag settles as a drag: {other:?}"),
     }
-    assert!(matches!(settlement.outcome, Outcome::Superseded { .. }));
+    // The panic chord takes the wheel and leaves nobody replacing the holder,
+    // so the settlement names the phase it ended in. It used to name
+    // `HolderKind::Human` for this, which is the fallback this fixes: nobody
+    // is driving, and an agent whose own release ended the gesture must not be
+    // told a person has the wheel.
+    assert!(
+        matches!(&settlement.outcome, Outcome::LeaseLapsed { phase, .. } if *phase == "unheld"),
+        "a revoked lease names its phase: {:?}",
+        settlement.outcome
+    );
 
     // And the button is not left held. This is the whole of `00 B8`: an RFB
     // server holds the last button state it was told until a `PointerEvent`
@@ -168,4 +177,73 @@ async fn a_preemption_mid_drag_releases_the_button_and_says_where_it_landed() {
     let sent = drain(&mut rx);
     let last = as_pointer(sent.last().expect("something went")).expect("a pointer");
     assert_eq!(last.2, 0, "the last thing on the wire releases the button");
+}
+
+/// A lease that lapses mid gesture is not somebody taking the wheel.
+///
+/// `agent-lease` expires an idle holder, and the settlement used to name
+/// `HolderKind::Human` whenever the holder was us or nobody. That is the one
+/// reading an agent is told to stand down on, so a lease that merely expired
+/// stopped a working agent for good. The phase is the honest answer, and it
+/// still carries what went before the lapse.
+#[tokio::test(start_paused = true)]
+async fn a_lapsed_lease_mid_gesture_does_not_name_a_person() {
+    let grant = operator("att_lapsed", "desk.example");
+    let (_registry, limb, mut rx) = connected(
+        PlaneConfig {
+            drag_points: 4,
+            drag_settle_ms: 50,
+            ..PlaneConfig::default()
+        },
+        &grant,
+        "desk.example",
+        TestLimb::desktop(),
+        256,
+    );
+    let now = LeaseInstant::from_millis(1_000);
+    let party = Party::new(grant.id().clone(), HolderKind::Agent, "the test");
+    let transition = limb.acquire(AcquireRequest::new(party), now).unwrap();
+    limb.honour(&transition, now).await;
+    drain(&mut rx);
+
+    let running = {
+        let limb = limb.clone();
+        let grant = grant.clone();
+        let request = fenced(
+            &limb,
+            &grant,
+            IntentKind::Drag {
+                from: Point::new(100, 100),
+                to: Point::new(500, 500),
+                button: Button::Left,
+            },
+        );
+        tokio::spawn(async move { limb.dispatch(&grant, request, now).await })
+    };
+
+    // Same interruption window as the preemption test: the press has gone and
+    // the drag is waiting between steps.
+    tokio::task::yield_now().await;
+    tokio::time::advance(std::time::Duration::from_millis(60)).await;
+    tokio::task::yield_now().await;
+
+    // The hard time to live passes. Nobody asks for the wheel, so the holder
+    // is simply removed.
+    let lapsed = limb.tick(now.plus(60_001));
+    assert!(lapsed.changed(), "the lease had a holder to expire");
+    tokio::time::advance(std::time::Duration::from_millis(60)).await;
+    let settlement = running.await.expect("the drag settled");
+
+    match &settlement.outcome {
+        Outcome::Superseded { by, .. } => panic!(
+            "nobody took the wheel, and naming {by:?} tells the agent to stop rather than reacquire"
+        ),
+        Outcome::LeaseLapsed { phase, .. } => assert_eq!(
+            *phase, "unheld",
+            "the settlement names the phase the lease was actually in"
+        ),
+        other => panic!("expected a lapsed lease, got {other:?}"),
+    }
+    // It still says how far the gesture got: the press happened.
+    assert!(matches!(settlement.progress, Progress::Drag { .. }));
 }

@@ -1492,22 +1492,6 @@ fn build_attach(attached: &serde_json::Value, slot: Slot) -> Result<Attach, Tool
         }
     }
     relay(session_id.clone(), receiver, ledger);
-    // The agent holds this limb from the shell's point of view the moment it
-    // attaches, and a pane has to say so, visibly, always (`08 §5.5`). Sent
-    // once here rather than per command, because a report per pointer event
-    // would be a notification storm in a webview.
-    let _ = call(
-        "control.report",
-        serde_json::json!({
-            "sessionId": session_id,
-            "held": true,
-            "phase": "held",
-            "holderKind": "agent",
-            "holderLabel": "dvv",
-            "humanTookOver": false,
-            "inflight": Vec::<String>::new(),
-        }),
-    );
 
     Ok(Attach {
         driver: Arc::new(RemoteLimb::new(protocol, frames)),
@@ -1810,11 +1794,6 @@ fn relay(
             }
         }
         let _closing = Closing(Arc::clone(&ledger));
-        // The last intent name reported, so a drag of two hundred pointer
-        // events is one line in a pane and not two hundred. `00 R24` is about
-        // never dropping something silently, and this drops nothing: what is
-        // coalesced is the NOTICE, and the commands themselves all go.
-        let mut reported: Option<&'static str> = None;
         while let Some(command) = receiver.blocking_recv() {
             ledger.took();
             let _finished = Finished(&ledger);
@@ -1843,21 +1822,6 @@ fn relay(
                     continue;
                 }
             };
-            if reported != Some(name) {
-                reported = Some(name);
-                let _ = call(
-                    "control.report",
-                    serde_json::json!({
-                        "sessionId": session_id,
-                        "held": true,
-                        "phase": "held",
-                        "holderKind": "agent",
-                        "holderLabel": "dvv",
-                        "humanTookOver": false,
-                        "inflight": [name],
-                    }),
-                );
-            }
             let press = matches!(command, ClientCommand::Key { down: true, .. });
             if press && ledger.tripped() {
                 // An earlier press in this action was refused. Sending the
@@ -3496,6 +3460,13 @@ impl Plane {
         let release = self.honour(limb, &transition, now).await;
         lock(&self.leases).remove(limb.id().as_str());
 
+        // The panic chord leaves nobody holding the wheel, and that is the
+        // moment a pane's badge has to go. `stop` builds its own report rather
+        // than going through `control_report` (it has a `StopReport`), so it
+        // has to tell the shell here or the limb stays badged as driven.
+        let view = limb.lease_view(self.party_id());
+        self.report_lease(limb, &view, Vec::new());
+
         let _ = self.watch.send(WatchEvent::Stopped {
             limb_id: limb.id().to_string(),
             queued: release.queued.clone(),
@@ -3911,6 +3882,16 @@ impl Plane {
     ) -> ControlReport {
         let view = limb.lease_view(self.party_id());
         let human_took_over = took_over(&view);
+        let interrupted: Vec<String> = self
+            .inflight_ids(limb.id().as_str())
+            .iter()
+            .map(|id| format!("intent {id}"))
+            .collect();
+        // The shell's badge follows the lease, so it is told at the one moment
+        // a control call has just read it. Reporting at attach instead was how
+        // an opened-but-never-taken limb stayed badged as driven: that report
+        // referenced no lease and nothing ever sent `held:false`.
+        self.report_lease(limb, &view, interrupted.clone());
         ControlReport {
             limb_id: limb.id().to_string(),
             action: action.to_string(),
@@ -3926,11 +3907,7 @@ impl Plane {
                 },
                 by_label: view.holder_label.clone(),
                 human_took_over,
-                interrupted: self
-                    .inflight_ids(limb.id().as_str())
-                    .iter()
-                    .map(|id| format!("intent {id}"))
-                    .collect(),
+                interrupted,
                 advice: if human_took_over {
                     "A person is driving this machine. Do not act on it and do not acquire control. Report back to the user instead."
                 } else {
@@ -3941,6 +3918,28 @@ impl Plane {
             queued: release.queued,
             failed: release.failed,
         }
+    }
+
+    /// Tell the shell where this limb's lease is now, best effort.
+    ///
+    /// `held` comes from the lease and never from a caller: a client that says
+    /// `held:true` when it holds nothing is the bug this replaces. The session
+    /// map is also the gate, because a fake source in a unit test has no shell
+    /// session and must not start dialling the real socket.
+    fn report_lease(&self, limb: &AttachedLimb, view: &LeaseView, inflight: Vec<String>) {
+        let Some(session_id) = lock(limb_sessions()).get(limb.id().as_str()).cloned() else {
+            return;
+        };
+        let _ = call(
+            "control.report",
+            lease_report(
+                &session_id,
+                view.you_hold,
+                view.phase,
+                view.holder_label.as_deref(),
+                inflight,
+            ),
+        );
     }
 
     fn lease_block(&self, limb: &AttachedLimb) -> LeaseBlock {
@@ -4158,6 +4157,30 @@ fn phase_name(phase: agent_lease::LeasePhase) -> String {
         .to_string()
 }
 
+/// The `control.report` body for one limb's current lease.
+///
+/// Every field that can be read off the lease is read off it, and nothing is
+/// taken from the caller: `held` is `you_hold`, `phase` is the lease's own
+/// phase, and the label is the party arbitration named. A report that carried
+/// its own `held` was how a limb an agent had merely opened stayed badged as
+/// driven, because the client sent `held:true` at attach and at the first
+/// command without consulting a lease, and nothing ever sent `held:false`.
+fn lease_report(
+    session_id: &str,
+    held: bool,
+    phase: agent_lease::LeasePhase,
+    holder_label: Option<&str>,
+    inflight: Vec<String>,
+) -> serde_json::Value {
+    serde_json::json!({
+        "sessionId": session_id,
+        "held": held,
+        "phase": phase_name(phase),
+        "holderLabel": holder_label,
+        "inflight": inflight,
+    })
+}
+
 /// Did a PERSON take this machine?
 ///
 /// The one decision the model has to get right. True only when somebody else
@@ -4196,13 +4219,14 @@ pub fn outcome_word(outcome: &limb_core::observation::Outcome) -> &'static str {
         Outcome::Done { .. } => "partial",
         Outcome::TimedOut { .. } => "timed-out",
         Outcome::Superseded { .. } => "superseded",
+        Outcome::LeaseLapsed { .. } => "lease-lapsed",
         Outcome::Cancelled => "cancelled",
         Outcome::Refused { .. } => "refused",
         Outcome::LinkLost { .. } => "link-lost",
         // `Outcome` is `#[non_exhaustive]`. An outcome added by a later build
-        // is reported as unknown rather than as one of the eight, because
-        // mapping it onto the nearest is how an agent gets told a link loss was
-        // a success.
+        // is reported as unknown rather than as one of the known outcomes,
+        // because mapping it onto the nearest is how an agent gets told a link
+        // loss was a success.
         _ => "unknown",
     }
 }
@@ -4450,5 +4474,29 @@ mod tests {
             &[true],
             "detach must run before the mapping the shell call needs is forgotten"
         );
+    }
+
+    /// The lease is what decides `held`, not the caller.
+    ///
+    /// This is the cross platform half of the socket test: it pins the body's
+    /// two load bearing fields to the lease phase a hold and a release produce,
+    /// so the case that used to say `held:true` for a limb nobody was driving
+    /// cannot come back through the report builder.
+    #[test]
+    fn a_lease_report_takes_held_from_the_lease() {
+        let held = lease_report(
+            "s1",
+            true,
+            agent_lease::LeasePhase::Held,
+            Some("dvv"),
+            vec!["type".to_string()],
+        );
+        assert_eq!(held["held"], true);
+        assert_eq!(held["phase"], "held");
+        assert_eq!(held["holderLabel"], "dvv");
+
+        let released = lease_report("s1", false, agent_lease::LeasePhase::Unheld, None, Vec::new());
+        assert_eq!(released["held"], false, "a released lease is not driving");
+        assert_eq!(released["phase"], "unheld");
     }
 }

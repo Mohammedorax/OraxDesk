@@ -366,6 +366,23 @@ pub enum Outcome {
     TimedOut { observed: SettleEvidence },
     /// A person, or a higher priority party, took the limb.
     Superseded { by: HolderKind, progress: Progress },
+    /// The lease this intent was fencing on went away without a new holder.
+    ///
+    /// It expired, or this party released it, or a preemption is pending and
+    /// the pending party is not readable from `agent-lease`. The distinction
+    /// from [`Outcome::Superseded`] is the decision an agent has to get right:
+    /// superseded says somebody else has the wheel and to stand down, while
+    /// this says nobody does and asking again may be the right repair. `phase`
+    /// is the lease's own phase in the same words `LeasePhase` uses, so the
+    /// model is told which of those it was rather than being told a person
+    /// took it.
+    ///
+    /// `progress` rides along for the same reason it does on `Superseded`:
+    /// whatever was sent before the lease went still happened.
+    LeaseLapsed {
+        phase: &'static str,
+        progress: Progress,
+    },
     /// The agent withdrew it.
     Cancelled,
     /// Refused before anything went on the wire.

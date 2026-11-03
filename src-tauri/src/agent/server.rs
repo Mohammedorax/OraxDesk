@@ -823,6 +823,9 @@ fn limb_attach(ctx: &Ctx, peer: &Peer, params: &Value) -> Result<Value, RpcError
             holder_label: None,
             human_took_over: false,
             inflight: Vec::new(),
+            // Nothing has reported yet: an attach is not a claim about the
+            // lease, and the first honest report comes from a control call.
+            reported_at: None,
             // Nothing has been observed yet, and the attach reply carries no
             // pixels however `perceive` was set: the mirror is allocated here
             // and the refresh that fills it is still on the wire. So a fresh
@@ -2632,6 +2635,13 @@ fn unexpected(answer: &FileAnswer, method: &str) -> RpcError {
 /// keep a second opinion about it, so the holder REPORTS and the shell renders
 /// what it was told. `08 §5.5` makes that a safety property rather than a
 /// nicety: a pane whose limb is held by an agent says so, visibly, always.
+///
+/// **Who holds it is not part of what the report may say.** A non-revoked
+/// attachment can only be held by the agent that owns it, and a person reaches
+/// this row through [`AgentPlane::revoke`] and nowhere else. So `holderKind`
+/// and `humanTookOver` in the body are ignored, deliberately: trusting them
+/// let an agent hide its own badge by claiming to be a person, or claim a
+/// takeover that never happened. `phase` and `inflight` are its own to report.
 fn control_report(ctx: &Ctx, peer: &Peer, params: &Value) -> Result<Value, RpcError> {
     let session_id = session_id_of(params)?;
     let attachment_id = peer.attachment_id.clone().unwrap_or_default();
@@ -2644,18 +2654,10 @@ fn control_report(ctx: &Ctx, peer: &Peer, params: &Value) -> Result<Value, RpcEr
         .and_then(Value::as_str)
         .unwrap_or("unknown")
         .to_string();
-    let holder_kind = params
-        .get("holderKind")
-        .and_then(Value::as_str)
-        .map(str::to_string);
     let holder_label = params
         .get("holderLabel")
         .and_then(Value::as_str)
         .map(str::to_string);
-    let human_took_over = params
-        .get("humanTookOver")
-        .and_then(Value::as_bool)
-        .unwrap_or_default();
     let inflight: Vec<String> = params
         .get("inflight")
         .and_then(Value::as_array)
@@ -2672,9 +2674,7 @@ fn control_report(ctx: &Ctx, peer: &Peer, params: &Value) -> Result<Value, RpcEr
         &attachment_id,
         held,
         phase,
-        holder_kind,
         holder_label,
-        human_took_over,
         inflight,
     );
     match event {
@@ -4602,6 +4602,66 @@ mod tests {
         assert_eq!(lease["held"], true);
         assert_eq!(lease["holderKind"], "agent");
         assert_eq!(lease["inflight"][0], "type");
+    }
+
+    /// A report cannot claim a person holds the wheel, or pretend to be one.
+    ///
+    /// An agent that could say `humanTookOver: true` would make its own badge
+    /// disappear; one that could say `holderKind: "human"` would do the same
+    /// more quietly. Only `revoke` is a person, so only it may write those
+    /// fields, and this is that rule at the socket's edge.
+    #[tokio::test]
+    async fn a_lease_report_cannot_claim_a_human_holds_it() {
+        let fixture = fixture();
+        let mut peer = greeted(&fixture.ctx).await;
+        call(
+            &fixture.ctx,
+            &mut peer,
+            "limb.attach",
+            json!({ "address": "10.0.0.5", "protocol": "vnc", "slot": 0 }),
+        )
+        .await;
+        call(
+            &fixture.ctx,
+            &mut peer,
+            "control.report",
+            json!({
+                "sessionId": "s1",
+                "held": true,
+                "phase": "held",
+                "holderKind": "human",
+                "holderLabel": "a person",
+                "humanTookOver": true,
+                "inflight": Vec::<String>::new(),
+            }),
+        )
+        .await;
+        {
+            let events = fixture.events.lock();
+            let lease = events
+                .iter()
+                .find(|event| event["type"] == "lease")
+                .expect("a lease event");
+            assert_eq!(lease["held"], true);
+            assert_eq!(
+                lease["holderKind"], "agent",
+                "a non-revoked attachment is this agent and nobody else"
+            );
+            assert_eq!(
+                lease["humanTookOver"], false,
+                "only revoke means a person took the wheel"
+            );
+        }
+
+        // The one path a person reaches, and the one that may set both fields.
+        let revoked = fixture
+            .ctx
+            .plane
+            .revoke("s1")
+            .expect("the attachment is still there");
+        assert_eq!(revoked["held"], false);
+        assert_eq!(revoked["holderKind"], "human");
+        assert_eq!(revoked["humanTookOver"], true);
     }
 
     // ---------------------------------------------------------------------

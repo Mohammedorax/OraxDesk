@@ -71,3 +71,20 @@ explicit refresh, never a background poller.
    and the inbox will say "no address published", not "offline".
 3. Log file growth on machines left running for weeks (rotation caps it; a
    machine that writes faster than 5 MiB/hour for weeks would cycle it).
+
+## Building on this Windows machine
+
+The MSVC tools under `Microsoft Visual Studio\18\Insiders` ship without
+`msvcrt.lib`, `oldnames.lib` and `legacy_stdio_definitions.lib`. The build does
+not need hand-made stubs: the Community 2022 toolset has the complete set, and
+pointing `LIB` at it is enough.
+
+```powershell
+$msvc = "C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\14.44.35207\lib\x64"
+$env:LIB = "$msvc;C:\Program Files (x86)\Windows Kits\10\Lib\10.0.26100.0\um\x64;C:\Program Files (x86)\Windows Kits\10\Lib\10.0.26100.0\ucrt\x64"
+$env:RUSTFLAGS = "-C target-feature=+crt-static"
+cargo check --workspace --all-targets
+```
+
+Local builds also pass `--config` with `createUpdaterArtifacts: false` so no
+updater signing key is needed; a release build must not use that override.

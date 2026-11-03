@@ -560,6 +560,13 @@ pub struct Attachment {
     pub holder_label: Option<String>,
     pub human_took_over: bool,
     pub inflight: Vec<String>,
+    /// When the holder last said where its lease was, in Unix milliseconds.
+    ///
+    /// A fact about the report and not about the lease: the lease lives in the
+    /// agent's process and this is a cache of what it was told. `None` until
+    /// the attachment's first report, which is why a pane can say "attached,
+    /// nothing reported yet" rather than inventing a time.
+    pub reported_at: Option<u64>,
     /// The content generation this attachment last read PIXELS at, and `None`
     /// while it has read none.
     ///
@@ -590,6 +597,12 @@ impl Attachment {
     /// `revoked` needs no arm here because [`AgentPlane::revoke`] clears
     /// `held` in the same breath, and a revoked attachment cannot report
     /// itself back in (`04 §5.4`, D5).
+    ///
+    /// This is a claim about the row, not about the connection. Whether the
+    /// connection that owns it is still there is [`AgentPlane::counts`]'
+    /// question, and it asks it there so a crashed client's row stops being
+    /// counted the moment its [`ConnectionGuard`] drops rather than staying
+    /// `held` for ever.
     fn driving(&self) -> bool {
         self.held && self.holder_kind.as_deref() == Some("agent")
     }
@@ -1003,9 +1016,10 @@ impl AgentPlane {
     /// The three numbers, against a session registry the caller has already
     /// locked.
     ///
-    /// The caller holds the registry lock, so the order is always registry and
-    /// then attachments, which is the order `limb_status` already takes them
-    /// in and the only order anything here may take them in.
+    /// The caller holds the registry lock, so the order after it is
+    /// connections and then attachments, the same order
+    /// [`AgentPlane::check_attach`] takes them in and the only order anything
+    /// here may take them in.
     ///
     /// **Cheap, because it is read on every attach, detach and lease change.**
     /// Two of the three are a lock and a `len` over maps that hold one row per
@@ -1017,14 +1031,23 @@ impl AgentPlane {
     /// path: it is told when a session ends ([`AgentPlane::forget`]) and never
     /// when one starts, so a tally would drift the first time somebody opened
     /// a machine and there would be nothing to correct it.
+    ///
+    /// A driven limb needs BOTH a report that it is driving and a live
+    /// connection row. The row is the only liveness signal the plane has (see
+    /// [`Attachment::connection`]), so a client that crashed after reporting
+    /// `held` stops being counted as soon as its [`ConnectionGuard`] drops:
+    /// [`ConnectionGuard::drop`] cannot rewrite the attachment itself, because
+    /// a Drop that did would be a second writer racing [`AgentPlane::report`].
     pub fn counts(&self, sessions: &HashMap<String, SessionEntry>) -> AgentCounts {
+        let connections = self.connections.lock();
+        let attachments = self.attachments.lock();
         AgentCounts {
-            agents_connected: self.connections.lock().len(),
-            sessions_driven: self
-                .attachments
-                .lock()
+            agents_connected: connections.len(),
+            sessions_driven: attachments
                 .values()
-                .filter(|attachment| attachment.driving())
+                .filter(|attachment| {
+                    attachment.driving() && connections.contains_key(&attachment.connection)
+                })
                 .count(),
             sessions_live: sessions.values().filter(|entry| entry.is_live()).count(),
         }
@@ -1190,6 +1213,16 @@ impl AgentPlane {
     /// `None` when nothing is attached to that session, which is a client
     /// talking about a limb it let go of rather than an error worth failing a
     /// control call over.
+    ///
+    /// **The report is a hint, not a claim about who holds the limb.** Two of
+    /// its fields are decided here and not read from the body: the holder kind
+    /// and whether a person took over. A non-revoked attachment can only be
+    /// held by the agent that owns it, and [`AgentPlane::revoke`] is the one
+    /// path a person reaches this row through. Letting a report say
+    /// `holderKind: "human"` would let the agent hide its own badge, and
+    /// letting it say `humanTookOver: true` would let it claim a takeover that
+    /// never happened. `phase` and `inflight` are genuinely the holder's to
+    /// report, so they stay as given.
     #[allow(clippy::too_many_arguments)] // one report, one row, not an API
     pub fn report(
         &self,
@@ -1197,9 +1230,7 @@ impl AgentPlane {
         attachment_id: &str,
         held: bool,
         phase: String,
-        holder_kind: Option<String>,
         holder_label: Option<String>,
-        human_took_over: bool,
         inflight: Vec<String>,
     ) -> Option<Value> {
         let event = {
@@ -1216,10 +1247,11 @@ impl AgentPlane {
             }
             entry.held = held;
             entry.phase = phase;
-            entry.holder_kind = holder_kind;
+            entry.holder_kind = held.then(|| "agent".to_string());
             entry.holder_label = holder_label;
-            entry.human_took_over = human_took_over;
+            entry.human_took_over = false;
             entry.inflight = inflight;
+            entry.reported_at = Some(now().0);
             lease_event(session_id, entry)
         };
         // A lease moving is the commonest reason the driven count changes, and
@@ -1320,6 +1352,7 @@ fn lease_event(session_id: &str, attachment: &Attachment) -> Value {
         "humanTookOver": attachment.human_took_over,
         "revoked": attachment.revoked,
         "inflight": attachment.inflight,
+        "reportedAt": attachment.reported_at,
     })
 }
 
@@ -1877,7 +1910,20 @@ mod tests {
             holder_label: None,
             human_took_over: false,
             inflight: Vec::new(),
+            reported_at: None,
             observed_content: None,
+        }
+    }
+
+    /// The same row, owned by a live connection.
+    ///
+    /// [`attachment_of`] builds a stale row on purpose ([`NO_CONNECTION`]);
+    /// anything asserting on the driven count needs a row whose connection is
+    /// actually in the table, because that is now half of what "driving" means.
+    fn attachment_on(connection: u64, attachment_id: &str, driving: bool) -> Attachment {
+        Attachment {
+            connection,
+            ..attachment_of(attachment_id, driving)
         }
     }
 
@@ -1916,7 +1962,10 @@ mod tests {
         let _connected = plane.client_connected("dvv");
         for session in ["s1", "s2", "s3", "s4"] {
             plane
-                .attach(session, attachment_of("att_0", true))
+                .attach(
+                    session,
+                    attachment_on(_connected.id(), "att_0", true),
+                )
                 .expect("inside the four-limb ceiling");
         }
 
@@ -1945,10 +1994,10 @@ mod tests {
         let plane = Arc::new(AgentPlane::default());
         let _connected = plane.client_connected("dvv");
         plane
-            .attach("s1", attachment_of("att_0", false))
+            .attach("s1", attachment_on(_connected.id(), "att_0", false))
             .expect("a free session takes an attachment");
         plane
-            .attach("s2", attachment_of("att_0", false))
+            .attach("s2", attachment_on(_connected.id(), "att_0", false))
             .expect("a second free session takes one too");
 
         let counts = counts_of(&plane, &sessions);
@@ -1956,19 +2005,44 @@ mod tests {
         assert_eq!(counts.sessions_driven, 0, "watching is not driving");
         assert_eq!(counts.sessions_live, 2);
 
-        // A holder that is not an agent is not an agent driving either, even
-        // while it holds.
-        plane.report(
-            "s1",
-            "att_0",
-            true,
-            "held".into(),
-            Some("human".into()),
-            None,
-            false,
-            Vec::new(),
+        // A report that it now holds the wheel turns the badge on for this
+        // live row. What the report SAYS about the holder is not trusted:
+        // `AgentPlane::report` decides that itself, and a report cannot claim
+        // a person took over.
+        let reported = plane
+            .report("s1", "att_0", true, "held".into(), Some("dvv".into()), Vec::new())
+            .expect("the row is attached and not revoked");
+        assert_eq!(reported["holderKind"], "agent");
+        assert_eq!(reported["humanTookOver"], false);
+        assert_eq!(counts_of(&plane, &sessions).sessions_driven, 1);
+    }
+
+    /// A crashed client stops driving at once, though its row stays behind.
+    ///
+    /// `held` is the last thing the agent said, and a client that died never
+    /// gets to say `held:false`. Counting the attachment alone kept it on the
+    /// bar for ever; the connection row is the one liveness signal the plane
+    /// has, so it is half of what "driving" means.
+    #[test]
+    fn a_crashed_connection_stops_driving_its_limb() {
+        let (sessions, _alive) = registry(&["s1"]);
+        let plane = Arc::new(AgentPlane::default());
+        let connected = plane.client_connected("dvv");
+        plane
+            .attach("s1", attachment_on(connected.id(), "att_0", false))
+            .expect("the first attachment");
+        plane.report("s1", "att_0", true, "held".into(), None, Vec::new());
+        assert_eq!(counts_of(&plane, &sessions).sessions_driven, 1);
+
+        drop(connected);
+        assert_eq!(
+            counts_of(&plane, &sessions).sessions_driven,
+            0,
+            "a connection that ended cannot be driving anything"
         );
-        assert_eq!(counts_of(&plane, &sessions).sessions_driven, 0);
+        // The row itself is left for `admit_attach` to replace, which is why
+        // no `Drop` writes to the attachment table.
+        assert_eq!(plane.snapshot().len(), 1);
     }
 
     /// A person takes the wheel: the driven count falls and the connected
@@ -1983,7 +2057,7 @@ mod tests {
         let plane = Arc::new(AgentPlane::default());
         let _connected = plane.client_connected("dvv");
         plane
-            .attach("s1", attachment_of("att_0", true))
+            .attach("s1", attachment_on(_connected.id(), "att_0", true))
             .expect("the first attachment");
         assert_eq!(counts_of(&plane, &sessions).sessions_driven, 1);
 
@@ -2015,7 +2089,7 @@ mod tests {
         // about the setting.
         let _connected = plane.client_connected("dvv");
         plane
-            .attach("s1", attachment_of("att_0", true))
+            .attach("s1", attachment_on(_connected.id(), "att_0", true))
             .expect("the first attachment");
         assert_eq!(
             counts_of(&plane, &sessions),
@@ -2055,7 +2129,7 @@ mod tests {
 
         let _connected = plane.client_connected("dvv");
         plane
-            .attach("s1", attachment_of("att_0", true))
+            .attach("s1", attachment_on(_connected.id(), "att_0", true))
             .expect("the first attachment");
         assert_eq!(
             counts_of(&plane, &sessions),
@@ -2096,16 +2170,14 @@ mod tests {
         // not driving anything yet. The pane hears about the attach on the
         // `attached` payload, and nothing repaints here.
         plane
-            .attach("s1", attachment_of("att_0", false))
+            .attach("s1", attachment_on(connected.id(), "att_0", false))
             .expect("an attach within the ceiling");
         plane.report(
             "s1",
             "att_0",
             true,
             "held".into(),
-            Some("agent".into()),
             None,
-            false,
             vec!["type".into()],
         );
         expected.push(json!({ "type": "counts", "agentsConnected": 1, "sessionsDriven": 1, "sessionsLive": 2 }));
@@ -2115,14 +2187,13 @@ mod tests {
         alive.pop();
         plane.forget("s2");
         expected.push(json!({ "type": "counts", "agentsConnected": 1, "sessionsDriven": 1, "sessionsLive": 1 }));
-        // The connection ends. The driven count follows the ATTACHMENT table
-        // and so does the pane's own agent badge, so a hung up agent that
-        // never let go of its limb is still counted as driving it, exactly as
-        // the pane still shows the badge and the take the wheel control for
-        // it. Two surfaces reading one table is the point: a bar that was
-        // cleverer than the badge would contradict it on screen.
+        // The connection ends. A limb an agent opened but no longer has a
+        // connection for is not driving it: the row's `held` is the last thing
+        // the client said, and a crashed client never gets to say `held:false`.
+        // The connection row is the liveness signal, so both numbers fall
+        // together and the pane's badge goes with them.
         drop(connected);
-        expected.push(json!({ "type": "counts", "agentsConnected": 0, "sessionsDriven": 1, "sessionsLive": 1 }));
+        expected.push(json!({ "type": "counts", "agentsConnected": 0, "sessionsDriven": 0, "sessionsLive": 1 }));
 
         assert_eq!(
             *events.lock(),
@@ -2198,12 +2269,14 @@ mod tests {
                     holder_label: None,
                     human_took_over: false,
                     inflight: vec!["type".into()],
+                    reported_at: None,
                     observed_content: None,
                 },
             )
             .expect("the first attachment");
         let revoked = plane.revoke("s1").expect("something was attached");
         assert_eq!(revoked["humanTookOver"], true);
+        assert_eq!(revoked["holderKind"], "human");
         assert_eq!(revoked["held"], false);
 
         assert!(
@@ -2213,9 +2286,7 @@ mod tests {
                     "att_0",
                     true,
                     "held".into(),
-                    Some("agent".into()),
                     None,
-                    false,
                     Vec::new(),
                 )
                 .is_none(),

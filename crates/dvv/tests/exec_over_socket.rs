@@ -52,6 +52,10 @@ struct Heard {
     /// Every field name that arrived on an exec. Asserted against, because the
     /// interesting claim is which fields are ABSENT (D7).
     exec_fields: Vec<String>,
+    /// Every `control.report` body, in order. The lease narrative is asserted
+    /// from this: attach reports nothing, acquire reports `held:true`, release
+    /// reports `held:false`.
+    reports: Vec<Value>,
 }
 
 fn read_message(stream: &mut UnixStream) -> Option<Value> {
@@ -126,7 +130,14 @@ fn serve(listener: UnixListener, heard: Arc<std::sync::Mutex<Heard>>) {
                 }] }),
                 "limb.attach" => attached(),
                 "limb.status" => attached(),
-                "control.report" => json!({ "recorded": true }),
+                "control.report" => {
+                    heard
+                        .lock()
+                        .expect("not poisoned")
+                        .reports
+                        .push(params.clone());
+                    json!({ "recorded": true })
+                }
                 // The release a lease change owes the limb (`00 R11`): a zero
                 // mask pointer and every key up, put on the wire by `acquire`
                 // before the wheel changes hands.
@@ -272,6 +283,12 @@ async fn an_exec_crosses_the_socket_and_the_answer_comes_back() {
         "and this grant is allowed it: {:?}",
         card.allows
     );
+    // Attaching reports NOTHING. The old client sent `held:true` here, which
+    // badged a limb as driven before the agent had asked for the wheel.
+    assert!(
+        heard.lock().expect("not poisoned").reports.is_empty(),
+        "an attach is not a lease report"
+    );
 
     let limb = plane
         .resolve(&Selector {
@@ -286,6 +303,14 @@ async fn an_exec_crosses_the_socket_and_the_answer_comes_back() {
         .await
         .expect("nobody else holds this limb");
     assert!(control.held, "the wheel is this attachment's");
+    {
+        // One report, and it says what the lease says rather than what the
+        // caller hoped. `phase` is the lease's own phase.
+        let heard = heard.lock().expect("not poisoned");
+        assert_eq!(heard.reports.len(), 1, "acquire is one lease report");
+        assert_eq!(heard.reports[0]["held"], true);
+        assert_eq!(heard.reports[0]["phase"], "held");
+    }
 
     // 1. The far side's own exit code, through the socket, as the answer to
     //    the intent. This is `00 R51b` end to end.
@@ -357,15 +382,38 @@ async fn an_exec_crosses_the_socket_and_the_answer_comes_back() {
 
     // …and the requests that crossed the socket carried the command and its
     // timeout, and no field that could have been a secret (D7).
-    let heard = heard.lock().expect("not poisoned");
-    assert_eq!(heard.commands, vec!["uname -a", "false", "sleep 60"]);
-    assert_eq!(heard.timeouts, vec![5000, 5000, 1000]);
-    for forbidden in ["password", "passphrase", "username", "privateKey"] {
-        assert!(
-            !heard.exec_fields.iter().any(|f| f == forbidden),
-            "an exec carries no {forbidden}: {:?}",
-            heard.exec_fields
+    {
+        let heard = heard.lock().expect("not poisoned");
+        assert_eq!(heard.commands, vec!["uname -a", "false", "sleep 60"]);
+        assert_eq!(heard.timeouts, vec![5000, 5000, 1000]);
+        for forbidden in ["password", "passphrase", "username", "privateKey"] {
+            assert!(
+                !heard.exec_fields.iter().any(|f| f == forbidden),
+                "an exec carries no {forbidden}: {:?}",
+                heard.exec_fields
+            );
+        }
+        // Dispatching does not report either. The relay thread used to send
+        // `held:true` on the first command of each kind; it cannot see a lease,
+        // so that was a self report and it never sent `held:false`.
+        assert_eq!(
+            heard.reports.len(),
+            1,
+            "only acquire has reported so far: {:?}",
+            heard.reports
         );
+    }
+
+    // Letting go is the report that finally says nobody is driving.
+    plane.release(&limb).await;
+    {
+        let heard = heard.lock().expect("not poisoned");
+        assert_eq!(heard.reports.len(), 2, "release is the second report");
+        assert_eq!(
+            heard.reports[1]["held"], false,
+            "a released lease is not a driven limb"
+        );
+        assert_eq!(heard.reports[1]["phase"], "unheld");
     }
 
     let _ = std::fs::remove_file(&socket);
