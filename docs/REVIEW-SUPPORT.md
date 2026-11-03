@@ -152,6 +152,93 @@ to reach one of them:
 Effort: three to four sessions (recipe model + executor + screen + two recipes
 end to end + tests).
 
+## 4. One SSH carrier for several sessions
+
+Design only. Nothing below is implemented, and the present code is not wrong;
+it is the conservative choice, and this section says what the other one costs.
+
+### What exists
+
+`crates/ssh-transport/src/tunnel.rs` is one `SshTunnel` per session. The
+connector in `src-tauri/src/tunnel.rs` holds the only strong `Arc<SshTunnel>`,
+inside that session's `ConnectOptions`, and each session opens its own
+`direct-tcpip` channel from it. So two VNC panes through the same gateway are
+two TCP connections, two authentications and two host-key checks against the
+same pin store. Teardown rides drop, deliberately: the handle and every channel
+keep the russh loop alive, so nothing is closed while a stream still reads it
+(the comment at the end of `tunnel.rs` explains why a `close()` method was
+deleted rather than fixed).
+
+### Why share
+
+- A gateway is usually one machine with one account, and an operator with six
+  panes authenticates six times. With a passphrase-protected key, that is six
+  prompts for one password.
+- `MaxStartups` (10:30:100 by default) limits *unauthenticated* connections at
+  once, so restoring a saved workspace of many tunnels after a gateway restart
+  can be refused by the server before any of them authenticate.
+- One keepalive window instead of six: a cable pull is noticed once, and every
+  pane says "the carrier died" at the same moment rather than at six moments.
+
+### Design
+
+- A registry in the shell: `(user, gateway host, port, auth-identity,
+  pin-store-id)` → `Weak<SshTunnel>`. A session upgrades or dials. The key
+  carries the auth identity and the pin store, not just the endpoint — see the
+  authority risk below.
+- `SshTunnel` already takes `&self` and serialises redials under a tokio mutex,
+  so the shared type needs no change; the registry is the new part.
+- Channel accounting on the carrier: `sshd`'s `MaxSessions` (10 by default)
+  counts channels per connection, not per session, so the carrier tracks what it
+  has open and a session that would exceed it opens a second carrier instead of
+  failing.
+- Lifetime: the carrier lives while any session holds a channel or is between
+  reconnects. The registry holds `Weak`, the sessions hold `Arc`, and nothing
+  closes a carrier that still has a stream — the same rule drop already
+  enforces, made explicit because a registry would otherwise be a way to break
+  it.
+- Log the channel open with the session id, so "which pane used the gateway"
+  stays answerable.
+
+### Risks
+
+1. **One carrier is one failure domain.** Today a gateway blip kills one
+   session; shared, it kills every session at once, and every supervisor
+   re-dials through the same mutex. The mutex makes that correct but not fast:
+   the first re-dial is the only one, and every other session waits for it. If
+   it fails, they all fail together. That is a worse experience for the operator
+   than six independent failures, and it must be a stated trade, not a surprise.
+2. **Authority borrowing.** If the key is only the endpoint, a profile that
+   failed to authenticate (or uses a different account) can join a carrier that
+   already did, and inherit its identity. The key must include the exact auth
+   identity, and a session that cannot authenticate must never enter a carrier it
+   did not open.
+3. **The channel budget moves.** `MaxSessions` is per connection, so sharing
+   converts a per-session allowance into a per-gateway one: the eleventh pane
+   fails with "administratively prohibited" where it works today. Either account
+   for it and spill to a second carrier, or the feature reduces the number of
+   panes a person can open.
+4. **Host-key semantics split.** One verifier per carrier means one pin store's
+   answer is applied to every session on it. Two profiles that reach the same
+   gateway through different stores (work and personal, or a per-project store)
+   would let one store's "known" cover the other's "changed". The store id in
+   the key is what stops that; without it, sharing quietly weakens the one check
+   that is allowed to hard-stop.
+5. **Teardown becomes a policy, not a refcount.** With one owner, drop is
+   complete and cannot fire early. With a registry, somebody has to decide when
+   the last session has really gone, including a session parked in
+   auto-reconnect; get it wrong and one pane's exit takes the others down,
+   which looks exactly like a network drop and will be diagnosed as one.
+
+### Why not now
+
+The current guarantee is worth more than the saved authentications: no session
+can affect another's transport, and a failure names one pane. Sharing is a
+feature for an operator with many panes through one gateway, so it should land
+with the accounting and the key above, not as a shortcut.
+
+Effort: M (registry + key + accounting + tests). No protocol change.
+
 ## Recommended order
 
 1. **Harden the job runner** (persistence, caps, cancel verification, CLI) —
