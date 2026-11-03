@@ -22,6 +22,11 @@ to stored data and to the IPC contract between the Rust core and the frontend.
 * An SSH carrier-sharing design review in `docs/REVIEW-SUPPORT.md`: why one
   carrier per session is the conservative choice, what sharing would take, and
   the five risks that make it a trade rather than a win.
+* Linux packages exist: CI produces the `.deb`, the `.rpm` and the AppImage,
+  and the agent end-to-end job passes on macOS, the Linux `.deb` and the
+  AppImage - a real bundle installs, the app starts, and OpenCode and Pi drive
+  a machine with the app closed. `docs/PLAN.md` records what is still unmeasured
+  (an install on Fedora, the updater, the signing story).
 
 ### Changed
 

@@ -40,25 +40,34 @@ Effort: **S** is one session, **M** is two to four, **L** is a week or more.
 ## Track 1 — Release integrity (P0, blocks everything else)
 
 ### 1.1 CI green on all three platforms
-**State:** in progress. rustfmt clean, icons RGBA, macOS menu fixed, advisory
-upgrades taken, `zip` accepted with its reachability written down.
-**Done when:** `CI` is green on ubuntu-24.04, macOS and Windows for five
-consecutive pushes, including clippy with `-D warnings`.
-**Effort:** S (finish) — **Risk:** macOS has paths that have never compiled;
-expect one more round.
+**State:** green on 4 November for the first time: rustfmt, clippy with
+`-D warnings`, every crate's tests and the app's tests on ubuntu-24.04, macOS
+and Windows, plus the frontend, the Worker, the audit and `Agents end to end`
+(macOS app, Linux deb, Linux AppImage). Getting there took five fixes, all of
+them things a local Windows build could not show: rustfmt drift, an RGB icon
+that Tauri refuses on macOS, a macOS-only `mut` that had never been compiled,
+PipeWire headers older than `libspa` reads, and a sidecar the app's build
+script requires that CI never staged.
+**Done when:** it stays green for five consecutive pushes.
+**Effort:** S (watch it).
 
 ### 1.2 The Linux bundles exist and install
-**Done when:** `gh workflow run linux` produces a deb, an rpm and an AppImage;
-the **rpm installs on Fedora**, the app opens, a VNC session connects, and the
-agent panel works. The AppImage runs from a folder that is not the source tree.
-**Effort:** M. **Blocked by:** 1.1, plus a Fedora machine (a VM is enough).
-**Why it is not optional:** Fedora is the stated target and the rpm has never
-existed.
+**State:** the workflow ran for the first time on 4 November and produced
+`OraxDesk_0.31.9_amd64.deb`, `OraxDesk-0.31.9-1.x86_64.rpm` and
+`OraxDesk_0.31.9_amd64.AppImage` (144 MB, magic numbers checked: ar archive,
+rpm header, ELF). Nothing has been **installed** from them yet.
+**Done when:** the **rpm installs on Fedora**, the app opens, a VNC session
+connects, and the agent panel works. The AppImage runs from a folder that is
+not the source tree.
+**Effort:** S now (a VM and an hour). **Blocked by:** a Fedora machine.
+**Why it is not optional:** Fedora is the stated target.
 
 ### 1.3 macOS bundle builds and launches
-**Done when:** the `macOS (app)` job in `Agents end to end` passes, and a
-locally built `.app` opens with no console errors on first run.
-**Effort:** M. **Blocked by:** 1.1.
+**State:** the `macOS (app)` job in `Agents end to end` passes: the app bundles
+at 74.5 MiB (debug), installs, and drives a machine with the app closed.
+**Remaining:** a locally built `.app` opened by hand, with no console errors on
+first run — CI proves it launches and works, not that it looks right.
+**Effort:** S. **Blocked by:** a Mac.
 
 ### 1.4 The updater works end to end
 **State:** there is no signing key, so no update has ever been produced or
