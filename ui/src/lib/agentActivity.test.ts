@@ -577,3 +577,20 @@ describe("the status line", () => {
     expect(detail).toContain("holds the lease");
   });
 });
+
+describe("exec consent, read fail-closed", () => {
+  it("treats only the two words the app writes as an answer", () => {
+    expect(parseExecConsent("allowed")).toBe("allowed");
+    expect(parseExecConsent("denied")).toBe("denied");
+  });
+
+  it("never reads a missing, unreadable or foreign value as permission", () => {
+    // The dialog opens only on "unasked" and the shell permits only on
+    // "allowed", so this direction is the whole safety of the setting: a typo,
+    // an empty string, a value a later build wrote, or a failed read must never
+    // become a yes.
+    for (const raw of [null, undefined, "", " ", "true", "yes", "on", "1", "allow"]) {
+      expect(parseExecConsent(raw)).toBe("unasked");
+    }
+  });
+});
