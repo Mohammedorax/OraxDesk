@@ -94,9 +94,20 @@ jobs:
           mkdir -p src-tauri/binaries
           cp target/debug/dvv "src-tauri/binaries/dvv-$triple"
 
+      # `tauri.e2e.conf.json`, not the release config: the application config
+      # carries a public updater key, so the bundler insists on a private one to
+      # sign the updater artifact. CI has no such key, and a debug bundle here
+      # is only ever installed on this runner, so the config turns updater
+      # artifacts off. Everything else it nulls is the same as the release
+      # config: the hook that builds a RELEASE sidecar (this job stages a debug
+      # one) and the macOS universal `dvv`, which only the release workflow has.
+      #
+      # Both platforms reached this point on 4 November - the macOS app bundled
+      # at 74.5 MiB and the Linux deb at 235.6 MiB - and stopped at "A public
+      # key has been found, but no private key".
       - name: Build the app bundle
         shell: bash
-        run: npx --yes @tauri-apps/cli@^2 build --debug --bundles ${{ matrix.bundle }} --config src-tauri/tauri.release.conf.json
+        run: npx --yes @tauri-apps/cli@^2 build --debug --bundles ${{ matrix.bundle }} --config src-tauri/tauri.e2e.conf.json
 
       - name: Install the app
         shell: bash
