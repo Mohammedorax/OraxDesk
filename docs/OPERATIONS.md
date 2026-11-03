@@ -88,3 +88,27 @@ cargo check --workspace --all-targets
 
 Local builds also pass `--config` with `createUpdaterArtifacts: false` so no
 updater signing key is needed; a release build must not use that override.
+## Upgrading over a running sidecar
+
+`dvv.exe` is installed by name, and Windows will not overwrite a running
+executable. `dvv` stays resident: one holder per `dvv open`, one MCP server per
+agent that spawned it. A silent (`/S`) or passive install therefore replaced
+everything except `dvv.exe`, reported success, and left the OLD sidecar beside
+the NEW application. The two halves are a protocol, so that mismatch presents
+later as a tool answering wrongly rather than as an install that failed; it was
+found on this machine by comparing the installed and built hashes after an
+install that exited 0.
+
+`src-tauri/windows/hooks.nsh` is the fix: `NSIS_HOOK_PREINSTALL` stops
+`dvv.exe` by image name (both install locations, no elevation) before the files
+are copied. An agent mid-task loses its MCP server and reconnects on its next
+call; a stale sidecar is not recoverable that way.
+
+After every install, compare the two hashes rather than trusting the exit code:
+
+```powershell
+(Get-FileHash "$env:LOCALAPPDATA\OraxDesk\dvv.exe").Hash
+(Get-FileHash "target\release\dvv.exe").Hash
+```
+
+A mismatch means something held the file: check `Get-Process dvv` and reinstall.

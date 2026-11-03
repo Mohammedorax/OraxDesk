@@ -40,6 +40,9 @@
     "windows": {
       "wix": {
         "upgradeCode": "FA41490A-739C-52D9-85D4-5C013BC95320"
+      },
+      "nsis": {
+        "installerHooks": "./windows/hooks.nsh"
       }
     },
     "targets": "all",
