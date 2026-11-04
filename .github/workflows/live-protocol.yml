@@ -143,6 +143,7 @@ jobs:
       - name: Run the live SSH suite (PTY, resize, tmux reconnect)
         env:
           DVV_LIVE_SSH: dvvtest@127.0.0.1:2222
+          RUST_LOG: debug
           RUST_BACKTRACE: "1"
         run: cargo test -p ssh-core --test live -- --nocapture
 
