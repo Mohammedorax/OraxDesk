@@ -98,9 +98,14 @@ pub struct PtySession {
 /// than losing persistence is refusing to open a terminal at all. The caller
 /// decides what to do about it.
 async fn run_probe(ssh: &SshHandle, script: &str) -> Option<String> {
-    run_probe_raw(ssh, script)
+    let out = run_probe_raw(ssh, script)
         .await
-        .map(|out| String::from_utf8_lossy(&out).into_owned())
+        .map(|out| String::from_utf8_lossy(&out).into_owned());
+    if std::env::var("DVV_PROBE_DEBUG").is_ok() {
+        eprintln!("[pty-probe] script = {script:#?}");
+        eprintln!("[pty-probe] output  = {out:#?}");
+    }
+    out
 }
 
 /// As [`run_probe`], but without the UTF-8 conversion.
