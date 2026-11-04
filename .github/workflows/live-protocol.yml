@@ -68,7 +68,12 @@ jobs:
       - name: Start sshd on :2222
         run: |
           sudo mkdir -p /run/sshd
-          sudo /usr/sbin/sshd -p 2222
+          # UsePAM=no: the suite's reconnect test depends on a tmux server
+          # outliving the login session that created it. A PAM-less sshd does
+          # not register a logind user session, so nothing later sweeps the
+          # pane processes away when the client drops (and these tests need
+          # no PAM features: pubkey only, one account, no quotas).
+          sudo /usr/sbin/sshd -p 2222 -o UsePAM=no
 
       - name: Load the live key into ssh-agent
         run: |
@@ -82,6 +87,18 @@ jobs:
         run: |
           ssh -q -o StrictHostKeyChecking=no -p 2222 \
             dvvtest@127.0.0.1 'echo sshd-live-ok'
+
+      - name: Probe - does a tmux server survive its client disconnect
+        run: |
+          # The reconnect suite's whole subject. Detached start, disconnect,
+          # then ask again from a fresh connection.
+          ssh -q -o StrictHostKeyChecking=no -p 2222 dvvtest@127.0.0.1 \
+            'tmux new-session -A -d -s livetest-probe; tmux list-sessions'
+          ssh -q -o StrictHostKeyChecking=no -p 2222 dvvtest@127.0.0.1 \
+            'tmux has-session -t livetest-probe && echo TMUX_SERVER_SURVIVED'
+          # Clean the probe session up so the suites below start pristine.
+          ssh -q -o StrictHostKeyChecking=no -p 2222 dvvtest@127.0.0.1 \
+            'tmux kill-session -t livetest-probe || true'
 
       - name: Start the VNC server (Xvfb + x11vnc) on :5901
         run: |
