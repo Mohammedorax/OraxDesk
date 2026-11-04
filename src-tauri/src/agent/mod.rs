@@ -3184,7 +3184,12 @@ mod tests {
             files: no_sidecar(),
             exec_consent: Arc::new(AtomicU8::new(ExecConsent::Allowed.as_u8())),
             ask: Arc::new(|| {}),
-            host_access: host_access_allowing(&[]),
+            // This fixture is about the socket and the switch, not about the
+            // per-machine gate, and it attaches to 10.0.0.5: a person who has
+            // already allowed that machine is the state the rest of the test
+            // assumes. The gate has its own tests in `server.rs`, and this file
+            // has its own for the map.
+            host_access: host_access_allowing(&["10.0.0.5"]),
             ask_host: Arc::new(|_| {}),
         });
 

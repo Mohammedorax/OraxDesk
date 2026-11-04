@@ -102,6 +102,19 @@ pass "machine 'mock' saved"
 step "quit the app; OpenCode must start it on its own"
 stop_app
 wait_for 30 "the app quitting" plane_down
+
+# The person's answer about this machine, written the way the AI Agents panel
+# writes it: `agent_set_host_access` stores this row, and the app reads the
+# answers once at startup. A runner has no hands to click the prompt, and
+# without an answer the agent's first open is refused with CONSENT_REQUIRED -
+# which is the gate doing its job, not a thing to work around in the product.
+# The refusal itself is covered by tests; this is the approval, so the rest of
+# the scenario can prove the driving.
+sqlite3 "$DB" <<'SQL'
+insert into settings (key, value) values ('agent_host_access', '{"127.0.0.1": "allowed"}')
+  on conflict(key) do update set value=excluded.value;
+SQL
+pass "machine access approved for 127.0.0.1, as the panel would"
 python3 "$(dirname "$0")/agent_e2e_mcp.py" mock "$OUT/opencode.png" || fail "the OpenCode route did not work"
 if [ -x "$PI_DIR/opencode" ]; then
   PATH="$PI_DIR:/usr/bin:/bin" opencode mcp list >"$OUT/opencode-mcp-list.txt" 2>&1 || true
