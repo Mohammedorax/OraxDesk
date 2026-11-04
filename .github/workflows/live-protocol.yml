@@ -97,13 +97,16 @@ jobs:
 
       - name: Probe - tmux survival in the shell-typed foreground shape
         run: |
-          # The crate does not run `tmux new-session -d` as a command; it
-          # opens a login shell and *types* the foreground attach into it.
-          # Reproduce exactly that shape, cut the connection, ask again.
+          # The crate does not run `tmux new-session -d`; it opens a login
+          # shell and *types* the foreground attach into it. Reproduce that
+          # shape with the same TERM the PTY request carries, capture the
+          # client's stderr, cut the connection, then look at what survived.
           ssh -tt -o StrictHostKeyChecking=no -p 2222 dvvtest@127.0.0.1 \
-            'tmux new-session -A -s shapetest' < /dev/null 2>/dev/null || true
+            'TERM=xterm-256color tmux new-session -A -s shapetest' \
+            < /dev/null > /tmp/shape-attach.log 2>&1 || true
+          echo '--- attach log ---'; cat /tmp/shape-attach.log
           ssh -q -o StrictHostKeyChecking=no -p 2222 dvvtest@127.0.0.1 \
-            'tmux has-session -t shapetest && echo SHAPE_SURVIVED || echo SHAPE_DIED'
+            'tmux list-sessions 2>&1; pgrep -a tmux || echo no-tmux-process'
           ssh -q -o StrictHostKeyChecking=no -p 2222 dvvtest@127.0.0.1 \
             'tmux kill-session -t shapetest 2>/dev/null || true'
 
