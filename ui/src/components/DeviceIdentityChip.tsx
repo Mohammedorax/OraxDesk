@@ -121,10 +121,14 @@ export function DeviceIdentityChip(): ReactNode {
         // reader hears the whole card from the one control that copies it.
         aria-label={`${t("device.copyNumber")}: ${groupDigits(identity.number)}. ${sentence}`}
         title={`${t("device.numberHint")} ${t("device.copyNumber")}`}
-        className="group flex min-w-0 flex-col items-start gap-0.5 px-2.5 py-1 text-start transition-colors hover:bg-inset"
+        // The number is the one thing on this bar a person reads aloud to
+        // somebody else, so it is the largest text in the header rather than a
+        // label beside an icon. The vertical padding is what keeps the two
+        // lines (digits, state) inside a 48-pixel bar without clipping.
+        className="group flex min-w-0 flex-col items-start gap-0 px-3 py-0.5 text-start transition-colors hover:bg-inset"
       >
-        <span className="flex items-center gap-1.5">
-          <IconMonitor size={13} className="shrink-0 text-tertiary" />
+        <span className="flex items-center gap-2">
+          <IconMonitor size={15} className="shrink-0 text-tertiary" />
           {/*
             The spaces between the groups are bidi neutrals: in an Arabic
             paragraph "123 456 789" would be laid out right to left. The run is
@@ -135,15 +139,15 @@ export function DeviceIdentityChip(): ReactNode {
           <span
             dir="ltr"
             style={{ unicodeBidi: "isolate" }}
-            className="mono shrink-0 whitespace-nowrap text-base font-semibold leading-tight tabular-nums tracking-wide text-primary"
+            className="mono shrink-0 whitespace-nowrap text-xl font-bold leading-none tabular-nums tracking-[0.02em] text-primary"
           >
             {groupDigits(identity.number)}
           </span>
           {copied ? (
-            <IconCheck size={13} className="shrink-0 text-success" />
+            <IconCheck size={15} className="shrink-0 text-success" />
           ) : (
             <IconClipboard
-              size={13}
+              size={15}
               className="shrink-0 text-tertiary group-hover:text-primary"
             />
           )}

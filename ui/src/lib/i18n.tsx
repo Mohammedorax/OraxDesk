@@ -1311,7 +1311,7 @@ const ar = {
   "prefs.tabClipboard": "الحافظة",
   "prefs.tabSecurity": "الأمان",
   "prefs.tabNetwork": "الشبكة",
-  "prefs.tabAgents": "الوكلاء",
+  "prefs.tabAgents": "الذكاء الاصطناعي",
 
   // التفضيلات: عام
   "prefs.livePreviewsHint":
@@ -1423,9 +1423,6 @@ const ar = {
   "prefs.rightNow": "الآن",
   "prefs.rightNowHint":
     "القيادة تعني أن الوكيل يمسك الإيجار على ذلك الجهاز. والوكيل المتصل الذي لا يمسك شيئًا لا يقود شيئًا، ولا يُحسب إلا في الرقم الأول.",
-  "prefs.agentsSidebarNote":
-    "في «الوكلاء» بالشريط الجانبي للمكتبة الأسطر التي تنسخها، والفحص الذي تجريه، والخيار الذي يطفئ كل ذلك من جديد.",
-
   // إعداد المزوّد: Tailscale وCloudflare
   "provider.summary": "جهّز بنيتي التحتية الخاصة",
   "provider.intro":
@@ -2959,7 +2956,7 @@ const en: Record<keyof typeof ar, string> = {
   "prefs.tabClipboard": "Clipboard",
   "prefs.tabSecurity": "Security",
   "prefs.tabNetwork": "Network",
-  "prefs.tabAgents": "Agents",
+  "prefs.tabAgents": "AI",
 
   // Preferences: general
   "prefs.livePreviewsHint":
@@ -3073,9 +3070,6 @@ const en: Record<keyof typeof ar, string> = {
   "prefs.rightNow": "Right now",
   "prefs.rightNowHint":
     "Driving means an agent holds the lease on that machine. An agent that is connected but holds nothing is driving nothing, and is counted only in the first number.",
-  "prefs.agentsSidebarNote":
-    "AI Agents, in the library sidebar, has the lines to paste, the check to run, and the switch that turns all of this off again.",
-
   // Setting up a provider: Tailscale and Cloudflare
   "provider.summary": "Set up my private infrastructure",
   "provider.intro":

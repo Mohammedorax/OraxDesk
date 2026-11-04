@@ -4,7 +4,6 @@ import type { HostGroup, HostProfile, HostTag } from "../lib/types";
 import { useI18n } from "../lib/i18n";
 import { classNames } from "../lib/util";
 import {
-  IconAgent,
   IconChevronDown,
   IconChevronRight,
   IconClock,
@@ -16,7 +15,7 @@ import {
   IconGear,
   IconPlus,
 } from "./icons";
-import { AgentConnect } from "./AgentConnect";
+
 import { RunbooksDialog } from "./RunbooksDialog";
 
 export type SidebarSelection =
@@ -102,7 +101,6 @@ export function Sidebar({
    * other. Preferences is plumbed that way because the native menu opens it
    * too; this has no second way in.
    */
-  const [agentsOpen, setAgentsOpen] = useState(false);
 
   /**
    * Runbooks, owned here for the same reason as the connect modal above: one
@@ -243,12 +241,7 @@ export function Sidebar({
           active={runbooksOpen}
           onClick={() => setRunbooksOpen(true)}
         />
-        <SidebarRow
-          icon={<IconAgent size={16} />}
-          label={translate("common.aiAgents")}
-          active={agentsOpen}
-          onClick={() => setAgentsOpen(true)}
-        />
+
         <SidebarRow
           icon={<IconGear size={16} />}
           label={translate("common.preferences")}
@@ -263,7 +256,6 @@ export function Sidebar({
         </div>
       ) : null}
     </nav>
-    {agentsOpen ? <AgentConnect onClose={() => setAgentsOpen(false)} /> : null}
     {runbooksOpen ? <RunbooksDialog onClose={() => setRunbooksOpen(false)} /> : null}
     </>
   );

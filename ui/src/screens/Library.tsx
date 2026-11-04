@@ -1671,7 +1671,10 @@ export function Library({
         native menu for a new host, the palette and the Nearby empty state for
         a scan), they are simply not the first thing offered.
       */}
-      <header className="flex flex-wrap items-center gap-3 border-b border-subtle bg-surface/80 px-4 py-2.5">
+      {/* 48 pixels, the same bar as the session and settings headers. The
+          library's bar can still wrap (it does below ~900px), so the height is
+          a minimum rather than a fixed box. */}
+      <header className="flex min-h-12 flex-wrap items-center gap-3 border-b border-subtle bg-surface/80 px-4 py-1.5">
         {/* The wordmark and the About entry point used to lead this bar; both
             now live in Preferences → General, which is where the About dialog
             is opened from. */}

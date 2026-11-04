@@ -1,6 +1,7 @@
 /** Preferences: sidebar-tabbed, every setting with a one-line description (PRD/11 §3.4). */
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { LanguageSwitch } from "../components/LanguageSwitch";
+import { AgentSettings } from "../components/AgentConnect";
 import { useSettings, type LocalCursor, type ThemeChoice } from "../state/SettingsContext";
 import { useLivePreviews } from "../state/SessionsContext";
 import { ALLOW_MULTIPLE_SESSIONS_KEY, safeInvoke } from "../lib/tauri";
@@ -67,16 +68,17 @@ const TAB_LABELS: Record<Tab, MessageKey> = {
 };
 
 /**
- * Tabs that only exist when there is something behind them.
+ * Every tab, always.
  *
- * "Agents" is the only one, and it is here rather than always on because
- * `AGENT_BRIEF` D2 means an install with the plane switched off has to look
- * exactly as it did before the feature was written, Preferences included. The
- * way in with the plane off is the AI Agents button in the library sidebar,
- * which exists in both states on purpose.
+ * "Agents" used to disappear when the plane was off, and the way back in was a
+ * sidebar row in the library. That meant the switch that turns the feature on
+ * lived behind the feature itself, and the row put agent chrome on the screen
+ * where a person looks at their machines. Settings is now the only home, so
+ * the tab is always listed: a person who turned the plane off has to be able
+ * to find the switch that turns it back on.
  */
-function tabsFor(planeOn: boolean): readonly Tab[] {
-  return planeOn ? TABS : TABS.filter((t) => t !== "Agents");
+function tabsFor(): readonly Tab[] {
+  return TABS;
 }
 
 /**
@@ -221,17 +223,11 @@ export function Preferences({
   const t = useT();
   const lang = useLang();
   const themeRefs = useRef<Array<HTMLButtonElement | null>>([]);
-  const tabs = tabsFor(plane.on);
+  const tabs = tabsFor();
 
   useEffect(() => {
     void safeInvoke<string | null>("credential_backend", undefined, null).then(setCredBackend);
   }, []);
-
-  // Somebody reading this tab while the plane is switched off from elsewhere
-  // would be left looking at a section that is no longer listed.
-  useEffect(() => {
-    if (!plane.on && tab === "Agents") setTab("General");
-  }, [plane.on, tab]);
 
   // Escape closes, like every other modal in the app (the X was the only way out).
   useEffect(() => {
@@ -275,12 +271,14 @@ export function Preferences({
           ))}
         </nav>
         <div className="flex min-w-0 flex-1 flex-col">
-          <div className="flex items-center justify-between border-b border-subtle px-5 py-3">
+          <div className="flex h-12 shrink-0 items-center justify-between gap-3 border-b border-subtle px-4">
             <h2 className="text-base font-semibold text-primary">{t(TAB_LABELS[tab])}</h2>
-            <LanguageSwitch />
-            <button type="button" aria-label={t("prefs.closeAria")} className="rounded-sm p-1 text-tertiary hover:text-primary" onClick={onClose}>
-              <IconX size={16} />
-            </button>
+            <div className="flex items-center gap-1.5">
+              <LanguageSwitch />
+              <button type="button" aria-label={t("prefs.closeAria")} className="rounded-sm p-1 text-tertiary hover:text-primary" onClick={onClose}>
+                <IconX size={16} />
+              </button>
+            </div>
           </div>
           <div className="flex-1 space-y-5 overflow-y-auto p-5">
             {tab === "General" ? (
@@ -650,14 +648,25 @@ export function Preferences({
                 />
               </>
             ) : null}
-            {tab === "Agents" && plane.on ? (
+            {/*
+              The whole agent section, not a summary of it: the plane switch,
+              what the agents are allowed to run, and which machines they may
+              open. It used to be a modal opened from the library sidebar,
+              which put the switch behind the feature and the chrome in front
+              of the machines; this tab is now the only way in, in both states.
+            */}
+            {tab === "Agents" ? (
               <>
-                <Toggle
-                  label={t("prefs.hideAgentCounts")}
-                  description={t("prefs.hideAgentCountsHint")}
-                  value={hideAgentStatus}
-                  onChange={setHideAgentStatus}
-                />
+                <AgentSettings />
+
+                <div className="border-t border-subtle pt-5">
+                  <Toggle
+                    label={t("prefs.hideAgentCounts")}
+                    description={t("prefs.hideAgentCountsHint")}
+                    value={hideAgentStatus}
+                    onChange={setHideAgentStatus}
+                  />
+                </div>
                 <div className="border-t border-subtle pt-5">
                   <p className="text-sm font-medium text-primary">{t("prefs.rightNow")}</p>
                   {/*
@@ -670,9 +679,6 @@ export function Preferences({
                     {t("prefs.rightNowHint")}
                   </p>
                 </div>
-                <p className="text-xs text-tertiary">
-                  {t("prefs.agentsSidebarNote")}
-                </p>
               </>
             ) : null}
           </div>

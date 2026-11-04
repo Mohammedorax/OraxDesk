@@ -68,7 +68,6 @@ import {
   type HostVerdict,
 } from "../lib/agentActivity";
 import { useAgentActivity } from "../state/AgentActivityContext";
-import { Dialog } from "./primitives";
 import { useT } from "../lib/i18n";
 import {
   IconAlert,
@@ -682,7 +681,18 @@ function MachineAccess(): ReactNode {
   );
 }
 
-export function AgentConnect({ onClose }: { onClose: () => void }): ReactNode {
+/**
+ * The agent settings, as a section rather than a dialog.
+ *
+ * It used to be a modal opened from a sidebar row called "AI Agents". That put
+ * the one control that turns the plane on in the room where a person is
+ * looking at their machines, next to the machines themselves, which is not
+ * where a preference belongs and not where somebody looks for a switch they
+ * turned off. Settings → Agents is now the only way in, in both states: with
+ * the plane off the section still renders, because otherwise the switch that
+ * turns it back on would be behind the feature it enables.
+ */
+export function AgentSettings(): ReactNode {
   const t = useT();
   const { plane, setPlaneEnabled } = useAgentActivity();
   const [copied, copy] = useCopied();
@@ -690,8 +700,7 @@ export function AgentConnect({ onClose }: { onClose: () => void }): ReactNode {
   const openManual = useCallback(() => setManual(true), []);
 
   return (
-    <Dialog title={t("agent.title")} onClose={onClose} width={620}>
-      <div className="space-y-5">
+    <div className="space-y-5">
         {plane.on ? (
           <>
             <SetupAgents />
@@ -774,7 +783,6 @@ export function AgentConnect({ onClose }: { onClose: () => void }): ReactNode {
             <Limits />
           </>
         )}
-      </div>
-    </Dialog>
+    </div>
   );
 }

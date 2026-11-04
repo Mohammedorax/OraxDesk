@@ -397,7 +397,10 @@ export function SshSession({
 
   return (
     <div className="relative flex h-full w-full flex-col overflow-hidden bg-canvas">
-      <div className="flex shrink-0 items-center justify-between border-b border-subtle bg-surface px-4 py-2">
+      {/* The same 48-pixel bar as the library and the settings dialog, so the
+          top of a window does not move by a few pixels when a person switches
+          between them. */}
+      <div className="flex min-h-12 shrink-0 items-center justify-between border-b border-subtle bg-surface px-4 py-1.5">
         <h1 className="truncate text-sm font-semibold text-primary">{params.name}</h1>
         <div className="flex items-center gap-3">
           <span className="flex items-center gap-1.5 text-2xs text-tertiary">
