@@ -229,10 +229,11 @@ export function Sidebar({
       </Section>
 
       {/*
-        Above Preferences and treated exactly like it: same row, same icon
-        size, same quiet corner of the sidebar. It is the only agent chrome
-        that exists while the plane is off, which is the whole reason it is
-        here rather than behind the feature it turns on.
+        The quiet corner: the two places a person goes to configure rather than
+        to connect. Agent settings used to be a third row here, opening a
+        dialog from the library; that put the switch for the plane in front of
+        the machines and duplicated a settings page. It lives in
+        Preferences → AI now, which is the only way in.
       */}
       <div className="mt-auto pt-2">
         <SidebarRow
@@ -241,7 +242,6 @@ export function Sidebar({
           active={runbooksOpen}
           onClick={() => setRunbooksOpen(true)}
         />
-
         <SidebarRow
           icon={<IconGear size={16} />}
           label={translate("common.preferences")}
