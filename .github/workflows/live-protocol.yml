@@ -95,6 +95,18 @@ jobs:
           ssh -q -o StrictHostKeyChecking=no -p 2222 dvvtest@127.0.0.1 \
             'tmux kill-session -t livetest-probe || true'
 
+      - name: Probe - tmux survival in the shell-typed foreground shape
+        run: |
+          # The crate does not run `tmux new-session -d` as a command; it
+          # opens a login shell and *types* the foreground attach into it.
+          # Reproduce exactly that shape, cut the connection, ask again.
+          ssh -tt -o StrictHostKeyChecking=no -p 2222 dvvtest@127.0.0.1 \
+            'tmux new-session -A -s shapetest' < /dev/null 2>/dev/null || true
+          ssh -q -o StrictHostKeyChecking=no -p 2222 dvvtest@127.0.0.1 \
+            'tmux has-session -t shapetest && echo SHAPE_SURVIVED || echo SHAPE_DIED'
+          ssh -q -o StrictHostKeyChecking=no -p 2222 dvvtest@127.0.0.1 \
+            'tmux kill-session -t shapetest 2>/dev/null || true'
+
       - name: Start the VNC server (Xvfb + x11vnc) on :5901
         run: |
           # x11vnc rather than TigerVNC: it speaks the RFB handshake the suite
