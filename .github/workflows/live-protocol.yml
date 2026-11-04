@@ -122,7 +122,11 @@ jobs:
           # stdin the way a russh disconnect ends the channel — then ask with
           # the crate's own generated probe script via a PTY-less exec.
           mkfifo /tmp/shape.fifo
-          ssh -tt -o StrictHostKeyChecking=no -p 2222 dvvtest@127.0.0.1 \
+          # The drop itself must be forced: an ssh stdin EOF only closes the
+          # local side while the remote PTY (login shell + tmux client) stays
+          # served by sshd, so `exec 9>&-` would hang the step forever. A
+          # SIGKILL of the ssh client in ~10s is what a real link drop is.
+          timeout --signal=KILL 10 ssh -tt -o StrictHostKeyChecking=no -p 2222 dvvtest@127.0.0.1 \
             > /tmp/shape.out 2>&1 < /tmp/shape.fifo &
           ssh_pid=$!
           exec 9> /tmp/shape.fifo
