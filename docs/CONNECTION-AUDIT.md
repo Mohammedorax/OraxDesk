@@ -79,13 +79,26 @@ their contract is listed under the recommendation instead.
 ## Gaps and recommendations
 
 ### P1 — make the "filed against real servers" promise continuous
+(SHIPPED 2026-11-04 as `.github/workflows/live-protocol.yml`: nightly cron +
+`workflow_dispatch`, OpenSSH on the runner agent-authenticated, x11vnc behind
+a password on `:5901`, suites run with skip-guards intact. Status: green —
+16 ssh live tests + 5 vnc live tests against real servers per run.)
 
-Six integration suites are gated on a live target and currently only run by
-hand, so the protocol claims are enforced by the people who remember to run
-them:
+One CI-specific caveat came with shipping it: the reconnect test
+(`work_survives_a_disconnect_when_a_multiplexer_is_used`) cannot hold on an
+ephemeral runner. Runner images ship
+`KillUserProcesses=yes`, so systemd-logind tears the whole session cgroup —
+tmux server included — down at a *graceful* ssh close, which is exactly what
+russh's clean disconnect is. The same shape survives the abrupt drop a real
+network gives (on the same runner, `SIGKILL` of the local ssh leaves
+`tmux list-sessions` reporting the session; then the crate's probe via exec
+still answers `present`). The test skips under `CI=true` with that reason and
+expects to be driven by hand against a real desktop host. The gates it covers:
 
 - `DVV_LIVE_SSH=user@host[:port]` — agent auth only, never a password
-  (`ssh-core/tests/live.rs`, `fn target`).
+  (`ssh-core/tests/live.rs`, `fn target`); the reconnect test additionally
+  wants a multiplexer (`tmux`) installed on the target and a host whose
+  logind does not kill the session at close time.
 - `DVV_LIVE_VNC=[host:]port`, default `127.0.0.1:5900`:
   `vnc-core/tests/interop_live.rs` skips gracefully when no RFB server answers,
   never answers any auth challenge (no server-side lockout risk), and runs the
@@ -93,29 +106,8 @@ them:
   quirks (the one shape the mock cannot imitate) for a real Mac.
 - `DVV_LIVE_MARKER`, `DVV_LIVE_RESOLVE`, `DVV_LIVE_RESOLVE_IP`,
   `DVV_LIVE_SUBNET_SCAN` — the network-discovery family
-  (`vnc-discovery`).
-
-Recommendation: a `live-protocol.yml` workflow on a nightly
-cron + `workflow_dispatch` with a services block:
-
-```yaml
-services:
-  sshd:
-    image: ghcr.io/linuxserver/openssh-server:latest   # or openssh on alpine
-    ports: ["2222:2222"]
-    volumes: [stats:./keys:/authorized_keys]
-  vnc:
-    image: accetto/ubuntu-vnc-xfce-g3   # any RFB-speaking server works
-    ports: ["5900:5900"]
-steps:
-  - generate an ephemeral keypair, load ssh-agent, export DVV_LIVE_SSH
-  - run: cargo test -p ssh-core --test live
-  - run: DVV_LIVE_VNC=127.0.0.1:5900 cargo test -p vnc-core --test interop_live
-```
-
-Both suites are skip-safe, so a runner where a service fails to boot degrades
-to a skip, not a red build; the Apple-specific assertions will report skipped
-on Linux and must stay gated on the real-Mac target the README describes.
+  (`vnc-discovery`) — remain outside the workflow (need a specific network,
+  DNS or Windows host to mean anything).
 
 ### P2 — write down the graphics-channel failure policy
 
