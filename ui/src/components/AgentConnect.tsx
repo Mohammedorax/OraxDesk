@@ -59,8 +59,13 @@ import {
   AGENT_EXEC_CONSENT_ALLOWED,
   AGENT_EXEC_CONSENT_DENIED,
   AGENT_EXEC_CONSENT_KEY,
+  AGENT_HOST_ACCESS_COMMAND,
+  AGENT_SET_HOST_ACCESS_COMMAND,
   parseExecConsent,
+  parseHostAccess,
   type ExecConsent as ConsentState,
+  type HostAccessEntry,
+  type HostVerdict,
 } from "../lib/agentActivity";
 import { useAgentActivity } from "../state/AgentActivityContext";
 import { Dialog } from "./primitives";
@@ -581,6 +586,102 @@ function CommandConsent(): ReactNode {
   );
 }
 
+/**
+ * Which machines an agent may open, and the two ways to change each answer.
+ *
+ * This is the reversible half of the first-time prompt. Every row is one
+ * machine a person has answered for; changing one writes that machine alone
+ * and reaches connections that are already open, because the socket reads the
+ * shared map at the moment of use rather than at `hello`. A denial is kept and
+ * shown, not deleted: "this one is blocked" is something a person has to be
+ * able to check and undo.
+ */
+function MachineAccess(): ReactNode {
+  const t = useT();
+  const [rows, setRows] = useState<HostAccessEntry[]>([]);
+  const [loaded, setLoaded] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    void safeInvoke<unknown>(AGENT_HOST_ACCESS_COMMAND, undefined, []).then((raw) => {
+      if (!alive) return;
+      setRows(parseHostAccess(raw));
+      setLoaded(true);
+    });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  const decide = useCallback((address: string, verdict: HostVerdict): void => {
+    // Shown at once, because the write is what the person asked for and the
+    // shell has no event to echo it back. The next open reads the shared map.
+    setRows((current) =>
+      current.map((row) => (row.address === address ? { ...row, verdict } : row)),
+    );
+    void safeInvoke(AGENT_SET_HOST_ACCESS_COMMAND, { address, verdict }, null);
+  }, []);
+
+  const approved = rows.filter((row) => row.verdict === "allowed").length;
+
+  return (
+    <section className="rounded-lg border border-subtle p-4">
+      <div className="flex items-start justify-between gap-4">
+        <div className="min-w-0">
+          <h3 className="text-sm font-semibold text-primary">{t("agent.hostAccessTitle")}</h3>
+          <p className="mt-0.5 text-xs text-secondary">{t("agent.hostAccessNote")}</p>
+        </div>
+        <span className="shrink-0 rounded-full bg-inset px-2.5 py-0.5 text-2xs font-medium text-tertiary">
+          {t("agent.hostAccessApproved", { count: approved })}
+        </span>
+      </div>
+      {!loaded ? null : rows.length === 0 ? (
+        <p className="mt-3 text-xs text-tertiary">{t("agent.hostAccessEmpty")}</p>
+      ) : (
+        <ul className="mt-3 space-y-2">
+          {rows.map((row) => (
+            <li key={row.address} className="flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <p className="truncate text-sm text-primary">{row.name ?? row.address}</p>
+                {row.name ? (
+                  <p className="mono truncate text-2xs text-tertiary" dir="ltr">
+                    {row.address}
+                  </p>
+                ) : null}
+              </div>
+              <div className="flex shrink-0 items-center gap-2">
+                <span
+                  className={classNames(
+                    "rounded-full px-2.5 py-0.5 text-2xs font-medium",
+                    row.verdict === "allowed"
+                      ? "bg-success-subtle text-success"
+                      : "bg-warning-subtle text-warning",
+                  )}
+                >
+                  {row.verdict === "allowed"
+                    ? t("agent.execConsentAllowed")
+                    : t("agent.execConsentDenied")}
+                </span>
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  onClick={() =>
+                    decide(row.address, row.verdict === "allowed" ? "denied" : "allowed")
+                  }
+                >
+                  {row.verdict === "allowed"
+                    ? t("agent.hostAccessDeny")
+                    : t("agent.hostAccessAllow")}
+                </button>
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
+
 export function AgentConnect({ onClose }: { onClose: () => void }): ReactNode {
   const t = useT();
   const { plane, setPlaneEnabled } = useAgentActivity();
@@ -602,6 +703,8 @@ export function AgentConnect({ onClose }: { onClose: () => void }): ReactNode {
             </p>
 
             <CommandConsent />
+
+            <MachineAccess />
 
             <Limits />
 
@@ -666,6 +769,8 @@ export function AgentConnect({ onClose }: { onClose: () => void }): ReactNode {
               than no button. Both appear the moment the switch above takes.
             */}
             <CommandConsent />
+
+            <MachineAccess />
             <Limits />
           </>
         )}

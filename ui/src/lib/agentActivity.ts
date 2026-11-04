@@ -802,6 +802,111 @@ export function parseExecConsent(raw: string | null | undefined): ExecConsent {
   return "unasked";
 }
 
+// ------------------------------------------------------- machine access
+//
+// The same decision as command consent, one machine at a time. The shell owns
+// the gate (`crate::agent::ensure_host_access`); this half reads the answers
+// for the panel, and the prompt uses it to avoid opening a dialog for a
+// machine that was answered between the socket asking and the window hearing.
+
+/** `agent_host_access`: every machine a person has answered for. */
+export const AGENT_HOST_ACCESS_COMMAND = "agent_host_access";
+
+/** `agent_set_host_access`: change one machine's answer. */
+export const AGENT_SET_HOST_ACCESS_COMMAND = "agent_set_host_access";
+
+/**
+ * The question a first open asks, and the dialog only this event opens.
+ * `crate::commands::agent::HOST_CONSENT_EVENT`. The payload names the machine:
+ * `{ address, name }`.
+ */
+export const AGENT_HOST_CONSENT_EVENT = "agent://host-consent";
+
+/** What a person has said about one machine. There is no "unasked" row. */
+export type HostVerdict = "allowed" | "denied";
+
+export interface HostAccessEntry {
+  address: string;
+  /** The saved profile's name, or null for a machine that is not saved. */
+  name: string | null;
+  verdict: HostVerdict;
+}
+
+/** The machine a host consent question is about. */
+export interface HostConsentAsk {
+  address: string;
+  name: string | null;
+}
+
+/**
+ * The identity the shell and the store use for a machine.
+ *
+ * Mirror of `vnc_store::normalize_address`: trim, drop every trailing dot
+ * (mDNS writes fully-qualified names) and ASCII-lowercase. Without it,
+ * `nas.local.` and `NAS.LOCAL` would render as two answers for one machine.
+ */
+export function normalizeHostAddress(raw: unknown): string {
+  if (typeof raw !== "string") return "";
+  // ASCII-only lowercasing, like the Rust side and SQLite's `lower()`.
+  return raw
+    .trim()
+    .replace(/\.+$/, "")
+    .replace(/[A-Z]/g, (letter) => letter.toLowerCase());
+}
+
+/**
+ * Read one verdict, failing closed.
+ *
+ * Only the two words the shell writes are answers. An unknown value is null,
+ * and callers drop the row rather than guessing: the dialog and the panel must
+ * never show a machine as allowed because of a string they could not read.
+ */
+export function parseHostVerdict(raw: unknown): HostVerdict | null {
+  const value = typeof raw === "string" ? raw.trim().toLowerCase() : "";
+  if (value === "allowed") return "allowed";
+  if (value === "denied") return "denied";
+  return null;
+}
+
+/**
+ * Read `agent_host_access`, dropping anything this build cannot read.
+ *
+ * A settled wrong row is invisible except in the one place a person looks to
+ * check it, so a malformed entry is omitted rather than shown under a guessed
+ * verdict. Addresses are normalised on the way in, so the prompt's lookup for
+ * a machine agrees with the row the shell wrote.
+ */
+export function parseHostAccess(raw: unknown): HostAccessEntry[] {
+  if (!Array.isArray(raw)) return [];
+  const out: HostAccessEntry[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== "object") continue;
+    const row = item as Record<string, unknown>;
+    const address = normalizeHostAddress(row.address);
+    const verdict = parseHostVerdict(row.verdict);
+    if (!address || verdict === null) continue;
+    const name = typeof row.name === "string" && row.name.trim() ? row.name.trim() : null;
+    out.push({ address, name, verdict });
+  }
+  return out;
+}
+
+/**
+ * Read an `agent://host-consent` payload, or refuse it.
+ *
+ * An address is the whole question: a payload without one cannot be turned
+ * into an answer, so it is dropped rather than displayed as a dialog about
+ * nothing. A missing name falls back to the address at the call site.
+ */
+export function parseHostConsentAsk(raw: unknown): HostConsentAsk | null {
+  if (!raw || typeof raw !== "object") return null;
+  const row = raw as Record<string, unknown>;
+  const address = normalizeHostAddress(row.address);
+  if (!address) return null;
+  const name = typeof row.name === "string" && row.name.trim() ? row.name.trim() : null;
+  return { address, name };
+}
+
 /**
  * The HTTP half of the plane exposes its URL and the `claude mcp add` line;
  * there is no bearer token for the webview to hand out.

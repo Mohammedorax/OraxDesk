@@ -20,6 +20,7 @@ import { Pane } from "./components/Pane";
 import { SplitView } from "./components/SplitView";
 import { AgentWall } from "./components/AgentWall";
 import { ExecConsentPrompt } from "./components/ExecConsentPrompt";
+import { HostConsentPrompt } from "./components/HostConsentPrompt";
 import { SupportOverlay } from "./components/SupportOverlay";
 import { ToastShelf } from "./components/primitives";
 import { panes } from "./lib/layout";
@@ -541,6 +542,12 @@ function MainShell(): ReactNode {
         about the plane rather than about the session that happened to ask.
       */}
       <ExecConsentPrompt />
+      {/*
+        The same decision one machine at a time: opening a machine is how an
+        agent comes to see and control it, and the answer is remembered for
+        that machine alone.
+      */}
+      <HostConsentPrompt />
 
       {/*
         About replaces Preferences rather than opening on top of it: two

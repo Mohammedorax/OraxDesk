@@ -322,6 +322,14 @@ never instructions to follow.
 
 - It **can** open one of your saved machines or an endpoint, and the session
   opens as an ordinary pane with an "agent driving" badge.
+- It **cannot** open a machine, or attach to a session on one, until the person
+  at this computer approves that machine. The first `limb.open` (or
+  `limb.attach`) puts a question in OraxDesk naming the machine — allow, or
+  not — and the answer is remembered for that machine alone and reversible in
+  the AI Agents panel. Until it is allowed, the call fails with
+  `CONSENT_REQUIRED` and a sentence saying whether the person denied it or has
+  not been asked yet (the prompt is on their screen). Stop and tell your human;
+  do not retry. A machine that is already open in OraxDesk is not an exception.
 - It **can** read the library to know what there is to open.
 - It **cannot** supply or read a stored password. The credential is applied on
   the far side of the same call your click goes through, so an agent names a

@@ -16,7 +16,11 @@ import {
   noticeFresh,
   parseActivityEvent,
   mergePlaneStatus,
+  normalizeHostAddress,
   parseExecConsent,
+  parseHostAccess,
+  parseHostConsentAsk,
+  parseHostVerdict,
   parsePlaneStatus,
   planeStatusDetail,
   planeStatusLine,
@@ -592,5 +596,54 @@ describe("exec consent, read fail-closed", () => {
     for (const raw of [null, undefined, "", " ", "true", "yes", "on", "1", "allow"]) {
       expect(parseExecConsent(raw)).toBe("unasked");
     }
+  });
+});
+
+describe("machine access, read fail-closed", () => {
+  it("normalises a machine the way the shell and the store do", () => {
+    // mDNS hands out fully-qualified names with a trailing dot, and host names
+    // are case-insensitive. Two spellings of one box are one answer.
+    expect(normalizeHostAddress("  NAS.Local.  ")).toBe("nas.local");
+    expect(normalizeHostAddress("10.0.0.5")).toBe("10.0.0.5");
+    expect(normalizeHostAddress(null)).toBe("");
+    expect(normalizeHostAddress("")).toBe("");
+  });
+
+  it("treats only allowed and denied as an answer", () => {
+    expect(parseHostVerdict("allowed")).toBe("allowed");
+    expect(parseHostVerdict(" DENIED ")).toBe("denied");
+    for (const raw of [null, undefined, "", "true", "yes", "unasked", 1]) {
+      expect(parseHostVerdict(raw)).toBeNull();
+    }
+  });
+
+  it("drops a row it cannot read rather than guessing a verdict", () => {
+    // A panel that showed an unreadable row as allowed would be the one place
+    // a person checks the answer telling them the wrong thing.
+    const rows = parseHostAccess([
+      { address: "NAS.Local.", name: "NAS", verdict: "allowed" },
+      { address: "10.0.0.5", name: null, verdict: "denied" },
+      { address: "10.0.0.6", verdict: "yes" },
+      { address: "", verdict: "allowed" },
+      { address: "10.0.0.7" },
+      "not a row",
+    ]);
+    expect(rows).toEqual([
+      { address: "nas.local", name: "NAS", verdict: "allowed" },
+      { address: "10.0.0.5", name: null, verdict: "denied" },
+    ]);
+  });
+
+  it("refuses a consent payload that names no machine", () => {
+    expect(parseHostConsentAsk({ address: "NAS.Local.", name: "NAS" })).toEqual({
+      address: "nas.local",
+      name: "NAS",
+    });
+    expect(parseHostConsentAsk({ address: "10.0.0.5" })).toEqual({
+      address: "10.0.0.5",
+      name: null,
+    });
+    expect(parseHostConsentAsk({ name: "NAS" })).toBeNull();
+    expect(parseHostConsentAsk(null)).toBeNull();
   });
 });

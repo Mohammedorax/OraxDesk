@@ -142,7 +142,7 @@ These are all "the code says X; nobody has watched X happen".
 | Relay and cable-pull | a second machine, then pull the cable mid-session | M |
 | The 65 s Windows keepalive | a packet capture over an idle session | S |
 | iroh dead-peer semantics | two devices, one suspended | S |
-| Unix-socket `dvv` tests | they exist and are `cfg(unix)`; they need Linux CI | S |
+| ~~Unix-socket `dvv` tests~~ | **done 4 Nov**: `exec_over_socket` runs and passes on ubuntu-24.04 in CI | — |
 
 **Blocked by:** the first four change the machine they run on, or need a second
 one. Ask before starting.

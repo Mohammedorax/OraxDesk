@@ -35,6 +35,13 @@ const AGENT_OPEN_CLAIM_WINDOW: Duration = Duration::from_secs(5);
 /// nothing a status row says can open a dialog.
 pub const EXEC_CONSENT_EVENT: &str = "agent://exec-consent";
 
+/// App-wide event asking a person whether an agent may open one machine.
+///
+/// A dedicated event, like [`EXEC_CONSENT_EVENT`], and carrying the machine
+/// because this question is per machine: `{address, name}`. The prompt listens
+/// to this name alone, so nothing a status row says can open a dialog.
+pub const HOST_CONSENT_EVENT: &str = "agent://host-consent";
+
 /// Build the context the socket answers requests from.
 ///
 /// The emitter is a closure over the `AppHandle` rather than the handle
@@ -49,6 +56,8 @@ fn ctx_for(app: &AppHandle, state: &AppState) -> Arc<agent::server::Ctx> {
         files: filer(app),
         exec_consent: state.agent_exec_consent.clone(),
         ask: consent_asker(app),
+        host_access: state.agent_host_access.clone(),
+        ask_host: host_asker(app),
     })
 }
 
@@ -65,6 +74,23 @@ fn consent_asker(app: &AppHandle) -> Arc<dyn Fn() + Send + Sync> {
         // detail of whichever connection happened to ask first, and one dialog
         // serves every open connection that finds it unanswered.
         let _ = app.emit(EXEC_CONSENT_EVENT, serde_json::json!({}));
+    })
+}
+
+/// How the socket puts the per-machine question in front of a person.
+///
+/// The payload names the machine, because the answer is remembered for that
+/// machine alone: the address is what a reply is keyed by, and the saved name
+/// is what a person recognises. The prompt asks the shell for the current
+/// answers before opening, so a second connection's prompt for a machine that
+/// has since been answered does not open a dialog.
+fn host_asker(app: &AppHandle) -> Arc<dyn Fn(agent::server::HostAsk) + Send + Sync> {
+    let app = app.clone();
+    Arc::new(move |ask| {
+        let _ = app.emit(
+            HOST_CONSENT_EVENT,
+            serde_json::json!({ "address": ask.address, "name": ask.name }),
+        );
     })
 }
 
@@ -423,6 +449,84 @@ pub fn agent_status(state: State<'_, AppState>) -> Result<AgentStatus, String> {
         attachments: state.agent.snapshot(),
         counts,
     })
+}
+
+/// One machine and the person's answer about agent access to it, for the AI
+/// Agents panel.
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HostAccessEntry {
+    /// Normalised, so the panel and the socket agree about identity.
+    pub address: String,
+    /// The saved profile's name when the address is in the library.
+    pub name: Option<String>,
+    /// `"allowed"` or `"denied"`; never absent, because an unasked machine has
+    /// no row here.
+    pub verdict: String,
+}
+
+/// Every machine a person has answered for, allowed and denied.
+///
+/// Names are resolved from the store where possible; a machine that is not
+/// saved (a quick connect the person answered for) keeps its address as the
+/// only label it has, which is the honest one.
+#[tauri::command]
+pub async fn agent_host_access(state: State<'_, AppState>) -> Result<Vec<HostAccessEntry>, String> {
+    // The map first, then the library: the map is in memory and short, and the
+    // store read must not sit between an agent's open and its answer.
+    let answers = state.agent_host_access.lock().entries();
+    let store = state.store.clone();
+    let hosts = super::blocking(move || store.list_hosts()).await?;
+    Ok(answers
+        .into_iter()
+        .map(|(address, verdict)| {
+            let name = hosts
+                .iter()
+                .find(|host| vnc_store::normalize_address(&host.address) == address)
+                .map(|host| host.friendly_name.clone());
+            HostAccessEntry {
+                address,
+                name,
+                verdict: verdict.as_str().to_string(),
+            }
+        })
+        .collect())
+}
+
+/// Change the answer for one machine.
+///
+/// The value is parsed and never defaulted: anything but `"allowed"` and
+/// `"denied"` is an error, because a typo that silently became a permission is
+/// the one failure this whole gate exists to prevent. The store is the durable
+/// copy and is written first; the shared map is published only after that
+/// write succeeds, so a failed write cannot leave a live permission with
+/// nothing behind it.
+#[tauri::command]
+pub async fn agent_set_host_access(
+    state: State<'_, AppState>,
+    address: String,
+    verdict: String,
+) -> Result<(), String> {
+    let verdict = agent::Verdict::parse(&verdict).ok_or_else(|| {
+        format!("`{verdict}` is not a machine access answer: use \"allowed\" or \"denied\"")
+    })?;
+    let address = vnc_store::normalize_address(&address);
+    if address.is_empty() {
+        return Err("a machine access answer needs an address".to_string());
+    }
+    // Build the next map off the current one, so the answer being written does
+    // not drop every other machine's.
+    let next = {
+        let mut next = state.agent_host_access.lock().clone();
+        next.set(&address, verdict);
+        next
+    };
+    let raw = next.to_json();
+    let store = state.store.clone();
+    super::blocking(move || store.set_setting(crate::agent::HOST_ACCESS_KEY, &raw)).await?;
+    *state.agent_host_access.lock() = next;
+    tracing::info!(address = %address, verdict = verdict.as_str(), "machine access answered");
+    Ok(())
 }
 
 /// Register the bundled `dvv` with Claude Code, for the person pressing the

@@ -46,7 +46,7 @@ pub mod mirror;
 pub mod server;
 pub mod wire;
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, AtomicU8, Ordering};
 use std::sync::Arc;
@@ -91,6 +91,116 @@ pub const AGENT_PLANE_ENABLED_KEY: &str = "agent_plane_enabled";
 /// anything this build cannot read is [`ExecConsent::Unasked`], which refuses,
 /// because an unreadable setting must never be a permission.
 pub const EXEC_CONSENT_KEY: &str = "agent_exec_consent";
+
+/// Preference key: which machines an agent may open. Default **unasked per
+/// machine**, which is not a decision: `limb.open` and `limb.attach` are
+/// refused for a machine nobody has answered for, and the person is asked.
+///
+/// Stored as a JSON object keyed by the normalised address, e.g.
+/// `{"nas.local": "allowed"}`. Only `allowed` and `denied` mean anything; an
+/// entry this build cannot read is dropped, which leaves that machine unasked
+/// and therefore refused. The store is the durable copy and the map on
+/// `AppState` is the fast one; the one command that writes keeps them in step.
+pub const HOST_ACCESS_KEY: &str = "agent_host_access";
+
+/// What a person has said about one machine.
+///
+/// Unlike [`ExecConsent`] there is no `Unasked` variant: "unasked" is the
+/// absence of an entry, which is what makes a machine nobody answered for
+/// fail closed rather than inherit a neighbouring answer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Verdict {
+    Allowed,
+    Denied,
+}
+
+impl Verdict {
+    /// Interpret one stored value. Only the two words this build writes are
+    /// an answer; anything else, including a word a newer build wrote, is
+    /// `None`, which drops the entry.
+    pub fn parse(raw: &str) -> Option<Self> {
+        match raw.trim().to_ascii_lowercase().as_str() {
+            "allowed" => Some(Self::Allowed),
+            "denied" => Some(Self::Denied),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Allowed => "allowed",
+            Self::Denied => "denied",
+        }
+    }
+}
+
+/// What a person has said about each machine, keyed by
+/// [`vnc_store::normalize_address`].
+///
+/// The normaliser is the same one the store and the live-session identity use,
+/// so `nas.local.` and `NAS.LOCAL` cannot be two answers for one machine. A
+/// malformed blob reads as an empty map (every machine unasked), never as a
+/// permissive default, because an unreadable setting must never be permission.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct HostAccess {
+    answers: BTreeMap<String, Verdict>,
+}
+
+impl HostAccess {
+    /// Read the store's JSON object. Unknown verdict words, non-string values
+    /// and a blob that is not a JSON object are all dropped; the rest survive.
+    pub fn parse(raw: Option<&str>) -> Self {
+        let Some(raw) = raw else {
+            return Self::default();
+        };
+        let Ok(Value::Object(entries)) = serde_json::from_str::<Value>(raw) else {
+            return Self::default();
+        };
+        let mut answers = BTreeMap::new();
+        for (address, value) in entries {
+            let Some(value) = value.as_str() else {
+                continue;
+            };
+            let Some(verdict) = Verdict::parse(value) else {
+                continue;
+            };
+            answers.insert(vnc_store::normalize_address(&address), verdict);
+        }
+        Self { answers }
+    }
+
+    /// What this person said about `address`, or `None` when nobody has been
+    /// asked. Normalises on the way in so every caller agrees about identity.
+    pub fn verdict(&self, address: &str) -> Option<Verdict> {
+        self.answers
+            .get(&vnc_store::normalize_address(address))
+            .copied()
+    }
+
+    /// Record an answer. The caller writes the store first and publishes this
+    /// map second, so a failed write can never become a live permission.
+    pub fn set(&mut self, address: &str, verdict: Verdict) {
+        self.answers
+            .insert(vnc_store::normalize_address(address), verdict);
+    }
+
+    /// The answers in address order, for the AI Agents panel.
+    pub fn entries(&self) -> Vec<(String, Verdict)> {
+        self.answers
+            .iter()
+            .map(|(address, verdict)| (address.clone(), *verdict))
+            .collect()
+    }
+
+    /// The durable copy's shape: a JSON object of `address -> verdict`.
+    pub fn to_json(&self) -> String {
+        let mut out = serde_json::Map::new();
+        for (address, verdict) in &self.answers {
+            out.insert(address.clone(), Value::String(verdict.as_str().to_string()));
+        }
+        Value::Object(out).to_string()
+    }
+}
 
 /// What a person has said about command execution on this computer.
 ///
@@ -2094,6 +2204,17 @@ mod tests {
         (entry, receiver)
     }
 
+    /// Host access already answered for these machines, which is the state
+    /// most of these tests are about: the wire, not the per-machine gate. A
+    /// test that is about the gate writes the map itself, in `server.rs`.
+    fn host_access_allowing(addresses: &[&str]) -> Arc<Mutex<HostAccess>> {
+        let mut access = HostAccess::default();
+        for address in addresses {
+            access.set(address, Verdict::Allowed);
+        }
+        Arc::new(Mutex::new(access))
+    }
+
     /// One frame, as `serve` reads it.
     async fn write_frame<W>(writer: &mut W, message: Value)
     where
@@ -2171,6 +2292,8 @@ mod tests {
             // existed. The gate has its own tests in `server.rs`.
             exec_consent: Arc::new(AtomicU8::new(ExecConsent::Allowed.as_u8())),
             ask: Arc::new(|| {}),
+            host_access: host_access_allowing(&["10.0.0.5", "10.0.0.6"]),
+            ask_host: Arc::new(|_| {}),
         });
 
         let (client, server) = tokio::io::duplex(64 * 1024);
@@ -2577,6 +2700,8 @@ mod tests {
             files: no_sidecar(),
             exec_consent: Arc::new(AtomicU8::new(ExecConsent::Allowed.as_u8())),
             ask: Arc::new(|| {}),
+            host_access: host_access_allowing(&[]),
+            ask_host: Arc::new(|_| {}),
         });
         start(&plane, ctx, dir.path().join("agent.sock")).expect("the plane starts");
 
@@ -2686,6 +2811,60 @@ mod tests {
             );
         }
         assert_eq!(ExecConsent::from_u8(9), ExecConsent::Unasked);
+    }
+
+    #[test]
+    fn host_access_reads_only_allowed_and_denied_and_normalises_the_address() {
+        let access = HostAccess::parse(Some(
+            r#"{"nas.local.": "allowed", "10.0.0.5": " ALLOWED ", "nope": "yes", "bad": 7}"#,
+        ));
+        assert_eq!(
+            access.verdict("NAS.LOCAL"),
+            Some(Verdict::Allowed),
+            "a trailing dot and case are one machine, and the word is trimmed"
+        );
+        assert_eq!(access.verdict("10.0.0.5"), Some(Verdict::Allowed));
+        assert_eq!(
+            access.verdict("nope"),
+            None,
+            "an unknown word is dropped, which leaves the machine unasked"
+        );
+        assert_eq!(
+            access.verdict("bad"),
+            None,
+            "a non-string is dropped, not read as a yes"
+        );
+        // Two spellings of one machine are one answer, never two rows.
+        assert_eq!(
+            HostAccess::parse(Some(r#"{"nas.local": "allowed", "NAS.LOCAL.": "denied"}"#))
+                .entries()
+                .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn host_access_fails_closed_on_a_blob_it_cannot_read() {
+        for raw in [None, Some(""), Some("not json"), Some("[]"), Some("42")] {
+            assert_eq!(
+                HostAccess::parse(raw),
+                HostAccess::default(),
+                "{raw:?} must leave every machine unasked, never allowed"
+            );
+        }
+    }
+
+    #[test]
+    fn host_access_round_trips_its_store_copy() {
+        let mut access = HostAccess::default();
+        access.set(" Studio.Local. ", Verdict::Denied);
+        assert_eq!(
+            access.verdict("studio.local"),
+            Some(Verdict::Denied),
+            "a denial is an answer, just not a permission"
+        );
+        assert_eq!(access.to_json(), r#"{"studio.local":"denied"}"#);
+        assert_eq!(HostAccess::parse(Some(&access.to_json())), access);
     }
 
     #[test]
@@ -3005,6 +3184,8 @@ mod tests {
             files: no_sidecar(),
             exec_consent: Arc::new(AtomicU8::new(ExecConsent::Allowed.as_u8())),
             ask: Arc::new(|| {}),
+            host_access: host_access_allowing(&[]),
+            ask_host: Arc::new(|_| {}),
         });
 
         // Off. Nothing exists, and that is the default every install gets.
@@ -3143,6 +3324,8 @@ mod tests {
             files: no_sidecar(),
             exec_consent: Arc::new(AtomicU8::new(ExecConsent::Allowed.as_u8())),
             ask: Arc::new(|| {}),
+            host_access: host_access_allowing(&["10.0.0.5"]),
+            ask_host: Arc::new(|_| {}),
         });
         let path = socket_path();
         start(&plane, ctx, path.clone()).expect("the plane starts at its published path");

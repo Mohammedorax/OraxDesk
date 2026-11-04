@@ -89,7 +89,7 @@
 //! `crate::agent::mirror` owns the `00 R6` half, which is the part that would
 //! be silently wrong rather than merely absent.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -109,7 +109,9 @@ use vnc_core::{ClientCommand, ProtocolKind, QualityPreset, Rect};
 
 use crate::agent::mirror::{self, MirrorStatus, Perceive};
 use crate::agent::wire;
-use crate::agent::{AgentPlane, Attachment, ExecConsent, NO_CONNECTION, PROTOCOL};
+use crate::agent::{
+    AgentPlane, Attachment, ExecConsent, HostAccess, Verdict, NO_CONNECTION, PROTOCOL,
+};
 use crate::state::{MachineKey, SessionEntry};
 
 /// The largest encoded image this surface will put in one reply.
@@ -161,6 +163,31 @@ pub struct Ctx {
     /// [`limb_exec`] when the answer had not arrived yet; the flag lives on
     /// [`Peer`], so ten refused calls cannot stack ten dialogs.
     pub ask: Arc<dyn Fn() + Send + Sync>,
+    /// Which machines a person has allowed an agent to open.
+    ///
+    /// Shared with `AppState`, for the same reason `exec_consent` is: an answer
+    /// given in the panel is read by a connection that is already open, at the
+    /// moment `limb.open` or `limb.attach` asks. A copy taken at `hello` would
+    /// let a revocation wait for a reconnect.
+    pub host_access: Arc<Mutex<HostAccess>>,
+    /// How the shell puts the per-machine question in front of a person.
+    ///
+    /// A closure like `ask`, and it carries the machine's address and saved
+    /// name because the question is about ONE machine. Called at most once per
+    /// connection per address; the flag lives on [`Peer`], so ten refused
+    /// calls against the same machine cannot stack ten dialogs.
+    pub ask_host: Arc<dyn Fn(HostAsk) + Send + Sync>,
+}
+
+/// The machine a host consent question is about.
+///
+/// `name` is the saved profile's friendly name when the call named a `hostId`,
+/// and `None` otherwise. The address is always there: it is what the answer is
+/// keyed by, and what the prompt falls back to when there is no name.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HostAsk {
+    pub address: String,
+    pub name: Option<String>,
 }
 
 /// One connection's own state.
@@ -198,6 +225,14 @@ pub struct Peer {
     /// "at most once here" a property of the connection rather than of the
     /// code path that happened to run first.
     pub exec_prompted: Arc<AtomicBool>,
+    /// Which machines this connection has already put a host access question
+    /// in front of a person for, by normalised address.
+    ///
+    /// Per machine as well as per connection: the answer is per machine, so a
+    /// refusal for one box neither silences the question for another nor
+    /// repeats the same dialog when the agent retries. Shared through an `Arc`
+    /// only because `Peer` is cloned.
+    pub host_prompted: Arc<Mutex<HashSet<String>>>,
 }
 
 /// A refusal, as JSON-RPC spells it.
@@ -452,6 +487,85 @@ fn separate_because(needed: Capability) -> &'static str {
 fn ask_for_exec_consent(ctx: &Ctx, peer: &Peer) {
     if !peer.exec_prompted.swap(true, Ordering::Relaxed) {
         (ctx.ask)();
+    }
+}
+
+/// May this connection open (or attach to) this machine, and what do we say
+/// when it may not?
+///
+/// `limb.open` calls this after the machine is known to be one this shell
+/// publishes and BEFORE the already-open branch, and `limb.attach` calls it
+/// with the address off the session it found. All three answers live here so
+/// the two verbs cannot drift apart.
+///
+/// The person's answer is read at the moment of use, not cached at `hello`, so
+/// revoking a machine reaches a connection that is already open. Absence is
+/// `Unasked`, not a yes: it refuses and puts the question in front of the
+/// person, once per connection per machine.
+fn ensure_host_access(
+    ctx: &Ctx,
+    peer: &Peer,
+    address: &str,
+    name: Option<String>,
+) -> Result<(), RpcError> {
+    if address.trim().is_empty() {
+        // A machine this call cannot name cannot be checked, and an unchecked
+        // machine is not a permission. No real session carries an empty
+        // address; this is the fail-closed answer if one ever does.
+        return Err(RpcError::tagged(
+            "CONSENT_REQUIRED",
+            "the machine behind this session could not be resolved, so whether the person allowed an agent to open it is unknown and the call was refused. Call limb.list for the machines OraxDesk has, and ask the person to allow this one from the AI Agents panel",
+        ));
+    }
+    let label = host_label(address, name.as_deref());
+    // Read the answer and let the map go before anything is emitted: the
+    // prompt closure belongs to the shell and must not run under our lock.
+    let verdict = ctx.host_access.lock().verdict(address);
+    match verdict {
+        Some(Verdict::Allowed) => Ok(()),
+        Some(Verdict::Denied) => Err(RpcError::tagged(
+            "CONSENT_REQUIRED",
+            format!(
+                "the person at this computer denied agent access to {label}, so nothing was opened and nothing will be until they allow it. The decision can be changed at any time in OraxDesk's AI Agents panel; until then an agent cannot open or attach to this machine"
+            ),
+        )),
+        None => {
+            // The dialog is not a substitute for the answer: the call is
+            // refused now, exactly as it is while denied, and the sentence
+            // says the question has been put rather than implying a success.
+            ask_for_host_consent(ctx, peer, address, name);
+            Err(RpcError::tagged(
+                "CONSENT_REQUIRED",
+                format!(
+                    "the person at this computer has not been asked yet whether an agent may open {label}, so nothing was opened. OraxDesk is showing them the prompt now; ask again once they answer, and do not retry before that"
+                ),
+            ))
+        }
+    }
+}
+
+/// The machine as a sentence should name it: its saved name when there is one,
+/// with the address so two machines with the same name stay distinguishable.
+fn host_label(address: &str, name: Option<&str>) -> String {
+    match name.map(str::trim).filter(|name| !name.is_empty()) {
+        Some(name) => format!("\"{name}\" ({address})"),
+        None => address.to_string(),
+    }
+}
+
+/// Put the per-machine question in front of a person, once per connection.
+///
+/// The set is keyed by the normalised address, so the same box reached by
+/// `nas.local` and `NAS.LOCAL.` is one question, and a different machine still
+/// gets its own. The answer itself is never cached here; only the fact that the
+/// question was asked is.
+fn ask_for_host_consent(ctx: &Ctx, peer: &Peer, address: &str, name: Option<String>) {
+    let key = vnc_store::normalize_address(address);
+    if peer.host_prompted.lock().insert(key) {
+        (ctx.ask_host)(HostAsk {
+            address: address.to_string(),
+            name,
+        });
     }
 }
 
@@ -794,7 +908,7 @@ fn limb_attach(ctx: &Ctx, peer: &Peer, params: &Value) -> Result<Value, RpcError
     let (key, address) = machine_from(ctx, params)?;
     let slot = param_slot(params)?;
 
-    let (session_id, value) = {
+    let (session_id, value, machine_address, profile_id) = {
         let sessions = ctx.sessions.lock();
         let candidates = sessions_for_machine(&sessions, &key);
         let (session_id, _) = candidates.get(slot as usize).cloned().ok_or_else(|| {
@@ -835,8 +949,24 @@ fn limb_attach(ctx: &Ctx, peer: &Peer, params: &Value) -> Result<Value, RpcError
             ));
         }
         let value = record(&session_id, entry, slot, Some(attachment_id.clone()));
-        (session_id, value)
+        (
+            session_id,
+            value,
+            entry.address.clone(),
+            entry.profile_id.clone(),
+        )
     };
+
+    // The answer is about the machine the SESSION is on, not the address the
+    // caller typed: a `hostId` and an `address` can reach the same box, and
+    // the session is the thing that is really being driven. A machine nobody
+    // approved is refused before the plane checks a slot, allocates a mirror
+    // or renegotiates the person's session.
+    let name = profile_id
+        .as_deref()
+        .and_then(|id| ctx.store.get_host(id).ok().flatten())
+        .map(|profile| profile.friendly_name);
+    ensure_host_access(ctx, peer, &machine_address, name)?;
 
     // Before the mirror, deliberately. A revoked session, a fifth limb, or a
     // limb another live attachment holds, must be refused before anything is
@@ -2081,6 +2211,18 @@ async fn limb_open(ctx: &Ctx, peer: &Peer, params: &Value) -> Result<Value, RpcE
     // it to touch, and an arbitrary address is not that.
     let (port, protocol) = permitted_endpoint(ctx, params, &address).await?;
 
+    // A machine the person has not allowed is refused by name before it is
+    // opened OR reused. The reuse branch below hands back a session somebody
+    // already has open, which is still an agent reaching that machine, so the
+    // check sits above it rather than inside the branch that dials: a naive
+    // check placed after it would let an unapproved machine through the moment
+    // its window happened to be open.
+    let name = host_id
+        .as_deref()
+        .and_then(|id| ctx.store.get_host(id).ok().flatten())
+        .map(|profile| profile.friendly_name);
+    ensure_host_access(ctx, peer, &address, name)?;
+
     // Slot 0 attaches to whatever is already live (`02 §4.4`). A machine the
     // person already has open is not opened twice: the agent is handed that
     // session, which is what makes an agent and a person watch the same thing.
@@ -2789,6 +2931,10 @@ mod tests {
         /// How many times the shell was asked to put the exec consent question
         /// in front of a person. The gate's tests count dialogs with it.
         asked: Arc<std::sync::atomic::AtomicUsize>,
+        /// The same for the per-machine host access questions, with what each
+        /// one named so the refusal and the prompt can be checked together.
+        host_asked: Arc<std::sync::atomic::AtomicUsize>,
+        host_asks: Arc<Mutex<Vec<HostAsk>>>,
         _dir: tempfile::TempDir,
     }
 
@@ -2837,6 +2983,18 @@ mod tests {
         let exec_consent = Arc::new(AtomicU8::new(ExecConsent::Allowed.as_u8()));
         let asked = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let counter = asked.clone();
+        // A person who has already allowed the one machine the fixture opens
+        // and attaches to. The per-machine gate has its own tests below, and
+        // they rewrite this map; the rest of this file is about the verbs.
+        let host_access = Arc::new(Mutex::new({
+            let mut access = HostAccess::default();
+            access.set("10.0.0.5", Verdict::Allowed);
+            access
+        }));
+        let host_asked = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let prompts = host_asked.clone();
+        let host_asks = Arc::new(Mutex::new(Vec::new()));
+        let sink_asks = host_asks.clone();
         Fixture {
             ctx: Ctx {
                 sessions,
@@ -2848,11 +3006,18 @@ mod tests {
                 ask: Arc::new(move || {
                     counter.fetch_add(1, Ordering::Relaxed);
                 }),
+                host_access,
+                ask_host: Arc::new(move |ask| {
+                    prompts.fetch_add(1, Ordering::Relaxed);
+                    sink_asks.lock().push(ask);
+                }),
             },
             commands,
             events,
             disk,
             asked,
+            host_asked,
+            host_asks,
             _dir: dir,
         }
     }
@@ -4819,6 +4984,7 @@ mod tests {
             disk: _disk,
             asked: _asked,
             _dir,
+            ..
         } = fixture;
         let mut peer = greeted(&ctx).await;
         call(
@@ -5394,6 +5560,11 @@ mod tests {
         assert_eq!(ask.port, 22);
         assert_eq!(ask.protocol, "ssh");
         assert_eq!(ask.host_id, None, "no saved machine was named");
+        assert_eq!(
+            fixture.host_asked.load(Ordering::Relaxed),
+            0,
+            "an allowed machine reaches the opener with no question asked"
+        );
     }
 
     fn seen_ask(asked: &Arc<Mutex<Option<OpenAsk>>>) -> OpenAsk {
@@ -5429,6 +5600,208 @@ mod tests {
         .await
         .expect_err("open is not held here");
         assert_eq!(refused.tag, Some("MISSING_CAPABILITY"));
+    }
+
+    // ---------------------------------------------------------------------
+    // Host access: a person's answer, per machine.
+    // ---------------------------------------------------------------------
+
+    /// A machine nobody has answered for is refused, named, and the question
+    /// is put in front of the person once across retries. The fixture's session
+    /// is on 10.0.0.5, which is also the machine already open: this call would
+    /// have taken the reuse branch, and it is refused before that.
+    #[tokio::test]
+    async fn an_unapproved_machine_is_refused_and_asks_once_across_calls() {
+        let fixture = fixture();
+        // The fixture starts with this machine allowed. Clearing the map makes
+        // it the unasked case without changing any other state.
+        *fixture.ctx.host_access.lock() = HostAccess::default();
+        let mut peer = greeted(&fixture.ctx).await;
+
+        for _ in 0..2 {
+            let refused = dispatch(
+                &fixture.ctx,
+                &mut peer,
+                "limb.open",
+                &json!({ "address": "10.0.0.5", "protocol": "vnc", "port": 5900 }),
+            )
+            .await
+            .expect_err("an unasked machine is not opened");
+            assert_eq!(refused.tag, Some("CONSENT_REQUIRED"));
+            assert!(
+                refused.message.contains("10.0.0.5"),
+                "the refusal has to name the machine: {}",
+                refused.message
+            );
+            assert!(
+                refused.message.contains("not been asked"),
+                "the sentence says which of the two answers this is: {}",
+                refused.message
+            );
+            assert!(
+                refused.message.contains("showing them the prompt"),
+                "and that the question is on screen: {}",
+                refused.message
+            );
+        }
+        assert_eq!(
+            fixture.host_asked.load(Ordering::Relaxed),
+            1,
+            "two refused calls must not stack two dialogs for one machine"
+        );
+        assert_eq!(
+            fixture.host_asks.lock().as_slice(),
+            &[HostAsk {
+                address: "10.0.0.5".into(),
+                name: None,
+            }]
+        );
+    }
+
+    /// The reuse branch is the one a naive check placed after it would miss:
+    /// the machine is already open, and `limb.open` would have answered
+    /// `reused: true` by handing an agent a session a person is watching.
+    #[tokio::test]
+    async fn an_unapproved_machine_that_is_already_open_is_still_refused() {
+        let fixture = fixture();
+        *fixture.ctx.host_access.lock() = HostAccess::default();
+        let mut peer = greeted(&fixture.ctx).await;
+
+        let refused = dispatch(
+            &fixture.ctx,
+            &mut peer,
+            "limb.open",
+            &json!({ "address": "10.0.0.5", "protocol": "vnc", "port": 5900 }),
+        )
+        .await
+        .expect_err("already open is still an agent reaching the machine");
+        assert_eq!(refused.tag, Some("CONSENT_REQUIRED"));
+        assert!(
+            !refused.message.contains("Call limb.attach"),
+            "the reuse answer must not be reachable here: {}",
+            refused.message
+        );
+        assert_eq!(
+            fixture.ctx.plane.attached_ids().len(),
+            0,
+            "nothing was attached on the way to the refusal"
+        );
+    }
+
+    /// A denial is an answer: refused, and no dialog, because there is no
+    /// question left until a person changes it in the panel.
+    #[tokio::test]
+    async fn a_denied_machine_is_refused_without_asking_again() {
+        let fixture = fixture();
+        let mut declined = HostAccess::default();
+        declined.set("10.0.0.5", Verdict::Denied);
+        *fixture.ctx.host_access.lock() = declined;
+        let mut peer = greeted(&fixture.ctx).await;
+
+        let refused = dispatch(
+            &fixture.ctx,
+            &mut peer,
+            "limb.open",
+            &json!({ "address": "10.0.0.5", "protocol": "vnc", "port": 5900 }),
+        )
+        .await
+        .expect_err("a denial is a refusal");
+        assert_eq!(refused.tag, Some("CONSENT_REQUIRED"));
+        assert!(
+            refused.message.contains("denied"),
+            "the sentence says WHO said no: {}",
+            refused.message
+        );
+        assert!(
+            refused.message.contains("10.0.0.5"),
+            "and which machine: {}",
+            refused.message
+        );
+        assert!(
+            refused.message.contains("AI Agents panel"),
+            "and where it can be changed: {}",
+            refused.message
+        );
+        assert_eq!(
+            fixture.host_asked.load(Ordering::Relaxed),
+            0,
+            "a denial is an answer; it does not re-open the question"
+        );
+    }
+
+    /// The question names a saved machine by its friendly name, because that is
+    /// what the person recognises in the dialog and in the panel.
+    #[tokio::test]
+    async fn the_prompt_names_a_saved_machine_by_its_saved_name() {
+        let fixture = fixture();
+        let profile = vnc_store::HostProfile {
+            friendly_name: "NAS".into(),
+            address: "nas.local".into(),
+            port: 5900,
+            ..Default::default()
+        };
+        fixture
+            .ctx
+            .store
+            .save_host(&profile)
+            .expect("a saved machine");
+        let mut peer = greeted(&fixture.ctx).await;
+
+        let refused = dispatch(
+            &fixture.ctx,
+            &mut peer,
+            "limb.open",
+            &json!({ "hostId": profile.id }),
+        )
+        .await
+        .expect_err("a machine nobody answered for is not opened");
+        assert_eq!(refused.tag, Some("CONSENT_REQUIRED"));
+        assert!(
+            refused.message.contains("NAS"),
+            "the refusal names the machine the person saved: {}",
+            refused.message
+        );
+        assert_eq!(
+            fixture.host_asks.lock().as_slice(),
+            &[HostAsk {
+                address: "nas.local".into(),
+                name: Some("NAS".into()),
+            }]
+        );
+    }
+
+    /// `limb.attach` checks the machine the SESSION is on, not just the address
+    /// the caller typed. An unapproved machine is refused before the plane
+    /// checks a slot, allocates a mirror or renegotiates the person's session.
+    #[tokio::test]
+    async fn attaching_to_an_unapproved_machines_session_is_refused() {
+        let fixture = fixture();
+        *fixture.ctx.host_access.lock() = HostAccess::default();
+        let mut peer = greeted(&fixture.ctx).await;
+
+        let refused = dispatch(
+            &fixture.ctx,
+            &mut peer,
+            "limb.attach",
+            &json!({ "address": "10.0.0.5", "protocol": "vnc", "slot": 0 }),
+        )
+        .await
+        .expect_err("the session's machine is not approved");
+        assert_eq!(refused.tag, Some("CONSENT_REQUIRED"));
+        assert!(
+            refused.message.contains("10.0.0.5"),
+            "the refusal has to name the machine: {}",
+            refused.message
+        );
+        assert_eq!(
+            fixture.host_asked.load(Ordering::Relaxed),
+            1,
+            "the same question is put once, through the attach path too"
+        );
+        assert!(
+            fixture.ctx.plane.attached_ids().is_empty(),
+            "nothing was attached"
+        );
     }
 
     // ---------------------------------------------------------------------

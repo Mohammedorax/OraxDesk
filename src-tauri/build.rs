@@ -512,6 +512,12 @@ fn main() {
             // machine off them are different acts.
             "agent_status",
             "agent_take_the_wheel",
+            // The per-machine access answers, as the AI Agents panel reads
+            // and changes them. Two commands rather than one because reading
+            // every answer and deciding one are different acts, and the write
+            // is the one that can grant an agent a machine.
+            "agent_host_access",
+            "agent_set_host_access",
             // Registering the bundled `dvv` with Claude Code, which runs a
             // program on the person's behalf. Its own grant for that reason:
             // reading the plane's state and spawning a process are not the

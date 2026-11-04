@@ -743,6 +743,20 @@ const ar = {
   "agent.execAskDeny": "ليس الآن",
   "agent.execAskDeniedNote":
     "بعد الرفض يتوقف dvv_run وdvv_job على هذا الجهاز حتى تسمح.",
+  "agent.hostAskTitle": "هل تسمح للوكيل بفتح «{name}»؟",
+  "agent.hostAskBody":
+    "فتح الجهاز يعني أن الوكيل يراه ويتحكم فيه من جلستك المفتوحة في OraxDesk. تُحفظ الإجابة لهذا الجهاز وحده، وتقدر تغيّرها في أي وقت من لوحة الوكلاء.",
+  "agent.hostAskAllow": "السماح لهذا الجهاز",
+  "agent.hostAskDeny": "ليس الآن",
+  "agent.hostAskDeniedNote":
+    "بعد الرفض لا يفتح الوكيل هذا الجهاز ولا يتصل بجلسته حتى تسمح.",
+  "agent.hostAccessTitle": "الأجهزة التي يفتحها الوكيل",
+  "agent.hostAccessNote":
+    "كل جهاز يُسأل عنه مرة واحدة. المنع يوقف الفتح والاتصال بجلسة مفتوحة، ولا يغيّر شيئًا في جلستك أنت.",
+  "agent.hostAccessApproved": "{count} مسموح",
+  "agent.hostAccessEmpty": "لم يُسأل عن أي جهاز بعد.",
+  "agent.hostAccessAllow": "السماح",
+  "agent.hostAccessDeny": "منع",
 
   // نافذة الشهادة
   "cert.changedTitle": "تغيّرت هوية الخادم",
@@ -2371,6 +2385,20 @@ const en: Record<keyof typeof ar, string> = {
   "agent.execAskDeny": "Not now",
   "agent.execAskDeniedNote":
     "After a denial, dvv_run and dvv_job stop working on this computer until you allow them.",
+  "agent.hostAskTitle": "Allow the agent to open “{name}”?",
+  "agent.hostAskBody":
+    "Opening a machine lets the agent see and control it through your open OraxDesk session. The answer is remembered for this machine alone, and you can change it at any time from the AI Agents panel.",
+  "agent.hostAskAllow": "Allow this machine",
+  "agent.hostAskDeny": "Not now",
+  "agent.hostAskDeniedNote":
+    "After a denial the agent cannot open this machine or attach to its session until you allow it.",
+  "agent.hostAccessTitle": "Machines the agent may open",
+  "agent.hostAccessNote":
+    "Each machine is asked about once. Denying blocks opening and attaching to an open session, and changes nothing about your own session.",
+  "agent.hostAccessApproved": "{count} approved",
+  "agent.hostAccessEmpty": "No machine has been asked about yet.",
+  "agent.hostAccessAllow": "Allow",
+  "agent.hostAccessDeny": "Deny",
 
   // The certificate prompt
   "cert.changedTitle": "Server identity has CHANGED",

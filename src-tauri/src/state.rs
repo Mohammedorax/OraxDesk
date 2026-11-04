@@ -8,7 +8,7 @@ use std::time::Instant;
 use parking_lot::Mutex;
 use vnc_core::{ProtocolDriver, ProtocolKind, SessionHandle, SessionState, VncDriver};
 
-use crate::agent::{AgentPlane, ExecConsent};
+use crate::agent::{AgentPlane, ExecConsent, HostAccess};
 use crate::thumbnail::ThumbnailPolicy;
 
 /// Global app state, `app.manage`d in `lib.rs::run`.
@@ -72,6 +72,13 @@ pub struct AppState {
     /// reconnect and no second `hello`. Initialised from [`crate::agent::EXEC_CONSENT_KEY`]
     /// at startup; absent means [`ExecConsent::Unasked`], which refuses.
     pub agent_exec_consent: Arc<AtomicU8>,
+    /// Which machines a person has allowed an agent to open.
+    ///
+    /// Shared with the socket's context rather than copied, so an answer in
+    /// the AI Agents panel reaches connections that are already open.
+    /// Initialised from [`crate::agent::HOST_ACCESS_KEY`] at startup; a
+    /// machine with no entry is unasked, which refuses.
+    pub agent_host_access: Arc<Mutex<HostAccess>>,
 }
 
 /// A session window that exists but has not registered a session yet.
@@ -629,6 +636,15 @@ impl AppState {
                 .flatten()
                 .as_deref(),
         );
+        // Same rule for machines: an unreadable blob is an empty map, which
+        // leaves every machine unasked and therefore refused.
+        let host_access = HostAccess::parse(
+            store
+                .get_setting(crate::agent::HOST_ACCESS_KEY)
+                .ok()
+                .flatten()
+                .as_deref(),
+        );
         Self {
             store,
             credentials,
@@ -641,6 +657,7 @@ impl AppState {
             protocols: Arc::new(ProtocolRegistry::new(host_keys)),
             agent: Arc::new(AgentPlane::default()),
             agent_exec_consent: Arc::new(AtomicU8::new(exec_consent.as_u8())),
+            agent_host_access: Arc::new(Mutex::new(host_access)),
         }
     }
 

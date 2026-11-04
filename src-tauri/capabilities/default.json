@@ -164,6 +164,8 @@
 
     "allow-agent-status",
     "allow-agent-take-the-wheel",
+    "allow-agent-host-access",
+    "allow-agent-set-host-access",
     "allow-agent-register-with-claude",
     "allow-agent-setup-agents",
 

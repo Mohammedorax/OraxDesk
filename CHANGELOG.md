@@ -19,6 +19,14 @@ to stored data and to the IPC contract between the Rust core and the frontend.
   with `CONSENT_REQUIRED` and a sentence saying which of the two it is. Viewing,
   capture, input, files and opening machines are not gated by it. Changing the
   answer reaches connections that are already open: no reconnect, no restart.
+* Opening a machine is now a person's decision too. The first agent that asks
+  to open a machine — or to attach to a session on one, including one already
+  open in OraxDesk — gets a prompt naming that machine, the answer is remembered
+  per machine, and both answers are reversible in the AI Agents panel. Until it
+  is allowed, `limb.open` and `limb.attach` fail with `CONSENT_REQUIRED` and a
+  sentence saying whether the person denied it or has not been asked yet.
+  Viewing, capture, input and execution on a machine the person already approved
+  are unchanged.
 * An SSH carrier-sharing design review in `docs/REVIEW-SUPPORT.md`: why one
   carrier per session is the conservative choice, what sharing would take, and
   the five risks that make it a trade rather than a win.
