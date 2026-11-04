@@ -68,12 +68,7 @@ jobs:
       - name: Start sshd on :2222
         run: |
           sudo mkdir -p /run/sshd
-          # UsePAM=no: the suite's reconnect test depends on a tmux server
-          # outliving the login session that created it. A PAM-less sshd does
-          # not register a logind user session, so nothing later sweeps the
-          # pane processes away when the client drops (and these tests need
-          # no PAM features: pubkey only, one account, no quotas).
-          sudo /usr/sbin/sshd -p 2222 -o UsePAM=no
+          sudo /usr/sbin/sshd -p 2222
 
       - name: Load the live key into ssh-agent
         run: |
