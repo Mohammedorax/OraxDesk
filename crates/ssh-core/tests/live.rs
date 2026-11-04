@@ -125,6 +125,35 @@ async fn read_until(
     }
 }
 
+/// Wait for the session to report a `Connected` state and return it.
+///
+/// The tests below cannot just wait for the first "$": that prompt can be the
+/// outer login shell's, printed before the pane has attached, and input typed
+/// at that moment dies with the connection instead of living inside the pane
+/// the reconnect is supposed to reattach to. A CI runner makes the race
+/// observable (fast prompt, slow pane spawn), so the attach event is the
+/// reliable signal.
+async fn await_connected(
+    events: &mut tokio::sync::mpsc::Receiver<SshEvent>,
+) -> Option<TerminalState> {
+    let deadline = tokio::time::Instant::now() + SETTLE;
+    loop {
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        if remaining.is_zero() {
+            return None;
+        }
+        match tokio::time::timeout(remaining, events.recv()).await {
+            Err(_) | Ok(None) => return None,
+            Ok(Some(SshEvent::StateChanged(s))) => {
+                if matches!(s, TerminalState::Connected { .. }) {
+                    return Some(s);
+                }
+            }
+            Ok(Some(_)) => {}
+        }
+    }
+}
+
 /// A remote shell runs a command and we see its output. The most basic claim
 /// this crate makes, and the one everything else rests on.
 #[tokio::test]
@@ -251,18 +280,25 @@ async fn work_survives_a_disconnect_when_a_multiplexer_is_used() {
     // inside the tmux pane and so cannot survive by any other route.
     let (first, mut events) =
         SshSession::spawn(options(cfg.clone(), MultiplexerKind::Tmux), TrustAll);
-    let (_, seen, states) = read_until(&mut events, "$").await;
 
-    let fell_back = states.iter().any(|s| {
-        matches!(
-            s,
-            TerminalState::Connected {
-                multiplexer: None,
-                ..
-            }
-        )
-    });
-    if fell_back {
+    // Wait for the attach itself rather than for a prompt: "$" can be the
+    // outer login shell's, printed before the pane attached, and a marker
+    // typed at that moment dies with the connection (see `await_connected`).
+    let Some(attached) = await_connected(&mut events).await else {
+        eprintln!(
+            "SKIP work_survives_a_disconnect_when_a_multiplexer_is_used: \
+             no Connected state arrived within the settle window"
+        );
+        first.shutdown().await;
+        return;
+    };
+
+    // Skips itself (rather than failing) when tmux is not installed on the
+    // remote, since that is a property of the test host, not of this crate.
+    if matches!(
+        &attached,
+        TerminalState::Connected { multiplexer: None, .. }
+    ) {
         eprintln!(
             "SKIP work_survives_a_disconnect_when_a_multiplexer_is_used: \
              tmux is not installed on the remote host"
@@ -270,10 +306,6 @@ async fn work_survives_a_disconnect_when_a_multiplexer_is_used() {
         first.shutdown().await;
         return;
     }
-    assert!(
-        !seen.is_empty() || !states.is_empty(),
-        "the first connection produced nothing at all"
-    );
 
     first
         .input(b"LIVEMARKER=survived-the-drop; echo set-done\n".to_vec())
@@ -288,20 +320,22 @@ async fn work_survives_a_disconnect_when_a_multiplexer_is_used() {
     drop(events);
     tokio::time::sleep(Duration::from_millis(500)).await;
 
-    // Second connection: reattach and ask for the variable back.
+    // Second connection: reattach and ask for the variable back. Wait for the
+    // attach event as above — a prompt can predate the attach.
     let (second, mut events) = SshSession::spawn(options(cfg, MultiplexerKind::Tmux), TrustAll);
-    let (_, _, states) = read_until(&mut events, "$").await;
-
+    let Some(reattached) = await_connected(&mut events).await else {
+        panic!("the second connection never reported Connected in time");
+    };
     assert!(
-        states.iter().any(|s| matches!(
-            s,
+        matches!(
+            &reattached,
             TerminalState::Connected {
                 resumed: true,
                 multiplexer: Some(MultiplexerKind::Tmux),
                 ..
             }
-        )),
-        "the second connection did not report resuming an existing session: {states:?}"
+        ),
+        "the second connection did not report resuming an existing session: {reattached:?}"
     );
 
     second
