@@ -67,9 +67,14 @@ try {
   if (existsSync(OUT)) {
     try {
       const prev = JSON.parse(readFileSync(OUT, "utf8"));
-      const count = (p) => Object.values(p?.platforms ?? {}).filter(Boolean).length;
+      // Count actual assets (nsis/msi/dmg/deb/rpm/appImage that exist), not
+      // platform groups — every group object is present even when empty.
+      const count = (p) =>
+        Object.values(p?.platforms ?? {})
+          .flatMap((group) => Object.values(group ?? {}))
+          .filter(Boolean).length;
       if (count(prev) > count(data)) {
-        console.log("Latest release has fewer platforms than the baked one; keeping it.");
+        console.log("Latest release has fewer assets than the baked one; keeping it.");
         process.exit(0);
       }
     } catch {

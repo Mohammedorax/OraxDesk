@@ -2,7 +2,9 @@ import sharp from "sharp";
 import { readdirSync, mkdirSync, statSync, rmSync } from "fs";
 import { join, dirname } from "path";
 
-const srcDir = "public/screens-src";
+// Masters are committed at repo root (docs/images/screens), so this works
+// from a fresh clone; pass another folder to override.
+const srcDir = process.argv[2] ?? "../docs/images/screens";
 const outDir = "public/screens";
 mkdirSync(outDir, { recursive: true });
 

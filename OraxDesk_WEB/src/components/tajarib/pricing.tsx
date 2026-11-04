@@ -1,24 +1,31 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useSyncExternalStore } from "react";
 import { Download, FileCode2, Laptop, MonitorSmartphone } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useLang } from "./lang";
 import { Reveal, Section } from "./shared";
 import { releases } from "@/lib/tajarib/releases";
 
-/** Platform detection, once, after mount — the server render shows the
- *  neutral state, so hydration never mismatches. */
+/* Platform detection without setState-in-effect: useSyncExternalStore hands
+   over the client snapshot after hydration, so the server render stays
+   neutral and hydration never mismatches. The UA never changes mid-session,
+   so the subscription never needs to fire. */
+const subscribeNever = () => () => {};
+
+function detectPlatform(ua: string): "windows" | "macos" | "linux" | null {
+  if (/Windows/i.test(ua)) return "windows";
+  if (/Mac|iPhone|iPad/i.test(ua)) return "macos";
+  if (/Linux|Android|X11/i.test(ua)) return "linux";
+  return null;
+}
+
 function usePlatform(): "windows" | "macos" | "linux" | null {
-  const [plat, setPlat] = useState<"windows" | "macos" | "linux" | null>(null);
-  useEffect(() => {
-    const ua = navigator.userAgent;
-    if (/Windows/i.test(ua)) setPlat("windows");
-    else if (/Mac|iPhone|iPad/i.test(ua)) setPlat("macos");
-    else if (/Linux|Android|X11/i.test(ua)) setPlat("linux");
-    else setPlat(null);
-  }, []);
-  return plat;
+  return useSyncExternalStore(
+    subscribeNever,
+    () => detectPlatform(navigator.userAgent),
+    () => null
+  );
 }
 
 const PLATFORM_ICON = {
