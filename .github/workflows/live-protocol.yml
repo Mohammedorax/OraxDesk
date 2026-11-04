@@ -54,8 +54,7 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             openssh-server \
             tmux screen xauth \
-            tigervnc-standalone-server tigervnc-common \
-            xvfb xterm
+            x11vnc xvfb
 
       - name: Create the live SSH account and its key
         run: |
@@ -84,14 +83,19 @@ jobs:
           ssh -q -o StrictHostKeyChecking=no -p 2222 \
             dvvtest@127.0.0.1 'echo sshd-live-ok'
 
-      - name: Start the VNC server on :1
+      - name: Start the VNC server (Xvfb + x11vnc) on :5901
         run: |
-          mkdir -p "$HOME/.vnc"
-          printf 'vnc-live-password' | tigervncpasswd -f > "$HOME/.vnc/passwd"
-          chmod 600 "$HOME/.vnc/passwd"
-          printf '#!/bin/sh\nexec xterm -geometry 80x24\n' > "$HOME/.vnc/xstartup"
-          chmod +x "$HOME/.vnc/xstartup"
-          tigervncserver :1 -geometry 1024x768 -depth 24
+          # x11vnc rather than TigerVNC: it speaks the RFB handshake the suite
+          # probes (offering VNC auth) and takes its password on the command
+          # line, which skips the tigervncpasswd binary-name drift between
+          # Ubuntu releases entirely.
+          Xvfb :99 -screen 0 1024x768x24 &
+          for _ in $(seq 1 30); do
+            [ -S /tmp/.X11-unix/X99 ] && break
+            sleep 0.5
+          done
+          nohup x11vnc -display :99 -rfbport 5901 -passwd vnc-live-password \
+            -forever -shared -quiet > /tmp/x11vnc.log 2>&1 &
           # The suite would politely skip if the port stayed closed; here a
           # silent skip would silently drop the server from the nightly, so
           # the step must fail instead.
@@ -102,7 +106,7 @@ jobs:
             fi
             sleep 1
           done
-          (exec 3<>"/dev/tcp/127.0.0.1/5901") || { echo "VNC never came up"; exit 1; }
+          (exec 3<>"/dev/tcp/127.0.0.1/5901") || { echo "VNC never came up"; cat /tmp/x11vnc.log; exit 1; }
 
       - name: Run the live SSH suite (PTY, resize, tmux reconnect)
         env:
