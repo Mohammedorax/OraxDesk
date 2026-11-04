@@ -115,6 +115,34 @@ jobs:
           ssh -q -o StrictHostKeyChecking=no -p 2222 dvvtest@127.0.0.1 \
             'tmux kill-session -t shapetest 2>/dev/null || true'
 
+      - name: Probe - the crate's full shape: typed attach, EOF drop, crate's own probe script
+        run: |
+          # Reproduce the crate end to end in bash: login shell, attach typed
+          # exactly as pty.rs types it (leading space, CR terminator), EOF on
+          # stdin the way a russh disconnect ends the channel — then ask with
+          # the crate's own generated probe script via a PTY-less exec.
+          mkfifo /tmp/shape.fifo
+          ssh -tt -o StrictHostKeyChecking=no -p 2222 dvvtest@127.0.0.1 \
+            > /tmp/shape.out 2>&1 < /tmp/shape.fifo &
+          ssh_pid=$!
+          exec 9> /tmp/shape.fifo
+          sleep 3
+          printf ' TERM=xterm-256color tmux new-session -A -s shaped\r' >&9
+          sleep 3
+          exec 9>&-
+          wait $ssh_pid || true
+          echo '--- first-connection output ---'
+          tail -c 600 /tmp/shape.out
+          echo '--- verdict via the crate probe script ---'
+          ssh -q -o StrictHostKeyChecking=no -p 2222 dvvtest@127.0.0.1 \
+            'sh -c "if command -v tmux >/dev/null 2>&1; then if tmux has-session -t shaped 2>/dev/null; then echo tmux:present; else echo tmux:absent; fi; else echo tmux:missing; fi; echo end"'
+          echo '--- verdict via the plain exit status ---'
+          ssh -q -o StrictHostKeyChecking=no -p 2222 dvvtest@127.0.0.1 \
+            'tmux has-session -t shaped && echo SHAPED_SURVIVED || echo SHAPED_DIED'
+          ssh -q -o StrictHostKeyChecking=no -p 2222 dvvtest@127.0.0.1 \
+            'tmux kill-session -t shaped 2>/dev/null || true'
+          rm -f /tmp/shape.fifo
+
       - name: Start the VNC server (Xvfb + x11vnc) on :5901
         run: |
           # x11vnc rather than TigerVNC: it speaks the RFB handshake the suite
