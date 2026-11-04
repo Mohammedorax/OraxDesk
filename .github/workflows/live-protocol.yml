@@ -115,27 +115,6 @@ jobs:
           ssh -q -o StrictHostKeyChecking=no -p 2222 dvvtest@127.0.0.1 \
             'tmux kill-session -t shapetest 2>/dev/null || true'
 
-      - name: Probe - the crate's exact flow (typed attach, then EOF drop)
-        run: |
-          # A PTY login shell, the attach line typed the way the crate types
-          # it (leading space, CR terminator), then the connection closed
-          # without any goodbye. This is the flow the reconnect test drives.
-          mkfifo /tmp/fifo-in
-          ssh -tt -o StrictHostKeyChecking=no -p 2222 dvvtest@127.0.0.1 \
-            < /tmp/fifo-in > /tmp/flow.log 2>&1 &
-          exec 9> /tmp/fifo-in
-          sleep 3
-          printf ' tmux new-session -A -s flow-probe\r' >&9
-          sleep 4
-          exec 9>&- # EOF closes the login shell, the channel and the PTY
-          wait || true
-          echo '--- flow log (tail) ---'; tail -c 300 /tmp/flow.log
-          # Ask again on a fresh connection, the way the crate's probe does.
-          ssh -q -o StrictHostKeyChecking=no -p 2222 dvvtest@127.0.0.1 \
-            'tmux has-session -t flow-probe 2>/dev/null && echo FLOW_SURVIVED || echo FLOW_DIED'
-          ssh -q -o StrictHostKeyChecking=no -p 2222 dvvtest@127.0.0.1 \
-            'tmux kill-session -t flow-probe 2>/dev/null || true'
-
       - name: Probe - the crate's full shape (typed attach, EOF drop, crate probe script)
         run: |
           # Reproduce the crate end to end in bash: login shell, attach typed
