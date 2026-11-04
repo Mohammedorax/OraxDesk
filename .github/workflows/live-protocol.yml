@@ -87,11 +87,22 @@ jobs:
       - name: Start the VNC server on :1
         run: |
           mkdir -p "$HOME/.vnc"
-          printf 'vnc-live-password' | vncpasswd -f > "$HOME/.vnc/passwd"
+          printf 'vnc-live-password' | tigervncpasswd -f > "$HOME/.vnc/passwd"
           chmod 600 "$HOME/.vnc/passwd"
-          printf '#!/bin/sh\nexec xterm\n' > "$HOME/.vnc/xstartup"
+          printf '#!/bin/sh\nexec xterm -geometry 80x24\n' > "$HOME/.vnc/xstartup"
           chmod +x "$HOME/.vnc/xstartup"
-          vncserver :1 -geometry 1024x768 -depth 24
+          tigervncserver :1 -geometry 1024x768 -depth 24
+          # The suite would politely skip if the port stayed closed; here a
+          # silent skip would silently drop the server from the nightly, so
+          # the step must fail instead.
+          for _ in $(seq 1 30); do
+            if (exec 3<>"/dev/tcp/127.0.0.1/5901") 2>/dev/null; then
+              echo "VNC is listening on 5901"
+              break
+            fi
+            sleep 1
+          done
+          (exec 3<>"/dev/tcp/127.0.0.1/5901") || { echo "VNC never came up"; exit 1; }
 
       - name: Run the live SSH suite (PTY, resize, tmux reconnect)
         env:
