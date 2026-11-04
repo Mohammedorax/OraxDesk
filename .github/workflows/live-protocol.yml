@@ -95,13 +95,18 @@ jobs:
           ssh -q -o StrictHostKeyChecking=no -p 2222 dvvtest@127.0.0.1 \
             'tmux kill-session -t livetest-probe || true'
 
+          ssh -q -o StrictHostKeyChecking=no -p 2222 dvvtest@127.0.0.1 \
+            'tmux kill-session -t livetest-probe || true'
+
       - name: Probe - tmux survival in the shell-typed foreground shape
         run: |
           # The crate does not run `tmux new-session -d`; it opens a login
           # shell and *types* the foreground attach into it. Reproduce that
-          # shape with the same TERM the PTY request carries, capture the
-          # client's stderr, cut the connection, then look at what survived.
-          ssh -tt -o StrictHostKeyChecking=no -p 2222 dvvtest@127.0.0.1 \
+          # shape with the same TERM the PTY request carries. `timeout` cuts
+          # the ssh client after 8s, which is exactly the hang-up class the
+          # reconnect suite exercises (a client that dies with the link).
+          timeout --signal=KILL 8 ssh -tt -o StrictHostKeyChecking=no -p 2222 \
+            dvvtest@127.0.0.1 \
             'TERM=xterm-256color tmux new-session -A -s shapetest' \
             < /dev/null > /tmp/shape-attach.log 2>&1 || true
           echo '--- attach log ---'; cat /tmp/shape-attach.log
