@@ -1,0 +1,14 @@
+{
+  "tag": "v0.31.8",
+  "version": "0.31.8",
+  "page": "https://github.com/Mohammedorax/OraxDesk/releases/latest",
+  "source": "https://github.com/Mohammedorax/OraxDesk/archive/refs/heads/main.zip",
+  "platforms": {
+    "windows": {
+      "nsis": { "name": "OraxDesk_0.31.8_x64-setup.exe" },
+      "msi": { "name": "OraxDesk_0.31.8_x64_en-US.msi" }
+    },
+    "macos": { "dmg": null },
+    "linux": { "deb": null, "rpm": null, "appImage": null }
+  }
+}

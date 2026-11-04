@@ -1,0 +1,7 @@
+node_modules/
+.next/
+out/
+dev.log
+server.log
+# Full-res masters stay in docs/images/screens; these are the local copies.
+public/screens-src/

@@ -1,0 +1,73 @@
+# Publishes the marketing site (OraxDesk_WEB) to GitHub Pages:
+# https://mohammedorax.github.io/OraxDesk/
+#
+# The site is a fully static Next.js export (output: "export"), built the
+# same way as locally: bake the latest release metadata (fetch-release.mjs),
+# then `next build`, which writes OraxDesk_WEB/out/. The monthly schedule
+# re-bakes the download links when a new release lands even if no web file
+# changed.
+
+name: site
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "OraxDesk_WEB/**"
+      - ".github/workflows/site.yml"
+  schedule:
+    - cron: "0 4 2 * *" # monthly: refresh baked release links
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One Pages deployment at a time; never cancel a running deploy.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        working-directory: OraxDesk_WEB
+        run: bun install --frozen-lockfile
+
+      - name: Build the static export
+        working-directory: OraxDesk_WEB
+        run: bun run build
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Pages
+        uses: actions/configure-pages@v5
+        with:
+          enablement: true
+
+      - name: Upload the site artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: OraxDesk_WEB/out
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
