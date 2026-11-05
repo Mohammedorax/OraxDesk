@@ -1551,6 +1551,39 @@ pub async fn connect_session(
         }
     }
 
+    // SOCKS5 proxy (the plan's networking debt): a global preference rather
+    // than a per-host field, because a proxy belongs to the network a person
+    // is on. The SSH tunnel above is per host and explicit, so it wins when
+    // both are set; this is the network default, and it is read here on every
+    // connect so a change in Preferences reaches the next session without a
+    // restart. VNC only: RDP and SSH dial through cores that take no injected
+    // connector (see `crate::proxy`'s module comment).
+    if options.connector.is_none() && kind == ProtocolKind::Vnc {
+        let store = state.store.clone();
+        let stored = super::blocking(move || {
+            Ok::<_, String>((
+                store.get_setting(crate::proxy::ENABLED_KEY).ok().flatten(),
+                store.get_setting(crate::proxy::HOST_KEY).ok().flatten(),
+                store.get_setting(crate::proxy::PORT_KEY).ok().flatten(),
+            ))
+        })
+        .await?;
+        if let Some(proxy) = crate::proxy::ProxySettings::parse(
+            stored.0.as_deref(),
+            stored.1.as_deref(),
+            stored.2.as_deref(),
+        )? {
+            tracing::info!(
+                session = %id,
+                proxy = %proxy.describe(),
+                "the session will run over the socks5 proxy"
+            );
+            options.connector = Some(vnc_core::Connector(Arc::new(
+                vnc_transport::socks5::Socks5Connector::new(proxy.host.clone(), proxy.port),
+            )));
+        }
+    }
+
     // A direct SSH session verifies the host key inside its own run loop,
     // where the only way out is a disconnect message. First contact with a
     // machine therefore ended as an error string and a Close button, on a

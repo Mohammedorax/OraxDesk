@@ -140,6 +140,35 @@ function useAppSetting(key: string, initial: boolean): [boolean, (v: boolean) =>
 }
 
 /**
+ * The same store, for a setting whose value is text rather than a switch.
+ *
+ * Writes on change like `useAppSetting`, so the connect path sees the value
+ * the moment the person leaves the field. A half-typed address is harmless:
+ * a switched-off proxy ignores whatever sits beside it, and a switched-on one
+ * refuses the connect with a sentence (`crate::proxy`).
+ */
+function useAppSettingString(key: string, initial: string): [string, (v: string) => void] {
+  const [v, setV] = useState<string>(initial);
+  useEffect(() => {
+    let cancelled = false;
+    void safeInvoke<string | null>("get_app_setting", { key }, null).then((raw) => {
+      if (!cancelled && typeof raw === "string") setV(raw);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [key]);
+  const set = useCallback(
+    (next: string) => {
+      setV(next);
+      void safeInvoke("set_app_setting", { key, value: next }, null);
+    },
+    [key],
+  );
+  return [v, set];
+}
+
+/**
  * The resolution a new Remote Desktop host starts with.
  *
  * `useAppSetting` only carries booleans and this is a choice of several, so it
@@ -204,6 +233,12 @@ export function Preferences({
   const [rdpAudio, setRdpAudio] = useAppSetting("rdp_default_audio", true);
   const [rdpClipboard, setRdpClipboard] = useAppSetting("rdp_default_redirect_clipboard", true);
   const [multipleSessions, setMultipleSessions] = useAppSetting(ALLOW_MULTIPLE_SESSIONS_KEY, false);
+  // The SOCKS5 proxy, read by the shell when a VNC session opens. Fields exist
+  // only while the switch is on: an unused proxy should not leave two empty
+  // boxes on screen looking like something forgotten.
+  const [proxyOn, setProxyOn] = useAppSetting("proxy_enabled", false);
+  const [proxyHost, setProxyHost] = useAppSettingString("proxy_host", "");
+  const [proxyPort, setProxyPort] = useAppSettingString("proxy_port", "1080");
   const [clipboardAuto, setClipboardAuto] = usePref(PREF_CLIPBOARD_AUTO, true);
   const [clipboardOnFocus, setClipboardOnFocus] = usePref(PREF_CLIPBOARD_ON_FOCUS, true);
   const [clipboardOnPaste, setClipboardOnPaste] = usePref(PREF_CLIPBOARD_ON_PASTE, true);
@@ -646,6 +681,53 @@ export function Preferences({
                   value={probeRdp}
                   onChange={setProbeRdp}
                 />
+                {/*
+                  The proxy lives here, in Network, and its fields appear only
+                  when it is switched on — the reason is the same one the
+                  Agents tab learned: a setting nobody uses should not add
+                  chrome to the place a person looks at their network.
+                */}
+                <div className="border-t border-subtle pt-5">
+                  <Toggle
+                    label={t("prefs.socks5")}
+                    description={t("prefs.socks5Hint")}
+                    value={proxyOn}
+                    onChange={setProxyOn}
+                  />
+                  {proxyOn ? (
+                    <div className="mt-4 flex flex-col gap-3">
+                      <label className="block text-sm">
+                        {t("prefs.socks5Host")}
+                        <input
+                          dir="ltr"
+                          spellCheck={false}
+                          autoComplete="off"
+                          value={proxyHost}
+                          onChange={(event) => setProxyHost(event.target.value)}
+                          placeholder="127.0.0.1"
+                          className="mt-1 w-full rounded border border-subtle bg-inset p-2"
+                        />
+                      </label>
+                      <label className="block text-sm">
+                        {t("prefs.socks5Port")}
+                        <input
+                          dir="ltr"
+                          inputMode="numeric"
+                          spellCheck={false}
+                          autoComplete="off"
+                          value={proxyPort}
+                          onChange={(event) => setProxyPort(event.target.value)}
+                          placeholder="1080"
+                          className="mt-1 w-full rounded border border-subtle bg-inset p-2"
+                        />
+                        <span className="mt-1 block text-xs text-secondary">
+                          {t("prefs.socks5PortHint")}
+                        </span>
+                      </label>
+                      <p className="text-xs text-secondary">{t("prefs.socks5Scope")}</p>
+                    </div>
+                  ) : null}
+                </div>
               </>
             ) : null}
             {/*

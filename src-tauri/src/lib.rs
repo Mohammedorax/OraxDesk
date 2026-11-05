@@ -10,6 +10,7 @@ mod commands;
 pub mod framing;
 mod logging;
 mod menu;
+mod proxy;
 mod state;
 mod thumbnail;
 mod tray;
