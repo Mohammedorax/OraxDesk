@@ -197,9 +197,11 @@ impl StaticChannels {
 
     /// Disable the clipboard handler after a channel failure.
     pub(crate) fn disable_clipboard(&mut self, id: u16) -> bool {
-        if let Some(index) = self.entries.iter().position(|entry| {
-            entry.id == id && matches!(entry.handler, Handler::Cliprdr(_))
-        }) {
+        if let Some(index) = self
+            .entries
+            .iter()
+            .position(|entry| entry.id == id && matches!(entry.handler, Handler::Cliprdr(_)))
+        {
             self.entries.remove(index);
             true
         } else {

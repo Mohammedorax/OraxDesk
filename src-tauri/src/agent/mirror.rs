@@ -763,7 +763,11 @@ mod tests {
     fn rgba(rect: Rect, colour: [u8; 4]) -> DecodedRect {
         DecodedRect {
             rect,
-            payload: RectPayload::Rgba(colour.repeat(rect.width as usize * rect.height as usize).into()),
+            payload: RectPayload::Rgba(
+                colour
+                    .repeat(rect.width as usize * rect.height as usize)
+                    .into(),
+            ),
         }
     }
 

@@ -622,7 +622,10 @@ impl<R: AsyncRead + Unpin> RunLoop<R> {
                     if self.vc.handles(channel_id) {
                         let ctx = self.channel_ctx();
                         let mut out = Outbox::new();
-                        match self.vc.deliver(channel_id, payload.as_slice(), ctx, &mut out) {
+                        match self
+                            .vc
+                            .deliver(channel_id, payload.as_slice(), ctx, &mut out)
+                        {
                             Ok(()) => {}
                             Err(e) => {
                                 if !self.vc.disable_clipboard(channel_id) {
@@ -1661,7 +1664,10 @@ mod tests {
             channel_id: 1006,
             payload: Payload::new(&malformed_clipboard),
         });
-        match rl.dispatch(&clipboard).expect("clipboard failure is isolated") {
+        match rl
+            .dispatch(&clipboard)
+            .expect("clipboard failure is isolated")
+        {
             SessionSignal::Ignored(why) => assert!(why.contains("channel isolated")),
             other => panic!("expected an isolation, got {other:?}"),
         }
@@ -1688,7 +1694,10 @@ mod tests {
                 body: Payload::new(&body),
             },
         );
-        match rl.dispatch(&from_server(&share)).expect("the session is still alive") {
+        match rl
+            .dispatch(&from_server(&share))
+            .expect("the session is still alive")
+        {
             SessionSignal::Output { events, .. } => assert_eq!(events.len(), 1),
             other => panic!("expected the frame to be decoded, got {other:?}"),
         }

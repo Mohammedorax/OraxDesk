@@ -3755,7 +3755,9 @@ mod tests {
             &[vnc_core::DecodedRect {
                 rect: Rect::new(0, 0, size.0, size.1),
                 payload: vnc_core::RectPayload::Rgba(
-                    [40u8, 80, 160, 255].repeat(size.0 as usize * size.1 as usize).into(),
+                    [40u8, 80, 160, 255]
+                        .repeat(size.0 as usize * size.1 as usize)
+                        .into(),
                 ),
             }],
         );
@@ -4574,7 +4576,9 @@ mod tests {
             &[vnc_core::DecodedRect {
                 rect: Rect::new(0, 0, width, height),
                 payload: vnc_core::RectPayload::Rgba(
-                    [shade, 255 - shade, 7, 255].repeat(width as usize * height as usize).into(),
+                    [shade, 255 - shade, 7, 255]
+                        .repeat(width as usize * height as usize)
+                        .into(),
                 ),
             }],
         );

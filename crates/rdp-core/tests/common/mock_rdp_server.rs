@@ -1284,13 +1284,7 @@ impl ChannelScript {
             // 64 declared, 2 carried: the header and the reassembly disagree,
             // which is exactly the shape `Cliprdr::message` refuses.
             return self
-                .send_clip_lying(
-                    stream,
-                    clip_msg::FORMAT_DATA_RESPONSE,
-                    0,
-                    64,
-                    &[0x41, 0x42],
-                )
+                .send_clip_lying(stream, clip_msg::FORMAT_DATA_RESPONSE, 0, 64, &[0x41, 0x42])
                 .await;
         }
         Ok(())

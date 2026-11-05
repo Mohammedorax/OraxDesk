@@ -314,7 +314,10 @@ async fn work_survives_a_disconnect_when_a_multiplexer_is_used() {
     // remote, since that is a property of the test host, not of this crate.
     if matches!(
         &attached,
-        TerminalState::Connected { multiplexer: None, .. }
+        TerminalState::Connected {
+            multiplexer: None,
+            ..
+        }
     ) {
         eprintln!(
             "SKIP work_survives_a_disconnect_when_a_multiplexer_is_used: \
