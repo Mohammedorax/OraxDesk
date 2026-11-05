@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-answer-agent-exec-request"
+description = "Enables the answer_agent_exec_request command without any pre-configured scope."
+commands.allow = ["answer_agent_exec_request"]
+
+[[permission]]
+identifier = "deny-answer-agent-exec-request"
+description = "Denies the answer_agent_exec_request command without any pre-configured scope."
+commands.deny = ["answer_agent_exec_request"]
