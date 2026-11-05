@@ -4,7 +4,8 @@ import { LanguageSwitch } from "../components/LanguageSwitch";
 import { AgentSettings } from "../components/AgentConnect";
 import { useSettings, type LocalCursor, type ThemeChoice } from "../state/SettingsContext";
 import { useLivePreviews } from "../state/SessionsContext";
-import { ALLOW_MULTIPLE_SESSIONS_KEY, safeInvoke } from "../lib/tauri";
+import { invoke } from "@tauri-apps/api/core";
+import { ALLOW_MULTIPLE_SESSIONS_KEY, inTauri, safeInvoke } from "../lib/tauri";
 import {
   PREF_CLIPBOARD_AUTO,
   PREF_CLIPBOARD_ON_FOCUS,
@@ -233,12 +234,15 @@ export function Preferences({
   const [rdpAudio, setRdpAudio] = useAppSetting("rdp_default_audio", true);
   const [rdpClipboard, setRdpClipboard] = useAppSetting("rdp_default_redirect_clipboard", true);
   const [multipleSessions, setMultipleSessions] = useAppSetting(ALLOW_MULTIPLE_SESSIONS_KEY, false);
-  // The SOCKS5 proxy, read by the shell when a VNC session opens. Fields exist
+  // The SOCKS5 proxy, read by the shell when a session opens. Fields exist
   // only while the switch is on: an unused proxy should not leave two empty
   // boxes on screen looking like something forgotten.
   const [proxyOn, setProxyOn] = useAppSetting("proxy_enabled", false);
   const [proxyHost, setProxyHost] = useAppSettingString("proxy_host", "");
   const [proxyPort, setProxyPort] = useAppSettingString("proxy_port", "1080");
+  const [proxyTesting, setProxyTesting] = useState(false);
+  const [proxyTestNote, setProxyTestNote] = useState<string | null>(null);
+  const [proxyTestOk, setProxyTestOk] = useState(false);
   const [clipboardAuto, setClipboardAuto] = usePref(PREF_CLIPBOARD_AUTO, true);
   const [clipboardOnFocus, setClipboardOnFocus] = usePref(PREF_CLIPBOARD_ON_FOCUS, true);
   const [clipboardOnPaste, setClipboardOnPaste] = usePref(PREF_CLIPBOARD_ON_PASTE, true);
@@ -257,6 +261,27 @@ export function Preferences({
   const { plane } = useAgentActivity();
   const t = useT();
   const lang = useLang();
+
+  const testProxy = async (): Promise<void> => {
+    if (proxyTesting) return;
+    setProxyTesting(true);
+    setProxyTestNote(null);
+    try {
+      if (!inTauri()) {
+        setProxyTestOk(false);
+        setProxyTestNote(t("prefs.socks5TestUnavailable"));
+        return;
+      }
+      await invoke("test_socks5_proxy", { host: proxyHost, port: proxyPort });
+      setProxyTestOk(true);
+      setProxyTestNote(t("prefs.socks5TestOk"));
+    } catch (err) {
+      setProxyTestOk(false);
+      setProxyTestNote(err instanceof Error ? err.message : String(err));
+    } finally {
+      setProxyTesting(false);
+    }
+  };
   const themeRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const tabs = tabsFor();
 
@@ -477,6 +502,7 @@ export function Preferences({
                   label={t("prefs.playRemoteSound")}
                   description={t("prefs.playRemoteSoundHint")}
                   value={rdpAudio}
+                  disabled
                   onChange={(on) => {
                     setRdpDefault("audio", on ? "play-locally" : "leave-at-server");
                     setRdpAudio(on);
@@ -703,7 +729,10 @@ export function Preferences({
                           spellCheck={false}
                           autoComplete="off"
                           value={proxyHost}
-                          onChange={(event) => setProxyHost(event.target.value)}
+                          onChange={(event) => {
+                            setProxyTestNote(null);
+                            setProxyHost(event.target.value);
+                          }}
                           placeholder="127.0.0.1"
                           className="mt-1 w-full rounded border border-subtle bg-inset p-2"
                         />
@@ -716,7 +745,10 @@ export function Preferences({
                           spellCheck={false}
                           autoComplete="off"
                           value={proxyPort}
-                          onChange={(event) => setProxyPort(event.target.value)}
+                          onChange={(event) => {
+                            setProxyTestNote(null);
+                            setProxyPort(event.target.value);
+                          }}
                           placeholder="1080"
                           className="mt-1 w-full rounded border border-subtle bg-inset p-2"
                         />
@@ -725,6 +757,19 @@ export function Preferences({
                         </span>
                       </label>
                       <p className="text-xs text-secondary">{t("prefs.socks5Scope")}</p>
+                      <button
+                        type="button"
+                        className="btn-secondary self-start"
+                        disabled={proxyTesting}
+                        onClick={() => void testProxy()}
+                      >
+                        {proxyTesting ? t("prefs.socks5Testing") : t("prefs.socks5Test")}
+                      </button>
+                      {proxyTestNote ? (
+                        <p className={proxyTestOk ? "text-xs text-secondary" : "text-xs text-warning"}>
+                          {proxyTestNote}
+                        </p>
+                      ) : null}
                     </div>
                   ) : null}
                 </div>
@@ -844,11 +889,13 @@ function Toggle({
   description,
   value,
   onChange,
+  disabled = false,
 }: {
   label: string;
   description: string;
   value: boolean;
   onChange: (v: boolean) => void;
+  disabled?: boolean;
 }): ReactNode {
   return (
     <label className="flex items-start justify-between gap-6">
@@ -861,11 +908,12 @@ function Toggle({
         role="switch"
         aria-checked={value}
         aria-label={label}
+        disabled={disabled}
         className={classNames(
           // p-0 matters: a <button> carries default padding, and the knob below
           // is positioned from its *static* position, that padding was pushing
           // the dot past the right edge of the track.
-          "relative mt-0.5 box-border h-5 w-9 shrink-0 rounded-pill p-0 transition-colors",
+          "relative mt-0.5 box-border h-5 w-9 shrink-0 rounded-pill p-0 transition-colors disabled:cursor-not-allowed disabled:opacity-50",
           value ? "bg-accent" : "bg-inset border border-subtle",
         )}
         onClick={() => onChange(!value)}

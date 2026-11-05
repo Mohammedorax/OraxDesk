@@ -393,9 +393,27 @@ fn default_auth() -> AuthKind {
 /// Is SSH reachable? Drives the enabled/disabled state of the toolbar Files
 /// button (PRD/08 §2.1). Never errors: "no" is an answer.
 #[tauri::command]
-pub async fn files_probe(host: String, port: Option<u16>) -> Result<bool, String> {
+pub async fn files_probe(app: AppHandle, host: String, port: Option<u16>) -> Result<bool, String> {
     let port = port.unwrap_or(vnc_files::DEFAULT_SSH_PORT);
-    Ok(vnc_files::probe_ssh(&host, port, Duration::from_millis(1500)).await)
+    let timeout = Duration::from_millis(1500);
+    // The button has to answer the question the transfer will ask. A direct
+    // probe while a proxy is on reports "no SSH" for a machine only the
+    // proxy can see, and hides the Files button for a session that could
+    // transfer. A switched-on proxy with a bad address cannot transfer
+    // either, so that is "no" rather than a direct attempt around it.
+    if let Some(state) = app.try_state::<crate::state::AppState>() {
+        match crate::proxy::load_dialer(state.store.clone()).await {
+            Ok(Some(dialer)) => {
+                return Ok(ssh_transport::probe_ssh_via(&host, port, timeout, &dialer).await);
+            }
+            Ok(None) => {}
+            Err(reason) => {
+                tracing::debug!("files probe will not dial around a broken proxy: {reason}");
+                return Ok(false);
+            }
+        }
+    }
+    Ok(vnc_files::probe_ssh(&host, port, timeout).await)
 }
 
 /// Open the SFTP sidecar for a session.
@@ -442,6 +460,10 @@ pub async fn files_connect(
     } else {
         config.username.clone()
     };
+    let dialer = match app.try_state::<crate::state::AppState>() {
+        Some(state) => crate::proxy::load_dialer(state.store.clone()).await?,
+        None => None,
+    };
     let cfg = FileTransferConfig {
         ssh: SshConfig {
             host: config.host.clone(),
@@ -449,7 +471,7 @@ pub async fn files_connect(
             username,
             auth,
             connect_timeout_ms: 15_000,
-            dialer: None,
+            dialer,
         },
         default_remote_dir: config.default_remote_dir.clone(),
         conflict: config.conflict,
@@ -1246,6 +1268,12 @@ async fn agent_sidecar(app: &AppHandle, session_id: &str) -> Result<Arc<FilesEnt
     )
     .await
     .map_err(FileRefusal::unavailable)?;
+    let dialer = match app.try_state::<crate::state::AppState>() {
+        Some(state) => crate::proxy::load_dialer(state.store.clone())
+            .await
+            .map_err(FileRefusal::unavailable)?,
+        None => None,
+    };
     let cfg = FileTransferConfig {
         ssh: SshConfig {
             host: address.clone(),
@@ -1256,7 +1284,7 @@ async fn agent_sidecar(app: &AppHandle, session_id: &str) -> Result<Arc<FilesEnt
             username: local_username().map_err(FileRefusal::unavailable)?,
             auth,
             connect_timeout_ms: 15_000,
-            dialer: None,
+            dialer,
         },
         default_remote_dir: None,
         conflict: vnc_files::ConflictPolicy::Overwrite,

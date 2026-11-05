@@ -1552,12 +1552,13 @@ pub async fn connect_session(
     }
 
     // SOCKS5 proxy: a global preference rather than a per-host field, because
-    // a proxy belongs to the network a person is on. The SSH tunnel above is
-    // per host and explicit, so it wins when both are set; this is the network
-    // default, read here on every connect so a change in Preferences reaches
-    // the next session without a restart. VNC and RDP honour an injected
-    // connector; SSH rides it as the carrier's dialer (`ssh-core` adapts the
-    // same connector), and boundary has its own network path.
+    // a proxy belongs to the network a person is on. An SSH tunnel, when one
+    // is configured, is already the session's connector — the proxy was
+    // applied to the gateway dial inside `tunnel::establish`, so it must not
+    // be applied again here or the session would skip the tunnel. Read on
+    // every connect so a change in Preferences reaches the next session
+    // without a restart. VNC and RDP honour an injected connector; SSH rides
+    // it as the carrier's dialer (`ssh-core` adapts the same connector).
     if options.connector.is_none()
         && matches!(
             kind,
@@ -1589,13 +1590,19 @@ pub async fn connect_session(
         }
     }
 
-    // A direct SSH session verifies the host key inside its own run loop,
-    // where the only way out is a disconnect message. First contact with a
-    // machine therefore ended as an error string and a Close button, on a
-    // machine the user had every intention of trusting and no way to say so.
-    // Settle it here instead, the way the sidecar and the tunnel already do,
-    // so the answer is a fingerprint to check and a button that pins it.
-    if kind == ProtocolKind::Ssh && options.connector.is_none() {
+    // An SSH session verifies the host key inside its own run loop, where the
+    // only way out is a disconnect message. First contact with a machine
+    // therefore ended as an error string and a Close button, on a machine the
+    // user had every intention of trusting and no way to say so. Settle it
+    // here instead, the way the sidecar and the tunnel already do, so the
+    // answer is a fingerprint to check and a button that pins it.
+    //
+    // This used to run only when `connector` was empty. A SOCKS5 proxy (and
+    // an SSH tunnel) both set that field, so first contact over the proxy
+    // skipped the prompt and died in the run loop. The probe dials through
+    // whatever connector is already attached, so the fingerprint belongs to
+    // the machine the session will actually reach.
+    if kind == ProtocolKind::Ssh {
         if let Some(question) =
             decide_ssh_host_key(&app, &options, accept_ssh_host_key.as_deref()).await
         {
@@ -1668,7 +1675,12 @@ pub async fn connect_session(
     Ok(SessionConnectOutcome::Started { session_id: id })
 }
 
-/// Settle a direct SSH session's host key before anything is spawned.
+/// Settle an SSH session's host key before anything is spawned.
+///
+/// The probe uses the connector already on `options` when there is one, so a
+/// session that reaches its server through a SOCKS5 proxy or an SSH tunnel
+/// learns the key of that server rather than of whatever a direct dial would
+/// have found.
 ///
 /// `None` means the key is trusted, either because it was already pinned or
 /// because the user has just said so, and the connect may go ahead. `Some` is
@@ -1681,9 +1693,9 @@ pub async fn connect_session(
 /// pays nothing at all, and first contact pays one key exchange with no
 /// authentication attempt behind it (see `check_host_key`).
 ///
-/// A changed key still reaches the session rather than this function, and
-/// that is correct: it is a hard stop with no button to offer, so there is
-/// nothing to gain by asking earlier.
+/// A changed key is returned from here as a hard stop. There is no accept
+/// button for it: the pin and the key the server just presented disagree,
+/// and continuing would be deciding which of the two to believe.
 async fn decide_ssh_host_key(
     app: &AppHandle,
     options: &ConnectOptions,

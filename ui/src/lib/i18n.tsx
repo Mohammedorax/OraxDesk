@@ -565,6 +565,7 @@ const ar = {
     "يرسل Cmd+Tab وCmd+Space واختصارات النظام الأخرى إلى الجهاز البعيد بدل هذا الجهاز.",
   "session.sendsShortcuts":
     "يرسل Alt+Tab ومفتاح ويندوز واختصارات النظام الأخرى إلى الجهاز البعيد بدل هذا الجهاز.",
+  "session.viaProxy": "هذه الجلسة تمر عبر بروكسي SOCKS5",
   "session.latency": "زمن الاستجابة",
   "session.throughput": "الإنتاجية",
   "session.frameRate": "معدّل الإطارات",
@@ -1174,6 +1175,7 @@ const ar = {
   "host.bits16": "16 بت",
   "host.bits15": "15 بت",
   "host.sound": "الصوت",
+  "host.soundUnavailable": "إعدادات صوت RDP غير متاحة حاليًا؛ الخيار المحفوظ لا يغيّر تشغيل الصوت.",
   "host.soundHere": "تشغيل هنا",
   "host.soundThere": "تشغيل هناك",
   "host.soundOff": "بدون تشغيل",
@@ -1353,7 +1355,7 @@ const ar = {
   "prefs.resolutionForNewHint":
     "مطابقة النافذة عند الاتصال هو ما يفعله برنامج ويندوز نفسه. أما الاستمرار في المطابقة فيغيّر حجم سطح المكتب البعيد كلما غيّرت حجم هذه النافذة، وما يعيد ترتيب أيقونات ذلك الجهاز.",
   "prefs.playRemoteSound": "شغّل صوت الجهاز البعيد على هذا الجهاز",
-  "prefs.playRemoteSoundHint": "يُحوَّل صوت الجهاز البعيد إلى هنا بدل أن يبقى يُشغَّل هناك.",
+  "prefs.playRemoteSoundHint": "إعدادات صوت RDP غير متاحة حاليًا؛ الخيار المحفوظ لا يغيّر تشغيل الصوت.",
   "prefs.shareClipboardRdp": "شارك حافظتي مع اتصالات سطح المكتب البعيد",
   "prefs.shareClipboardRdpHint": "انسخ النص والصقه في الاتجاهين.",
 
@@ -1426,7 +1428,12 @@ const ar = {
   "prefs.socks5PortHint":
     "من 1 إلى 65535. الشائع 1080.",
   "prefs.socks5Scope":
-    "يطبَّق على جلسات VNC وRDP وSSH، ولا يُستخدم إذا كان للمضيف نفق SSH مضبوط.",
+    "يطبَّق على جلسات VNC وRDP وSSH، وعلى نقل الملفات والطرفيات. إن وُجد نفق SSH للمضيف، تمرّ الجلسة عبر النفق، ويصل النفق إلى بوابته عبر البروكسي.",
+  "prefs.socks5Test": "اختبر البروكسي",
+  "prefs.socks5Testing": "جارٍ الاختبار…",
+  "prefs.socks5TestOk":
+    "ردّ البروكسي بتحية SOCKS5 وقبل اتصالًا بلا مصادقة. هذا لا يعني أن جهازًا بعينه يمكن الوصول إليه.",
+  "prefs.socks5TestUnavailable": "اختبار البروكسي يحتاج التطبيق، لا المتصفح.",
   "prefs.deepNames": "ابحث عن الأسماء في خدمات أخرى",
   "prefs.deepNamesHint":
     "بعض أجهزة ويندوز تحجب كل خدمات الأسماء. وقراءة الاسم الذي ينشره الجهاز على RDP أو RPC تسمّيه على أي حال، لكنها تعني اتصالًا قصيرًا بمنافذ لا تمرّ عبرها، وقد ينبّه إليه مراقبة الشبكة الصارمة. أطفئها لتستخدم خدمات الأسماء وحدها.",
@@ -1618,7 +1625,8 @@ const ar = {
   "session.reconnected": "أُعيد الاتصال",
   "session.screenshotSaved": "حُفظت لقطة الشاشة",
   "session.clipboardUnreadable": "تعذّرت قراءة الحافظة المحلية",
-  "session.clipboardSent": "أُرسلت الحافظة إلى الطرف البعيد",
+  "session.clipboardSendFailed": "تعذّر إرسال الحافظة؛ قد يلصق الجهاز البعيد محتوى سابقًا.",
+  "session.clipboardSent": "أُدرجت الحافظة للمشاركة مع الطرف البعيد",
   "session.connectionInfo": "معلومات الاتصال",
   "session.bell": "جرس",
   "session.sendingFiles": "جارٍ إرسال الملفات ({count}) إلى {target}",
@@ -2219,6 +2227,7 @@ const en: Record<keyof typeof ar, string> = {
     "Sends Cmd+Tab, Cmd+Space and other system shortcuts to the remote instead of this computer.",
   "session.sendsShortcuts":
     "Sends Alt+Tab, the Windows key and other system shortcuts to the remote instead of this computer.",
+  "session.viaProxy": "This session is using the SOCKS5 proxy",
   "session.latency": "Latency",
   "session.throughput": "Throughput",
   "session.frameRate": "Frame rate",
@@ -2837,6 +2846,7 @@ const en: Record<keyof typeof ar, string> = {
   "host.bits16": "16-bit",
   "host.bits15": "15-bit",
   "host.sound": "Sound",
+  "host.soundUnavailable": "RDP sound settings are currently unavailable; the saved choice does not change audio playback.",
   "host.soundHere": "Play here",
   "host.soundThere": "Play there",
   "host.soundOff": "Do not play",
@@ -3017,7 +3027,7 @@ const en: Record<keyof typeof ar, string> = {
     "Matching the window when connecting is what Windows' own client does. Making it keep matching resizes the remote desktop every time you resize this one, which rearranges that machine's icons each time.",
   "prefs.playRemoteSound": "Play remote sound on this computer",
   "prefs.playRemoteSoundHint":
-    "Sound from the remote computer is redirected here rather than left playing there.",
+    "RDP sound settings are currently unavailable; the saved choice does not change audio playback.",
   "prefs.shareClipboardRdp": "Share my clipboard with Remote Desktop connections",
   "prefs.shareClipboardRdpHint": "Copy and paste text in both directions.",
 
@@ -3091,7 +3101,12 @@ const en: Record<keyof typeof ar, string> = {
   "prefs.socks5PortHint":
     "1 to 65535; 1080 is the usual default.",
   "prefs.socks5Scope":
-    "Applies to VNC, RDP and SSH sessions, and is not used for a host that has an SSH tunnel configured.",
+    "Applies to VNC, RDP and SSH sessions, file transfer and terminals. A host with an SSH tunnel still reaches its target through that tunnel; the tunnel reaches its gateway through the proxy.",
+  "prefs.socks5Test": "Test proxy",
+  "prefs.socks5Testing": "Testing…",
+  "prefs.socks5TestOk":
+    "The proxy answered a SOCKS5 greeting and accepted a connection with no authentication. That does not mean a particular machine is reachable.",
+  "prefs.socks5TestUnavailable": "Testing the proxy needs the app, not the browser.",
   "prefs.deepNames": "Look up names from other services",
   "prefs.deepNamesHint":
     "Some Windows machines block every name service. Reading the name they publish on RDP or RPC names them anyway, but it means connecting briefly to ports you are not connecting through, which strict network monitoring may flag. Turn off to use name services only.",
@@ -3284,7 +3299,8 @@ const en: Record<keyof typeof ar, string> = {
   "session.reconnected": "Reconnected",
   "session.screenshotSaved": "Screenshot saved",
   "session.clipboardUnreadable": "Could not read the local clipboard",
-  "session.clipboardSent": "Clipboard sent to remote",
+  "session.clipboardSendFailed": "Could not send the clipboard; the remote computer may paste older content.",
+  "session.clipboardSent": "Clipboard queued for sharing with the remote computer",
   "session.connectionInfo": "Connection info",
   "session.bell": "Bell",
   "session.sendingFiles": "Sending files ({count}) to {target}",

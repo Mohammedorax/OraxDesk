@@ -187,7 +187,7 @@ impl SshTermOptions {
         // tunnel) rides the shell's `ConnectOptions`. Adapting it here means
         // the proxy is dialled again on every reconnect attempt, because the
         // reconnect loop clones this config rather than re-reading settings.
-        cfg.dialer = options.connector.as_ref().map(connector_dialer);
+        cfg.dialer = options.connector.as_ref().map(dialer_for);
 
         let mut out = Self::new(cfg);
         out.auth_methods = auth_methods;
@@ -228,7 +228,7 @@ impl SshTermOptions {
 /// stream and re-label the error. Making the SSH carrier depend on
 /// `vnc-transport` instead would drag the VNC plumbing into a crate whose
 /// whole point is that it is protocol-neutral.
-fn connector_dialer(connector: &remote_core::Connector) -> ssh_transport::DialerHandle {
+pub fn dialer_for(connector: &remote_core::Connector) -> ssh_transport::DialerHandle {
     struct Adapter(remote_core::Connector);
 
     impl ssh_transport::Dialer for Adapter {

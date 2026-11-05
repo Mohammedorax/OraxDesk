@@ -557,6 +557,7 @@ pub fn run() {
             commands::files::files_local_rename,
             commands::files::files_local_remove,
             // remote shell (pty over the same ssh carrier)
+            proxy::test_socks5_proxy,
             commands::ssh::ssh_probe,
             commands::ssh::ssh_list_local_keys,
             commands::ssh::ssh_list_wsl_distros,

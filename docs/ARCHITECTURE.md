@@ -25,10 +25,16 @@ allowed to know about all of it.
 * **Pure wire and codec crates have no I/O and no session state.**
   `rdp-pdu`, `rdp-codecs` and `rdp-auth` are functions over slices; two of them
   carry fuzz targets (`crates/*/fuzz`) because they parse bytes from strangers.
-* **`unsafe` lives in four places and no more**: `boundary-platform`
-  (Win32/macOS capture and input), `vnc-input-capture`, `local-pipe`, and a
-  handful of lines in `vnc-files`/`dvv`. Everything else is
-  `#![forbid(unsafe_code)]`.
+* **`unsafe` is an OS boundary, not a parser.** `boundary-platform` (Win32
+  and macOS capture and input), `vnc-input-capture`, and `local-pipe` (the
+  Windows named pipe) are the crates that call into the platform. `dvv`
+  resets `SIGPIPE` to the default disposition once, at startup, before any
+  other thread exists, and only for the one-shot CLI. Protocol, codec, and
+  store crates declare `#![forbid(unsafe_code)]`. `vnc-files` has no `unsafe`
+  block; the word appears there only in messages that reject a path.
+* **A parse of untrusted bytes returns a `Result`.** A panic in a codec is a
+  bug. The shell turns a session error into a sentence the window can show;
+  it does not unwrap a protocol failure to keep going.
 * **Whole framebuffers never cross a channel as one value.** Decoded pixels
   travel as dirty rects (`remote_core::RectPayload`), which is also why the
   agent mirror can see exactly the same rectangles the renderer does.
@@ -142,6 +148,22 @@ flowchart BT
 main application. `rdp-core` reaches `vnc-transport` for TLS and nothing else,
 which is the one edge worth knowing about before moving TLS code.
 
+## What a bad virtual-channel byte is allowed to do
+
+RDP channels are not equal, and the difference is tested rather than implied.
+
+* A malformed **clipboard** PDU disables the clipboard. The session continues,
+  and a bitmap that arrives afterwards is still drawn
+  (`an_unjoined_channel_ends_the_session_and_a_malformed_one_only_isolates_its_channel`
+  in `rdp-core`).
+* A malformed **graphics** channel ends the session. That includes an eGFX
+  message that fails after ZGFX decompression
+  (`a_malformed_egfx_message_after_decompression_is_reported_and_names_zgfx`).
+  Continuing would desynchronise the picture: the next rectangle would land
+  on a stream the client no longer understands.
+* A channel id the client never joined ends the session. The message channel
+  and the user channel have no handler and are skipped, with a reason.
+
 ---
 
 # OraxDesk
@@ -208,6 +230,12 @@ via VideoToolbox, D3D11, or VAAPI.
   store the file-transfer sidecar uses, so trusting a machine once covers both.
   No local forwarded port is opened: the channel is the session's byte stream,
   so nothing else on your machine can reach it.
+- **SOCKS5** (Preferences → Network, off until it is switched on). VNC, RDP
+  and SSH sessions, file transfer and terminals dial through it. The proxy
+  resolves the name. Only the no-authentication method is offered. A
+  switched-on proxy with an unusable address refuses the connect instead of
+  dialling directly. A per-host SSH tunnel still carries the session; the
+  proxy is how that tunnel reaches its gateway.
 
 VncAuth is DES based and truncates passwords to 8 characters. That is a flaw in
 the protocol, not this client. Prefer VeNCrypt or RA2 where the server offers
@@ -307,9 +335,9 @@ shell. `vnc-core` re-exports it, so `vnc_core::Rect` and the rest still resolve
 where they always did, and the wire contract with the webview is unchanged.
 
 Every crate that parses bytes from a remote peer declares
-`#![forbid(unsafe_code)]`: `remote-core`, `remote-pixel`, `vnc-core`,
-`vnc-transport`, `vnc-discovery`, `vnc-store`, and `vnc-files`. `unsafe` appears only in `vnc-input-capture`,
-which wraps platform input APIs and sees no network data.
+`#![forbid(unsafe_code)]`. `unsafe` is confined to the platform boundary
+(`boundary-platform`, `vnc-input-capture`, `local-pipe`) and to one `SIGPIPE`
+reset in `dvv`. See the layout rules at the top of this file.
 
 Source comments cite an internal specification as `PRD/NN §S`. Those documents
 are not part of this repository. The citations record why a decision was made,
@@ -345,6 +373,13 @@ cargo test -p remote-core -p remote-pixel -p vnc-core -p vnc-transport \
 
 Tests that touch the real OS keychain or a live VNC server are marked
 `#[ignore]`. Run them deliberately with `cargo test -- --ignored`.
+
+The debug build under `target/` is the largest thing a development checkout
+produces: the incremental cache and a `.pdb` per test binary reach several
+gigabytes within a day, and a full disk fails a link with an error that does
+not mention disk space. `./scripts/clean.ps1` (Windows) removes those two and
+keeps every reusable crate artifact; `./scripts/clean.ps1 -All` is the
+`cargo clean` answer when nothing can be reused anyway.
 
 ### Packaging on macOS
 

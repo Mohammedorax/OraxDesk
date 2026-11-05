@@ -493,6 +493,7 @@ fn main() {
             // remote shell, a pty over the same SSH carrier as the sidecar.
             // `ssh_send` carries keystrokes, so it is as sensitive as
             // `send_input` and stays its own grantable command.
+            "test_socks5_proxy",
             "ssh_probe",
             // Reads the NAMES of the keys in `~/.ssh`, never their contents,
             // so the host editor can offer a list to choose from.

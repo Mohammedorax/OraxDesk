@@ -126,12 +126,14 @@ pub struct DisplayCaps {
 impl DisplayCaps {
     /// The total pixel budget: the product of the three fields.
     ///
-    /// `u64` because the product of three `u32` overflows a `u32` for any
-    /// realistic value, and a wrapped budget would refuse every layout or
-    /// accept every one depending on which way it wrapped.
+    /// Saturate at `u64::MAX`: three untrusted `u32` fields can overflow even
+    /// `u64`. Every legal layout is much smaller than that ceiling, so a
+    /// saturated budget still gives the correct answer when checking it.
     #[must_use]
     pub const fn pixel_budget(&self) -> u64 {
-        (self.max_monitors as u64) * (self.area_factor_a as u64) * (self.area_factor_b as u64)
+        (self.max_monitors as u64)
+            .saturating_mul(self.area_factor_a as u64)
+            .saturating_mul(self.area_factor_b as u64)
     }
 
     /// True when the server will accept nothing.
@@ -279,10 +281,13 @@ impl DisplayControl {
         }
         match pdu_type {
             PDU_TYPE_CAPS => {
+                // The enclosing message may contain more bytes than this PDU
+                // declares. Do not let those bytes complete a truncated body.
+                let mut body = Reader::new(&message[HEADER_LEN as usize..length as usize]);
                 let caps = DisplayCaps {
-                    max_monitors: r.u32(CAPS_NAME)?,
-                    area_factor_a: r.u32(CAPS_NAME)?,
-                    area_factor_b: r.u32(CAPS_NAME)?,
+                    max_monitors: body.u32(CAPS_NAME)?,
+                    area_factor_a: body.u32(CAPS_NAME)?,
+                    area_factor_b: body.u32(CAPS_NAME)?,
                 };
                 tracing::info!(
                     max_monitors = caps.max_monitors,
@@ -331,6 +336,10 @@ impl DisplayControl {
             self.pending = Some((width, height, scale_percent));
             return Ok(());
         };
+        // Every new request supersedes an older deferred size, including when
+        // it matches the current layout or is too small to send. Otherwise a
+        // later tick can apply a size the user has already moved past.
+        self.pending = None;
         if caps.accepts_nothing() {
             tracing::debug!(
                 "the server's display control capabilities accept no layout at all: \
@@ -666,6 +675,45 @@ mod tests {
         assert!(display.pending.is_none(), "nothing is left over");
     }
 
+    #[test]
+    fn a_new_resize_after_the_debounce_supersedes_the_pending_size() {
+        let mut display = DisplayControl::new();
+        let mut replies = ReplyBuf::default();
+        display
+            .message(&caps_pdu(4, 8192, 8192), &mut replies)
+            .expect("caps");
+        display.resize(1000, 800, 100, &mut replies).expect("first");
+        display.resize(1200, 800, 100, &mut replies).expect("held");
+        display.last_sent_at = None;
+        display
+            .resize(1400, 800, 100, &mut replies)
+            .expect("newest");
+        display.last_sent_at = None;
+        display.flush_pending(&mut replies).expect("flush");
+        assert_eq!(display.last_sent().expect("sent").width, 1400);
+        assert!(display.pending.is_none());
+    }
+
+    #[test]
+    fn returning_to_the_current_size_or_minimizing_cancels_a_pending_size() {
+        for (width, height) in [(1000, 800), (100, 100)] {
+            let mut display = DisplayControl::new();
+            let mut replies = ReplyBuf::default();
+            display
+                .message(&caps_pdu(4, 8192, 8192), &mut replies)
+                .expect("caps");
+            display.resize(1000, 800, 100, &mut replies).expect("first");
+            display.resize(1200, 800, 100, &mut replies).expect("held");
+            display.last_sent_at = None;
+            display
+                .resize(width, height, 100, &mut replies)
+                .expect("newest");
+            display.flush_pending(&mut replies).expect("flush");
+            assert_eq!(display.last_sent().expect("sent").width, 1000);
+            assert!(display.pending.is_none());
+        }
+    }
+
     /// A server with dynamic resolution disabled by policy still opens the
     /// channel and still sends capabilities, with zeros in them. Every resize
     /// is dropped and it must not look like a bug.
@@ -700,6 +748,20 @@ mod tests {
         assert_eq!(replies.queued().len(), 1, "and this one exactly fits");
     }
 
+    #[test]
+    fn extreme_server_capabilities_do_not_overflow_the_pixel_budget() {
+        let mut display = DisplayControl::new();
+        let mut replies = ReplyBuf::default();
+        display
+            .message(&caps_pdu(u32::MAX, u32::MAX, u32::MAX), &mut replies)
+            .expect("caps");
+        assert_eq!(display.caps().expect("caps").pixel_budget(), u64::MAX);
+        display
+            .resize(1920, 1080, 100, &mut replies)
+            .expect("resize");
+        assert_eq!(replies.queued().len(), 1);
+    }
+
     /// A truncated or lying header is an error rather than a partial read:
     /// the channel's next message depends on this one having been consumed
     /// whole.
@@ -718,6 +780,16 @@ mod tests {
             let err = display.message(&bad, &mut replies).expect_err("refused");
             assert!(matches!(err, RdpError::Pdu { .. }), "{err} for {bad:?}");
         }
+    }
+
+    #[test]
+    fn capabilities_cannot_read_fields_past_the_declared_length() {
+        let mut display = DisplayControl::new();
+        let mut replies = ReplyBuf::default();
+        let mut message = caps_pdu(4, 8192, 8192);
+        message[4..8].copy_from_slice(&HEADER_LEN.to_le_bytes());
+        assert!(display.message(&message, &mut replies).is_err());
+        assert!(display.caps().is_none());
     }
 
     /// A deactivation drops the capabilities, because the server reopens the

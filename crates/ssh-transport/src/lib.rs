@@ -76,5 +76,5 @@ pub use dial::{DialFuture, DialedStream, Dialer, DialerHandle};
 pub use error::{Error, Result};
 pub use hostkey::{HostKeyDecision, HostKeyPin, HostKeyStore, HostKeyVerifier};
 pub use ppk::{is_ppk, PpkError};
-pub use probe::probe_ssh;
+pub use probe::{probe_ssh, probe_ssh_via};
 pub use tunnel::{SshTunnel, TunnelStream};

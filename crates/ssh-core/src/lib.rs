@@ -79,7 +79,7 @@ pub use modes::ModeTracker;
 pub use multiplexer::{
     parse_wsl_distros, Detected, MultiplexerConfig, MultiplexerKind, ShellDialect, WSL_LIST_COMMAND,
 };
-pub use options::{ReconnectPolicy, SshTermOptions, TerminalOptions, DEFAULT_TERM};
+pub use options::{dialer_for, ReconnectPolicy, SshTermOptions, TerminalOptions, DEFAULT_TERM};
 pub use session::SshSession;
 pub mod multiplexer;
 

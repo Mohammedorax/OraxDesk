@@ -9,6 +9,7 @@ import { Channel, invoke } from "@tauri-apps/api/core";
 import {
   cancelCredentials,
   inTauri,
+  mustInvoke,
   provideCredentials,
   safeInvoke,
   safeListen,
@@ -909,7 +910,7 @@ export function useSession(
   // paste-chord sync in SessionInput awaits this).
   const sendClipboard = useCallback(
     (text: string): Promise<void> =>
-      safeInvoke("send_clipboard", { sessionId: sid(), text }, null).then(() => undefined),
+      mustInvoke("send_clipboard", { sessionId: sid(), text }).then(() => undefined),
     [],
   );
 

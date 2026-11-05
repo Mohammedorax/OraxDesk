@@ -124,11 +124,17 @@ pub async fn establish(
         settings.user.clone()
     };
 
-    // The tunnel rides the bare carrier: it wants somewhere to dial and an
-    // identity, and none of the file-panel settings mean anything to it.
+    // The tunnel wants somewhere to dial and an identity. The file-panel
+    // settings mean nothing to it. The network proxy does: a gateway that is
+    // only reachable through SOCKS5 has to be dialled that way, or turning
+    // the proxy on would make every tunnelled host unreachable. The session
+    // itself still rides this tunnel, not the proxy.
     let mut cfg = SshConfig::new(gateway, username);
     cfg.port = settings.port;
     cfg.auth = auth;
+    if let Some(state) = app.try_state::<crate::state::AppState>() {
+        cfg.dialer = crate::proxy::load_dialer(state.store.clone()).await?;
+    }
 
     let files = app.state::<FilesState>();
     let pins = files.host_key_verifier();

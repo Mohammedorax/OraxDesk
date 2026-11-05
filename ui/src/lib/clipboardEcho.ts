@@ -14,15 +14,22 @@
  */
 export class ClipboardEcho {
   private last: string | null = null;
+  private epoch = 0;
+  private revision = 0;
+  private tail: Promise<void> = Promise.resolve();
 
   /** A connection (first or reconnect) came up: forget what was moved. */
   connected(): void {
+    this.epoch += 1;
+    this.revision += 1;
     this.last = null;
+    this.tail = Promise.resolve();
   }
 
   /** Record text moved in either direction. */
   moved(text: string): void {
     this.last = text;
+    this.revision += 1;
   }
 
   /**
@@ -32,5 +39,21 @@ export class ClipboardEcho {
   shouldPush(text: string, force: boolean): boolean {
     if (!text) return false;
     return force || text !== this.last;
+  }
+
+  /** Serialize sends and remember text only after the backend accepts it. */
+  push(text: string, force: boolean, send: (text: string) => Promise<void>): Promise<boolean> {
+    const epoch = this.epoch;
+    const operation = this.tail.then(async () => {
+      if (epoch !== this.epoch || !this.shouldPush(text, force)) return false;
+      const revision = this.revision;
+      await send(text);
+      if (epoch !== this.epoch) return false;
+      // A remote clipboard event that arrived during the send is newer.
+      if (revision === this.revision) this.moved(text);
+      return true;
+    });
+    this.tail = operation.then(() => undefined, () => undefined);
+    return operation;
   }
 }

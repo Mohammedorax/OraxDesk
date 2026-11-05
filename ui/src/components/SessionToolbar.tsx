@@ -28,6 +28,7 @@ import { useT, type Translate } from "../lib/i18n";
 import type { LocalCursor } from "../state/SettingsContext";
 import type { CaptureStatus } from "../lib/tauri";
 import { classNames, formatBps, fullscreenHint, isMac, modKeyLabel } from "../lib/util";
+import { safeInvoke } from "../lib/tauri";
 import {
   collapseToolbarGroups,
   TOOLBAR_MENU_GROUPS,
@@ -1626,9 +1627,22 @@ export function SessionStatusDetails({
   desktopName: string;
 }): ReactNode {
   const t = useT();
+  const [viaProxy, setViaProxy] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    void safeInvoke<string | null>("get_app_setting", { key: "proxy_enabled" }, null).then((raw) => {
+      if (cancelled || raw == null) return;
+      const value = raw.trim().toLowerCase();
+      setViaProxy(value === "true" || value === "1" || value === "on");
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
   return (
     <div className="text-sm">
       <p className="mb-2 truncate font-medium text-primary">{desktopName}</p>
+      {viaProxy ? <p className="mb-2 text-xs text-secondary">{t("session.viaProxy")}</p> : null}
       {stats ? (
         <dl className="grid grid-cols-2 gap-y-1 text-xs">
           <dt className="text-tertiary">{t("session.latency")}</dt>

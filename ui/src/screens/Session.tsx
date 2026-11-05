@@ -1226,18 +1226,21 @@ function SessionView({
    * unchanged clipboard costs nothing on the wire.
    */
   const pushClipboard = useCallback(
-    async (force: boolean): Promise<"sent" | "unchanged" | "unreadable"> => {
+    async (force: boolean): Promise<"sent" | "unchanged" | "unreadable" | "failed"> => {
       const text = await readClipboard();
       if (text === null) return "unreadable";
-      if (!clipboardEcho.shouldPush(text, force)) return "unchanged";
-      clipboardEcho.moved(text);
       // Await the enqueue: the paste-chord sync (SessionInput.deferForPaste)
       // relies on this resolving only once the text is ordered ahead of any
       // keystroke sent after it.
-      await session.sendClipboard(text);
-      return "sent";
+      try {
+        const sent = await clipboardEcho.push(text, force, session.sendClipboard);
+        return sent ? "sent" : "unchanged";
+      } catch {
+        push("warning", t("session.clipboardSendFailed"));
+        return "failed";
+      }
     },
-    [session, clipboardEcho],
+    [session, clipboardEcho, push, t],
   );
 
   /**

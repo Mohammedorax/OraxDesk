@@ -1131,9 +1131,10 @@ function RdpOptionsSection({
             <option value="bpp15">{t("host.bits15")}</option>
           </Select>
         </Field>
-        <Field label={t("host.sound")}>
+        <Field label={t("host.sound")} hint={t("host.soundUnavailable")}>
           <Select
             value={rdp.audio}
+            disabled
             onChange={(e) => onChange({ audio: e.target.value as RdpSettings["audio"] })}
           >
             <option value="play-locally">{t("host.soundHere")}</option>

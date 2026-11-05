@@ -67,7 +67,8 @@
 //!
 //! The virtual channels are wired up ([`channels`]): `drdynvc` multiplexes the
 //! dynamic channels, the graphics pipeline decodes EGFX into surfaces and
-//! acknowledges frames, and `cliprdr` moves text both ways.
+//! acknowledges frames, `cliprdr` moves text both ways, and display control
+//! sends resize requests when the server opens and enables that channel.
 //!
 //! What is still missing, each reported as a typed error naming its phase
 //! rather than as a panic:
@@ -84,7 +85,7 @@
 //!   Progressive is a different matter and IS decoded: version 8 brings it in
 //!   and no capability bit declines it, so a progressive rectangle is served
 //!   rather than refused.
-//! * Audio, display control and file clipboard transfer.
+//! * Audio playback in the default build and file clipboard transfer.
 //!
 //! ## Rules
 //!

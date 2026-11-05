@@ -46,6 +46,20 @@ impl Socks5Connector {
             proxy_port,
         }
     }
+
+    /// Ask the proxy whether it speaks SOCKS5 and accepts a connection with
+    /// no authentication.
+    ///
+    /// This stops after the greeting (RFC 1928 §3). It does not send a
+    /// `CONNECT`, so it says nothing about whether a particular machine is
+    /// reachable through the proxy — only that the proxy itself answered and
+    /// did not demand a credential this client will not send.
+    pub async fn probe(&self, timeout: Duration) -> Result<(), TransportError> {
+        tokio::time::timeout(timeout, greet(&self.proxy_host, self.proxy_port))
+            .await
+            .map_err(|_| TransportError::Timeout)??;
+        Ok(())
+    }
 }
 
 impl StreamConnector for Socks5Connector {
@@ -71,13 +85,12 @@ impl StreamConnector for Socks5Connector {
     }
 }
 
-/// Dial the proxy and run the SOCKS5 handshake for one target.
-async fn negotiate(
-    host: &str,
-    port: u16,
-    proxy_host: &str,
-    proxy_port: u16,
-) -> Result<TcpStream, TransportError> {
+/// Dial the proxy and complete the no-authentication greeting.
+///
+/// The returned stream is positioned where a `CONNECT` request would go.
+/// Dropping it here is how a caller refuses to continue: nothing past the
+/// greeting has been sent (RFC 1928 §3).
+async fn greet(proxy_host: &str, proxy_port: u16) -> Result<TcpStream, TransportError> {
     let proxy = format!("{proxy_host}:{proxy_port}");
     let mut stream = TcpStream::connect((proxy_host, proxy_port))
         .await
@@ -111,6 +124,17 @@ async fn negotiate(
             choice[1]
         )));
     }
+    Ok(stream)
+}
+
+/// Dial the proxy and run the SOCKS5 handshake for one target.
+async fn negotiate(
+    host: &str,
+    port: u16,
+    proxy_host: &str,
+    proxy_port: u16,
+) -> Result<TcpStream, TransportError> {
+    let mut stream = greet(proxy_host, proxy_port).await?;
 
     // CONNECT, with the target as a domain name so the proxy resolves it.
     let name = host.as_bytes();

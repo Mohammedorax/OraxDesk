@@ -7,8 +7,10 @@
 
 use std::time::Duration;
 
-use tokio::io::AsyncReadExt;
+use tokio::io::{AsyncRead, AsyncReadExt};
 use tokio::net::TcpStream;
+
+use crate::dial::DialerHandle;
 
 /// Longest we will wait for the server's identification string once the TCP
 /// handshake is done. An open port with no banner still counts as reachable.
@@ -27,9 +29,33 @@ pub async fn probe_ssh(host: &str, port: u16, timeout: Duration) -> bool {
         // Refused, unreachable, DNS failure, or slower than the deadline.
         Ok(Err(_)) | Err(_) => return false,
     };
+    ssh_banner(&mut stream).await
+}
 
-    // Best effort: SSH servers greet first, so a short read confirms the
-    // protocol without sending anything ourselves.
+/// The same question, asked through an injected dialer.
+///
+/// The Files button has to mean "can this machine be reached the way a
+/// transfer would reach it". When a SOCKS5 proxy is on, a direct TCP probe
+/// answers a different question and disables the button for a machine the
+/// proxy can see.
+pub async fn probe_ssh_via(
+    host: &str,
+    port: u16,
+    timeout: Duration,
+    dialer: &DialerHandle,
+) -> bool {
+    let deadline = timeout.max(Duration::from_millis(200));
+    let mut stream = match tokio::time::timeout(deadline, dialer.0.dial(host, port, deadline)).await
+    {
+        Ok(Ok(stream)) => stream,
+        Ok(Err(_)) | Err(_) => return false,
+    };
+    ssh_banner(&mut stream).await
+}
+
+/// Best effort: SSH servers greet first, so a short read confirms the
+/// protocol without sending anything ourselves.
+async fn ssh_banner<S: AsyncRead + Unpin>(stream: &mut S) -> bool {
     let mut buf = [0u8; 4];
     match tokio::time::timeout(BANNER_WAIT, stream.read_exact(&mut buf)).await {
         Ok(Ok(_)) => &buf == b"SSH-",

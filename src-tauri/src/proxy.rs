@@ -7,16 +7,22 @@
 //! of the network a person is on, and they should not have to re-enter it for
 //! every machine in the library.
 //!
-//! It applies to **VNC, RDP and SSH** sessions. VNC and RDP honour an injected
-//! connector directly; SSH adapts the same connector into the carrier's
-//! dialer, so its reconnect supervisor dials through the proxy on every
-//! attempt too. An SSH tunnel is per host and, when one is configured, the
-//! tunnel is the carrier and the proxy is not used.
+//! It applies to **VNC, RDP and SSH** sessions, and to the other SSH carriers
+//! the shell opens for them: the Files panel, an agent's file transfer, a
+//! remote shell, and the gateway of a per-host SSH tunnel. VNC and RDP honour
+//! an injected connector directly; SSH adapts the same connector into the
+//! carrier's dialer, so its reconnect supervisor dials through the proxy on
+//! every attempt too. When a host has an SSH tunnel, the session still rides
+//! that tunnel — the proxy is how the tunnel reaches its gateway, not a
+//! second path around it.
 //!
 //! A switched-on proxy with a missing or unreadable address is an ERROR, not a
 //! quiet fallback to a direct connection: someone who turned the proxy on did
 //! it to route their traffic through it, and connecting around it would be
 //! the exact outcome they asked to avoid.
+
+use std::sync::Arc;
+use std::time::Duration;
 
 /// Whether the proxy is switched on. Anything but the words the interface
 /// writes is off, which is the fail-safe direction: off means "dial directly".
@@ -88,6 +94,58 @@ impl ProxySettings {
     pub fn describe(&self) -> String {
         format!("{}:{}", self.host, self.port)
     }
+}
+
+/// Read the stored preference off the async runtime.
+///
+/// `Ok(None)` when the switch is off. `Err` when it is on and the address
+/// cannot be used — callers must surface that sentence rather than dial
+/// directly.
+pub async fn load_settings(store: Arc<vnc_store::Store>) -> Result<Option<ProxySettings>, String> {
+    tokio::task::spawn_blocking(move || {
+        let enabled = store.get_setting(ENABLED_KEY).map_err(|e| e.to_string())?;
+        let host = store.get_setting(HOST_KEY).map_err(|e| e.to_string())?;
+        let port = store.get_setting(PORT_KEY).map_err(|e| e.to_string())?;
+        ProxySettings::parse(enabled.as_deref(), host.as_deref(), port.as_deref())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// The SSH carrier's dialer for the stored preference.
+///
+/// Same rules as [`load_settings`]: off is `Ok(None)`, a broken address is
+/// `Err`. The dialer is the [`vnc_transport::socks5::Socks5Connector`] adapted
+/// once, in `ssh-core`, so a shell and a file transfer cannot grow two
+/// slightly different proxies.
+pub async fn load_dialer(
+    store: Arc<vnc_store::Store>,
+) -> Result<Option<ssh_transport::DialerHandle>, String> {
+    Ok(load_settings(store).await?.map(|proxy| ssh_dialer(&proxy)))
+}
+
+fn ssh_dialer(proxy: &ProxySettings) -> ssh_transport::DialerHandle {
+    let connector = remote_core::Connector(Arc::new(vnc_transport::socks5::Socks5Connector::new(
+        proxy.host.clone(),
+        proxy.port,
+    )));
+    ssh_core::dialer_for(&connector)
+}
+
+/// Preferences → "Test proxy". Greeting only: the proxy must answer SOCKS5
+/// and accept no authentication. A particular machine is not contacted.
+#[tauri::command]
+pub async fn test_socks5_proxy(host: String, port: String) -> Result<String, String> {
+    let settings = ProxySettings::parse(Some("true"), Some(&host), Some(&port))?
+        .ok_or_else(|| "the proxy address could not be read".to_string())?;
+    vnc_transport::socks5::Socks5Connector::new(settings.host.clone(), settings.port)
+        .probe(Duration::from_secs(8))
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(format!(
+        "the proxy at {} answered a SOCKS5 greeting and accepted a connection with no authentication",
+        settings.describe()
+    ))
 }
 
 #[cfg(test)]

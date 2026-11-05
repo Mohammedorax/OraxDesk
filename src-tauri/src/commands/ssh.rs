@@ -217,13 +217,17 @@ pub async fn ssh_list_wsl_distros(
         config.username.clone()
     };
 
+    let dialer = match app.try_state::<crate::state::AppState>() {
+        Some(state) => crate::proxy::load_dialer(state.store.clone()).await?,
+        None => None,
+    };
     let cfg = SshConfig {
         host: config.host.clone(),
         port: config.port,
         username,
         auth,
         connect_timeout_ms: 15_000,
-        dialer: None,
+        dialer,
     };
 
     let handle = match ssh_transport::connect_and_authenticate_with(
@@ -285,13 +289,17 @@ pub async fn ssh_connect(
         config.username.clone()
     };
 
+    let dialer = match app.try_state::<crate::state::AppState>() {
+        Some(state) => crate::proxy::load_dialer(state.store.clone()).await?,
+        None => None,
+    };
     let mut options = SshTermOptions::new(SshConfig {
         host: config.host.clone(),
         port: config.port,
         username,
         auth,
         connect_timeout_ms: 15_000,
-        dialer: None,
+        dialer,
     });
     options.terminal = TerminalOptions {
         cols: config.cols.unwrap_or(80),

@@ -147,6 +147,7 @@
     "allow-files-local-rename",
     "allow-files-local-remove",
 
+    "allow-test-socks5-proxy",
     "allow-ssh-probe",
     "allow-ssh-list-local-keys",
     "allow-ssh-list-wsl-distros",
