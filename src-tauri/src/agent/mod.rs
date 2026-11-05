@@ -3413,7 +3413,7 @@ mod tests {
             "manual-proof",
             &[vnc_core::DecodedRect {
                 rect: vnc_core::Rect::new(0, 0, 1920, 1080),
-                payload: vnc_core::RectPayload::Rgba(screen),
+                payload: vnc_core::RectPayload::Rgba(screen.into()),
             }],
         );
 
