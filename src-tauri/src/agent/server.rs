@@ -125,6 +125,58 @@ use crate::state::{MachineKey, SessionEntry};
 /// reproduce it.
 pub const MAX_IMAGE_BYTES: usize = (wire::MAX_PAYLOAD as usize / 4) * 3 - 64 * 1024;
 
+/// One command waiting for a person's yes, as the prompt shows it.
+///
+/// The token is what makes the answer specific: the prompt receives it and
+/// echoes it back, and only a question that was actually displayed can be
+/// answered. `address` is the machine's, resolved from the session entry.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExecAsk {
+    pub token: u64,
+    pub command: String,
+    pub cwd: Option<String>,
+    pub session_id: String,
+    pub address: String,
+}
+
+/// The open per-command approval questions, and the counter that keys them.
+///
+/// Answers arrive over a Tauri command, so the sender is removed from the map
+/// and dropped before this function returns: no `parking_lot` guard is ever
+/// held across an await here.
+#[derive(Default)]
+pub struct ExecApprovals {
+    next: AtomicU64,
+    waiters: Mutex<HashMap<u64, tokio::sync::oneshot::Sender<bool>>>,
+}
+
+impl ExecApprovals {
+    /// Take a token and the receiving end of its answer.
+    pub fn register(&self) -> (u64, tokio::sync::oneshot::Receiver<bool>) {
+        let (tell, told) = tokio::sync::oneshot::channel();
+        // Tokens start at 1, so a prompt whose payload lost the field (0) can
+        // never look like a real question.
+        let token = self.next.fetch_add(1, Ordering::Relaxed) + 1;
+        self.waiters.lock().insert(token, tell);
+        (token, told)
+    }
+
+    /// Settle one question. `false` when nobody is waiting for that token: an
+    /// answer after the window closed settles nothing, which is what keeps a
+    /// late click from turning a refused command into a run.
+    pub fn answer(&self, token: u64, allow: bool) -> bool {
+        match self.waiters.lock().remove(&token) {
+            Some(tell) => tell.send(allow).is_ok(),
+            None => false,
+        }
+    }
+
+    /// Drop a question that was never answered.
+    fn forget(&self, token: u64) {
+        self.waiters.lock().remove(&token);
+    }
+}
+
 /// Everything a request is answered from.
 ///
 /// Deliberately not an `AppHandle`. The whole dispatch is testable without a
@@ -177,6 +229,15 @@ pub struct Ctx {
     /// connection per address; the flag lives on [`Peer`], so ten refused
     /// calls against the same machine cannot stack ten dialogs.
     pub ask_host: Arc<dyn Fn(HostAsk) + Send + Sync>,
+    /// How a per-command approval question reaches a person.
+    ///
+    /// Fired only under [`ExecConsent::AskEveryCommand`], once per
+    /// `limb.exec`, carrying the command and where it would run. The answer
+    /// travels back through [`ExecApprovals`], keyed by the token; a question
+    /// nobody answers is a refusal.
+    pub ask_exec: Arc<dyn Fn(ExecAsk) + Send + Sync>,
+    /// The open per-command questions, keyed by the token the prompt answers.
+    pub exec_approvals: Arc<ExecApprovals>,
 }
 
 /// The machine a host consent question is about.
@@ -487,6 +548,55 @@ fn separate_because(needed: Capability) -> &'static str {
 fn ask_for_exec_consent(ctx: &Ctx, peer: &Peer) {
     if !peer.exec_prompted.swap(true, Ordering::Relaxed) {
         (ctx.ask)();
+    }
+}
+
+/// How long one per-command question stays open before it counts as a no.
+///
+/// Two minutes: long enough for somebody to read a command and decide, short
+/// enough that an agent blocked on a dialog nobody is looking at gets a
+/// sentence it can retry rather than a hang it cannot explain.
+const EXEC_APPROVAL_WINDOW: Duration = Duration::from_secs(120);
+
+/// Hold one `limb.exec` until the person in front of the machine answers it.
+///
+/// Only [`ExecConsent::AskEveryCommand`] reaches here. The command text and
+/// working directory travel to the prompt verbatim — the person approves what
+/// will actually run, not a summary of it — and the wait is bounded because an
+/// unanswered dialog is a refusal that can be retried, not a hang.
+async fn approve_each_command(
+    ctx: &Ctx,
+    session_id: &str,
+    spec: &remote_core::intent::CommandSpec,
+) -> Result<(), RpcError> {
+    let address = {
+        let sessions = ctx.sessions.lock();
+        sessions
+            .get(session_id)
+            .map(|entry| entry.address.clone())
+            .unwrap_or_default()
+    };
+    let (token, told) = ctx.exec_approvals.register();
+    (ctx.ask_exec)(ExecAsk {
+        token,
+        command: spec.command.clone(),
+        cwd: spec.cwd.clone(),
+        session_id: session_id.to_string(),
+        address,
+    });
+    match tokio::time::timeout(EXEC_APPROVAL_WINDOW, told).await {
+        Ok(Ok(true)) => Ok(()),
+        Ok(Ok(false)) => Err(RpcError::tagged(
+            "CONSENT_REQUIRED",
+            "the person at this computer said no to this command, so nothing ran. That answer applies to this request alone; the next command will be asked about afresh",
+        )),
+        _ => {
+            ctx.exec_approvals.forget(token);
+            Err(RpcError::tagged(
+                "CONSENT_REQUIRED",
+                "this computer asks a person to approve each command, and nobody answered within two minutes, so nothing ran. The agent may ask again",
+            ))
+        }
     }
 }
 
@@ -2032,6 +2142,10 @@ async fn limb_exec(ctx: &Ctx, peer: &Peer, params: &Value) -> Result<Value, RpcE
     // THIS computer. That is a person's decision, read here at the moment of
     // use rather than cached at hello, so allow and deny both reach a
     // connection that is already open.
+    // Decoded before the consent gate because the per-command mode shows a
+    // person the exact command and working directory they are approving: a
+    // request that cannot be read is refused before anybody is asked about it.
+    let spec = wire::decode_exec(params).map_err(RpcError::bad_params)?;
     match ExecConsent::load(&ctx.exec_consent) {
         ExecConsent::Allowed => {}
         ExecConsent::Denied => {
@@ -2050,8 +2164,11 @@ async fn limb_exec(ctx: &Ctx, peer: &Peer, params: &Value) -> Result<Value, RpcE
                 "the person at this computer has not been asked yet whether agents may run commands, so nothing was run. OraxDesk is showing them the prompt now; ask again once they answer. dvv_run and dvv_job stay stopped until they allow it",
             ));
         }
+        // The person chose to approve commands one at a time. Nothing here is
+        // a standing permission: this request waits for their answer to the
+        // dialog for THIS command, and the next one asks again.
+        ExecConsent::AskEveryCommand => approve_each_command(ctx, &session_id, &spec).await?,
     }
-    let spec = wire::decode_exec(params).map_err(RpcError::bad_params)?;
 
     let wait = spec.timeout.saturating_add(EXEC_SLACK);
     let id = IntentId(NEXT_INTENT.fetch_add(1, Ordering::Relaxed));
@@ -2935,6 +3052,9 @@ mod tests {
         /// one named so the refusal and the prompt can be checked together.
         host_asked: Arc<std::sync::atomic::AtomicUsize>,
         host_asks: Arc<Mutex<Vec<HostAsk>>>,
+        /// The per-command approval questions the socket put in front of a
+        /// person, in order, so a test answers the exact one emitted.
+        exec_asks: Arc<Mutex<Vec<ExecAsk>>>,
         _dir: tempfile::TempDir,
     }
 
@@ -2995,6 +3115,8 @@ mod tests {
         let prompts = host_asked.clone();
         let host_asks = Arc::new(Mutex::new(Vec::new()));
         let sink_asks = host_asks.clone();
+        let exec_asks = Arc::new(Mutex::new(Vec::new()));
+        let sink_exec_asks = exec_asks.clone();
         Fixture {
             ctx: Ctx {
                 sessions,
@@ -3011,6 +3133,10 @@ mod tests {
                     prompts.fetch_add(1, Ordering::Relaxed);
                     sink_asks.lock().push(ask);
                 }),
+                ask_exec: Arc::new(move |ask| {
+                    sink_exec_asks.lock().push(ask);
+                }),
+                exec_approvals: Arc::new(ExecApprovals::default()),
             },
             commands,
             events,
@@ -3018,6 +3144,7 @@ mod tests {
             asked,
             host_asked,
             host_asks,
+            exec_asks,
             _dir: dir,
         }
     }
@@ -3628,7 +3755,7 @@ mod tests {
             &[vnc_core::DecodedRect {
                 rect: Rect::new(0, 0, size.0, size.1),
                 payload: vnc_core::RectPayload::Rgba(
-                    [40u8, 80, 160, 255].repeat(size.0 as usize * size.1 as usize),
+                    [40u8, 80, 160, 255].repeat(size.0 as usize * size.1 as usize).into(),
                 ),
             }],
         );
@@ -4361,7 +4488,7 @@ mod tests {
                 "s1",
                 &[vnc_core::DecodedRect {
                     rect,
-                    payload: vnc_core::RectPayload::Rgba([9u8, 9, 9, 255].repeat(16 * 16)),
+                    payload: vnc_core::RectPayload::Rgba([9u8, 9, 9, 255].repeat(16 * 16).into()),
                 }],
             );
         }
@@ -4447,7 +4574,7 @@ mod tests {
             &[vnc_core::DecodedRect {
                 rect: Rect::new(0, 0, width, height),
                 payload: vnc_core::RectPayload::Rgba(
-                    [shade, 255 - shade, 7, 255].repeat(width as usize * height as usize),
+                    [shade, 255 - shade, 7, 255].repeat(width as usize * height as usize).into(),
                 ),
             }],
         );
@@ -5349,6 +5476,142 @@ mod tests {
         assert!(
             fixture.commands.try_recv().is_err(),
             "a refused exec puts nothing on the wire"
+        );
+    }
+
+    /// Ask every command: the call waits, nothing is on the wire while the
+    /// question is open, and a yes lets that exact command through.
+    #[tokio::test]
+    async fn ask_every_command_holds_the_call_until_the_person_says_yes() {
+        let mut fixture = fixture();
+        ExecConsent::AskEveryCommand.store(&fixture.ctx.exec_consent);
+        let mut peer = greeted(&fixture.ctx).await;
+        call(
+            &fixture.ctx,
+            &mut peer,
+            "limb.attach",
+            json!({ "address": "10.0.0.5", "protocol": "vnc", "slot": 0 }),
+        )
+        .await;
+
+        let approvals = fixture.ctx.exec_approvals.clone();
+        let ctx = Arc::new(fixture.ctx);
+        let mut asking = peer.clone();
+        let task = tokio::spawn({
+            let ctx = ctx.clone();
+            async move {
+                dispatch(
+                    &ctx,
+                    &mut asking,
+                    "limb.exec",
+                    &json!({ "sessionId": "s1", "command": "uname -a", "timeoutMs": 300 }),
+                )
+                .await
+            }
+        });
+
+        // Nothing runs while the question is open.
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert!(
+            fixture.commands.try_recv().is_err(),
+            "the command must not reach the wire before the person answers"
+        );
+
+        let ask = fixture
+            .exec_asks
+            .lock()
+            .first()
+            .cloned()
+            .expect("the prompt carries the request");
+        assert_eq!(ask.command, "uname -a");
+        assert_eq!(ask.address, "10.0.0.5");
+        assert_eq!(ask.session_id, "s1");
+        assert!(
+            approvals.answer(ask.token, true),
+            "the answer settles the exact question that was asked"
+        );
+
+        let sent = tokio::time::timeout(Duration::from_secs(2), fixture.commands.recv())
+            .await
+            .expect("the approved command reaches the wire")
+            .expect("the session is alive");
+        match sent {
+            ClientCommand::Agent(intent) => match intent.kind {
+                IntentKind::Exec { spec } => assert_eq!(spec.command, "uname -a"),
+                other => panic!("expected an exec intent, saw {other:?}"),
+            },
+            other => panic!("expected the exec intent, saw {other:?}"),
+        }
+
+        // No driver answers in this fixture, so the call ends by its own
+        // deadline: the answer is the timeout shape, never a fabricated run.
+        let outcome = task
+            .await
+            .expect("the task joined")
+            .expect("a timeout is a reported answer, not an error");
+        assert_eq!(outcome["timedOut"], true, "{outcome}");
+        assert_eq!(outcome["served"], false, "{outcome}");
+    }
+
+    /// A no settles the same question as a refusal: nothing runs, and the mode
+    /// stays in place so the next command asks again.
+    #[tokio::test]
+    async fn ask_every_command_denied_runs_nothing_and_keeps_asking() {
+        let mut fixture = fixture();
+        ExecConsent::AskEveryCommand.store(&fixture.ctx.exec_consent);
+        let mut peer = greeted(&fixture.ctx).await;
+        call(
+            &fixture.ctx,
+            &mut peer,
+            "limb.attach",
+            json!({ "address": "10.0.0.5", "protocol": "vnc", "slot": 0 }),
+        )
+        .await;
+
+        let consent = fixture.ctx.exec_consent.clone();
+        let approvals = fixture.ctx.exec_approvals.clone();
+        let ctx = Arc::new(fixture.ctx);
+        let mut asking = peer.clone();
+        let task = tokio::spawn({
+            let ctx = ctx.clone();
+            async move {
+                dispatch(
+                    &ctx,
+                    &mut asking,
+                    "limb.exec",
+                    &json!({ "sessionId": "s1", "command": "uname -a", "timeoutMs": 300 }),
+                )
+                .await
+            }
+        });
+
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        let ask = fixture
+            .exec_asks
+            .lock()
+            .first()
+            .cloned()
+            .expect("the question was put");
+        assert!(approvals.answer(ask.token, false));
+
+        let refused = task
+            .await
+            .expect("the task joined")
+            .expect_err("a no means no run");
+        assert_eq!(refused.tag, Some("CONSENT_REQUIRED"));
+        assert!(
+            refused.message.contains("said no"),
+            "the refusal has to say the person decided: {}",
+            refused.message
+        );
+        assert!(
+            fixture.commands.try_recv().is_err(),
+            "a denied command puts nothing on the wire"
+        );
+        assert_eq!(
+            ExecConsent::load(&consent),
+            ExecConsent::AskEveryCommand,
+            "denying one command does not switch the mode off"
         );
     }
 

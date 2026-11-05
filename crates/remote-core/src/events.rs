@@ -26,7 +26,13 @@ pub struct DecodedRect {
 #[derive(Debug, Clone)]
 pub enum RectPayload {
     /// Tightly packed RGBA8888, `rect.width * rect.height * 4` bytes.
-    Rgba(Vec<u8>),
+    ///
+    /// `bytes::Bytes` rather than `Vec<u8>` because a decoded rectangle is
+    /// shared, not owned by one consumer: the renderer, the agent mirror and
+    /// the dirty-rect history all need the same pixels, and cloning a `Vec`
+    /// copied the whole frame for each of them. A `Bytes` clone is a refcount,
+    /// and the producers convert their `Vec` into one without copying.
+    Rgba(bytes::Bytes),
     /// Compressed image. The shell decodes it natively before the update
     /// reaches the webview (`framing::decode_jpeg_rects`); the webview's
     /// `createImageBitmap` path remains as the fallback for a tile that

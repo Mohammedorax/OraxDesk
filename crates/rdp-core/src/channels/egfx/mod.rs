@@ -38,10 +38,10 @@
 //! anywhere on the path (D9).
 //!
 //! What is allocated per frame is the handover: one `Vec<u8>` per rectangle
-//! that reaches the shell, because `remote_core::RectPayload::Rgba` owns its
-//! bytes, and the `Vec<DecodedRect>` that carries them. That is the same cost
-//! the legacy bitmap path pays at
-//! `crates/rdp-core/src/session/graphics.rs:205`.
+//! that reaches the shell — converted into a `bytes::Bytes` without a copy,
+//! so every later clone of the same pixels is a refcount — and the
+//! `Vec<DecodedRect>` that carries them. That is the same cost the legacy
+//! bitmap path pays at `crates/rdp-core/src/session/graphics.rs:205`.
 
 pub mod cache;
 pub mod decode;
@@ -690,7 +690,7 @@ impl Egfx {
         surface.copy_out(rect, &mut pixels)?;
         pending.push(DecodedRect {
             rect: Rect::new(x, y, w, h),
-            payload: RectPayload::Rgba(pixels),
+            payload: RectPayload::Rgba(pixels.into()),
         });
         Ok(())
     }

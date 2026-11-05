@@ -79,6 +79,13 @@ pub struct AppState {
     /// Initialised from [`crate::agent::HOST_ACCESS_KEY`] at startup; a
     /// machine with no entry is unasked, which refuses.
     pub agent_host_access: Arc<Mutex<HostAccess>>,
+    /// The per-command approval questions the socket is holding open.
+    ///
+    /// Shared with the socket's context so the prompt's answer, which arrives
+    /// as a Tauri command, settles the exact request the person was shown.
+    /// Empty unless a person picked "ask every command"; a question nobody
+    /// answers is removed by the socket when its window closes.
+    pub agent_exec_approvals: Arc<crate::agent::server::ExecApprovals>,
 }
 
 /// A session window that exists but has not registered a session yet.
@@ -657,6 +664,7 @@ impl AppState {
             protocols: Arc::new(ProtocolRegistry::new(host_keys)),
             agent: Arc::new(AgentPlane::default()),
             agent_exec_consent: Arc::new(AtomicU8::new(exec_consent.as_u8())),
+            agent_exec_approvals: Arc::new(crate::agent::server::ExecApprovals::default()),
             agent_host_access: Arc::new(Mutex::new(host_access)),
         }
     }

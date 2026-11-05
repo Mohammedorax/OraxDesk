@@ -431,7 +431,7 @@ fn a_damage_read_carries_the_mirrors_own_generation_and_a_stale_crop_is_refused(
 
     let painted = |x: u16, y: u16, w: u16, h: u16| DecodedRect {
         rect: Rect::new(x, y, w, h),
-        payload: RectPayload::Rgba(vec![0x20; w as usize * h as usize * 4]),
+        payload: RectPayload::Rgba(vec![0x20; w as usize * h as usize * 4].into()),
     };
 
     // Prime the corner the crop will land in. A mirror starts as opaque black
@@ -510,7 +510,7 @@ fn a_peek_reports_the_damage_without_taking_it_from_the_next_read() {
     source.apply(
         &[DecodedRect {
             rect: changed,
-            payload: RectPayload::Rgba(vec![0x20; 4 * 4 * 4]),
+            payload: RectPayload::Rgba(vec![0x20; 4 * 4 * 4].into()),
         }],
         framebuffer,
         Timestamp(1),

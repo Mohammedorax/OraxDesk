@@ -763,7 +763,7 @@ mod tests {
     fn rgba(rect: Rect, colour: [u8; 4]) -> DecodedRect {
         DecodedRect {
             rect,
-            payload: RectPayload::Rgba(colour.repeat(rect.width as usize * rect.height as usize)),
+            payload: RectPayload::Rgba(colour.repeat(rect.width as usize * rect.height as usize).into()),
         }
     }
 
@@ -874,7 +874,7 @@ mod tests {
                 "s1",
                 &[DecodedRect {
                     rect: whole,
-                    payload: RectPayload::Rgba(caret_on.clone()),
+                    payload: RectPayload::Rgba(caret_on.clone().into()),
                 }],
                 now(),
             );

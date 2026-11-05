@@ -168,7 +168,7 @@ mod tests {
 
     #[test]
     fn every_rgba_rect_is_unknown_and_the_crate_does_not_guess() {
-        let hint = ContentHint::of(&RectPayload::Rgba(vec![0; 16]));
+        let hint = ContentHint::of(&RectPayload::Rgba(vec![0; 16].into()));
         assert_eq!(hint, ContentHint::Unknown);
     }
 

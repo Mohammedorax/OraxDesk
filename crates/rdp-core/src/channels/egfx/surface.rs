@@ -35,7 +35,8 @@
 //! ([`Surface::copy_out`]), which is the same transfer the legacy bitmap path
 //! makes at `crates/rdp-core/src/session/graphics.rs:205`. It is not a second
 //! decode and it is not a conversion; it is the handover, and it exists
-//! because `RectPayload::Rgba` owns its bytes.
+//! because `RectPayload::Rgba` needs a buffer of its own — a `bytes::Bytes`
+//! that costs one allocation here and a refcount for every clone after it.
 
 use rdp_codecs::progressive::ProgressiveState;
 use rdp_codecs::{DstView, OutFormat, RowOrder};

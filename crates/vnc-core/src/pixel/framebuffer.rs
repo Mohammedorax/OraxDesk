@@ -185,7 +185,7 @@ mod tests {
         }
         DecodedRect {
             rect: Rect::new(x, y, w, h),
-            payload: RectPayload::Rgba(px),
+            payload: RectPayload::Rgba(px.into()),
         }
     }
 

@@ -246,6 +246,14 @@ pub enum SessionBehaviour {
     /// (`docs/RDP_SPEC_NOTES.md` §1.1), and the client has to report it
     /// rather than draw whatever fell out.
     ServeMalformedEgfx,
+    /// [`SessionBehaviour::ServeChannels`], except the clipboard sends one
+    /// message whose header declares more bytes than it carries
+    /// (MS-RDPECLIP 2.2.1).
+    ///
+    /// The fault `disable_clipboard` exists for: a channel that contradicts
+    /// its own framing degrades that channel alone, and the graphics stream
+    /// carries on. Before the isolation it ended the whole session.
+    ServeMalformedClipboard,
     /// [`SessionBehaviour::ServeChannels`], except that both channels open
     /// before the Font Map rather than after it: the drdynvc version
     /// handshake, the clipboard's `CB_CLIP_CAPS` and its `CB_MONITOR_READY`
@@ -839,7 +847,7 @@ async fn serve(
         // Channel traffic ahead of the Font Map, in the order a Windows
         // server sends it: capabilities first, then Monitor Ready
         // (MS-RDPECLIP 1.3.2.1).
-        let mut script = ChannelScript::new(&recorded, false)?;
+        let mut script = ChannelScript::new(&recorded, false, false)?;
         script.open_with_capabilities(&mut stream).await?;
         early_script = Some(script);
     }
@@ -870,11 +878,14 @@ async fn serve(
     }
     if matches!(
         config.session,
-        SessionBehaviour::ServeChannels | SessionBehaviour::ServeMalformedEgfx
+        SessionBehaviour::ServeChannels
+            | SessionBehaviour::ServeMalformedEgfx
+            | SessionBehaviour::ServeMalformedClipboard
     ) {
         let mut script = ChannelScript::new(
             &recorded,
             config.session == SessionBehaviour::ServeMalformedEgfx,
+            config.session == SessionBehaviour::ServeMalformedClipboard,
         )?;
         script.open(&mut stream).await?;
         return drain(&mut stream, &recorded, Some(&mut script)).await;
@@ -1208,6 +1219,9 @@ pub struct ChannelScript {
     /// Send an EGFX message that decompresses into nonsense instead of a
     /// frame, for the ZGFX failure mode (`docs/RDP_SPEC_NOTES.md` §1.1).
     malformed_egfx: bool,
+    /// Send one clipboard PDU whose header declares more than it carries,
+    /// for the channel-isolation path (`ServeMalformedClipboard`).
+    malformed_clipboard: bool,
     /// Partial static channel messages, per channel id. Everything the client
     /// sends here fits one 1600 byte chunk, but reassembling anyway is what
     /// makes the mock's framing independent of that assumption.
@@ -1223,7 +1237,11 @@ impl ChannelScript {
     /// The mock allocated them in the order the client asked for them
     /// (see `read_connect_initial`), so the name's position in
     /// `TS_UD_CS_NET` is the offset from [`FIRST_VIRTUAL_CHANNEL_ID`].
-    fn new(recorded: &Arc<Mutex<Recorded>>, malformed_egfx: bool) -> std::io::Result<Self> {
+    fn new(
+        recorded: &Arc<Mutex<Recorded>>,
+        malformed_egfx: bool,
+        malformed_clipboard: bool,
+    ) -> std::io::Result<Self> {
         let id = |name: &str| -> std::io::Result<u16> {
             let rec = recorded.lock().expect("not poisoned");
             let index = rec
@@ -1240,6 +1258,7 @@ impl ChannelScript {
             drdynvc_id: id("drdynvc")?,
             cliprdr_id: id("cliprdr")?,
             malformed_egfx,
+            malformed_clipboard,
             partial: std::collections::HashMap::new(),
             offered_clipboard: false,
         })
@@ -1260,7 +1279,21 @@ impl ChannelScript {
         )
         .await?;
         self.send_clip(stream, clip_msg::MONITOR_READY, 0, &[])
-            .await
+            .await?;
+        if self.malformed_clipboard {
+            // 64 declared, 2 carried: the header and the reassembly disagree,
+            // which is exactly the shape `Cliprdr::message` refuses.
+            return self
+                .send_clip_lying(
+                    stream,
+                    clip_msg::FORMAT_DATA_RESPONSE,
+                    0,
+                    64,
+                    &[0x41, 0x42],
+                )
+                .await;
+        }
+        Ok(())
     }
 
     /// [`Self::open`], with the server's `CB_CLIP_CAPS` ahead of the
@@ -1656,6 +1689,31 @@ impl ChannelScript {
         w.u16(msg_type);
         w.u16(flags);
         w.u32(body.len() as u32);
+        w.bytes(body);
+        stream
+            .write_all(&channel_frame(self.cliprdr_id, &pdu))
+            .await?;
+        stream.flush().await
+    }
+
+    /// A `cliprdr` PDU whose header lies about its body length: `declared`
+    /// goes on the wire as `dataLen` while `body` is what actually follows.
+    ///
+    /// The client has to refuse the message rather than read a truncated
+    /// paste as whole (MS-RDPECLIP 2.2.1).
+    async fn send_clip_lying(
+        &self,
+        stream: &mut TcpStream,
+        msg_type: u16,
+        flags: u16,
+        declared: u32,
+        body: &[u8],
+    ) -> std::io::Result<()> {
+        let mut pdu = Vec::with_capacity(8 + body.len());
+        let mut w = Writer::new(&mut pdu);
+        w.u16(msg_type);
+        w.u16(flags);
+        w.u32(declared);
         w.bytes(body);
         stream
             .write_all(&channel_frame(self.cliprdr_id, &pdu))

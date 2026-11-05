@@ -3413,7 +3413,7 @@ mod update_budget_tests {
     fn rect_of(w: u16, h: u16) -> DecodedRect {
         DecodedRect {
             rect: Rect::new(0, 0, w, h),
-            payload: RectPayload::Rgba(vec![0u8; w as usize * h as usize * 4]),
+            payload: RectPayload::Rgba(vec![0u8; w as usize * h as usize * 4].into()),
         }
     }
 

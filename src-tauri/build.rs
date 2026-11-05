@@ -518,6 +518,11 @@ fn main() {
             // is the one that can grant an agent a machine.
             "agent_host_access",
             "agent_set_host_access",
+            // The answer to one per-command approval question. Its own grant,
+            // and the most consequential one here: it is what lets a single
+            // `dvv_run` through when a person has chosen to be asked every
+            // time, so it is never implied by the panel's read/write pair.
+            "answer_agent_exec_request",
             // Registering the bundled `dvv` with Claude Code, which runs a
             // program on the person's behalf. Its own grant for that reason:
             // reading the plane's state and spawning a process are not the

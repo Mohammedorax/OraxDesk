@@ -775,6 +775,8 @@ export const AGENT_PLANE_OFF = "false";
 export const AGENT_EXEC_CONSENT_KEY = "agent_exec_consent";
 export const AGENT_EXEC_CONSENT_ALLOWED = "allowed";
 export const AGENT_EXEC_CONSENT_DENIED = "denied";
+/** The third answer: yes, but one command at a time. */
+export const AGENT_EXEC_CONSENT_ASK = "ask";
 
 /**
  * The question a first command asks, and the dialog only this event opens.
@@ -785,20 +787,46 @@ export const AGENT_EXEC_CONSENT_DENIED = "denied";
  */
 export const AGENT_EXEC_CONSENT_EVENT = "agent://exec-consent";
 
+/**
+ * One command waiting for a person's yes, as the per-command dialog shows it.
+ *
+ * AGREED with `crate::commands::agent::EXEC_REQUEST_EVENT`'s payload. The
+ * token goes back unchanged on the answer; it is what proves the person
+ * approved the exact command they were shown and not some other request.
+ */
+export interface ExecRequest {
+  token: number;
+  command: string;
+  cwd?: string | null;
+  sessionId?: string;
+  address?: string;
+}
+
+/**
+ * The question one command asks, and the dialog only this event opens.
+ *
+ * AGREED. `crate::commands::agent::EXEC_REQUEST_EVENT`. A dedicated event like
+ * {@link AGENT_EXEC_CONSENT_EVENT}, for the same reason: a status stream must
+ * never be able to open a dialog that approves a command.
+ */
+export const AGENT_EXEC_REQUEST_EVENT = "agent://exec-request";
+
 /** What a person has said about commands on this computer. */
-export type ExecConsent = "unasked" | "allowed" | "denied";
+export type ExecConsent = "unasked" | "allowed" | "denied" | "ask";
 
 /**
  * Read the stored answer, failing closed.
  *
- * `allowed` is the only value that permits. An unknown string, a value a later
- * build writes, or a read that failed all become `unasked`, which shows the
- * prompt rather than granting something nobody agreed to.
+ * `allowed` permits standing and `ask` permits one command at a time; those
+ * are the only values that permit. An unknown string, a value a later build
+ * writes, or a read that failed all become `unasked`, which shows the prompt
+ * rather than granting something nobody agreed to.
  */
 export function parseExecConsent(raw: string | null | undefined): ExecConsent {
   const value = (raw ?? "").trim().toLowerCase();
   if (value === AGENT_EXEC_CONSENT_ALLOWED) return "allowed";
   if (value === AGENT_EXEC_CONSENT_DENIED) return "denied";
+  if (value === AGENT_EXEC_CONSENT_ASK) return "ask";
   return "unasked";
 }
 

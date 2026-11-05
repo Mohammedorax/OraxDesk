@@ -591,7 +591,7 @@ fn bench_framebuffer(c: &mut Criterion) {
 
         let full = DecodedRect {
             rect: Rect::new(0, 0, w as u16, h as u16),
-            payload: RectPayload::Rgba(synth_desktop(w, h)),
+            payload: RectPayload::Rgba(synth_desktop(w, h).into()),
         };
         // Overlapping CopyRect: scroll the whole desktop up-left by 8 px.
         let scroll = DecodedRect {

@@ -17,12 +17,9 @@ pub(crate) async fn decode<R: AsyncRead + Unpin>(
     let bpp = pf.bytes_per_pixel();
     let len = rect.area() * bpp;
     let data = read_exact_vec(reader, len, "raw").await?;
-    Ok(RectPayload::Rgba(convert_to_rgba_mapped(
-        &data,
-        pf,
-        rect.area(),
-        map,
-    )))
+    Ok(RectPayload::Rgba(
+        convert_to_rgba_mapped(&data, pf, rect.area(), map).into(),
+    ))
 }
 
 #[cfg(test)]

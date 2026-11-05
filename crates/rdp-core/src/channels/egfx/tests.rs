@@ -128,7 +128,7 @@ fn rects(events: &[SessionEvent]) -> Vec<(u16, u16, u16, u16, Vec<u8>)> {
                 let RectPayload::Rgba(px) = &r.payload else {
                     panic!("egfx produces rgba payloads");
                 };
-                out.push((r.rect.x, r.rect.y, r.rect.width, r.rect.height, px.clone()));
+                out.push((r.rect.x, r.rect.y, r.rect.width, r.rect.height, px.to_vec()));
             }
         }
     }

@@ -91,7 +91,7 @@ pub(crate) async fn decode<R: AsyncRead + Unpin>(
         ty += th;
     }
 
-    Ok(RectPayload::Rgba(out))
+    Ok(RectPayload::Rgba(out.into()))
 }
 
 fn fill(out: &mut [u8], stride: usize, x: usize, y: usize, w: usize, h: usize, colour: [u8; 4]) {

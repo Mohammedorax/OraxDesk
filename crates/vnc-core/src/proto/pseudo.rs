@@ -324,7 +324,7 @@ where
         let decoded =
             crate::encodings::decode_rect_as(decoder, reader, rect, inner, &alpha_pf).await?;
         match decoded.map(|d| d.payload) {
-            Some(RectPayload::Rgba(px)) => px,
+            Some(RectPayload::Rgba(px)) => px.to_vec(),
             _ => {
                 return Err(VncError::Protocol(format!(
                     "cursor-with-alpha inner encoding {inner} did not yield RGBA pixels"

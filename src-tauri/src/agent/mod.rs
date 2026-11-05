@@ -218,18 +218,28 @@ pub enum ExecConsent {
     Allowed = 1,
     /// A person said no. Remembered too, and reversible in the panel.
     Denied = 2,
+    /// A person said yes, but only one command at a time.
+    ///
+    /// Every `limb.exec` puts the exact command and working directory in front
+    /// of the person in front of this machine, and nothing runs until they
+    /// press allow for that request. Nothing is remembered: the next command
+    /// asks again. An unanswered request is a refusal, which is what makes
+    /// this safe to leave switched on.
+    AskEveryCommand = 3,
 }
 
 impl ExecConsent {
-    /// Interpret the stored value. Only the two words this build writes are a
-    /// decision: `"allowed"` is the only thing that permits, and every other
-    /// string, including one a newer build wrote, is `Unasked`.
+    /// Interpret the stored value. Only the words this build writes are a
+    /// decision: `"allowed"` permits standing, `"ask"` permits one command at
+    /// a time, and every other string, including one a newer build wrote, is
+    /// `Unasked`.
     pub fn parse(raw: Option<&str>) -> Self {
         match raw
             .map(|value| value.trim().to_ascii_lowercase())
             .as_deref()
         {
             Some("allowed") => Self::Allowed,
+            Some("ask") | Some("ask-every-command") => Self::AskEveryCommand,
             Some("denied") => Self::Denied,
             _ => Self::Unasked,
         }
@@ -246,6 +256,7 @@ impl ExecConsent {
         match value {
             1 => Self::Allowed,
             2 => Self::Denied,
+            3 => Self::AskEveryCommand,
             _ => Self::Unasked,
         }
     }
@@ -2294,6 +2305,8 @@ mod tests {
             ask: Arc::new(|| {}),
             host_access: host_access_allowing(&["10.0.0.5", "10.0.0.6"]),
             ask_host: Arc::new(|_| {}),
+            ask_exec: Arc::new(|_| {}),
+            exec_approvals: Arc::new(crate::agent::server::ExecApprovals::default()),
         });
 
         let (client, server) = tokio::io::duplex(64 * 1024);
@@ -2702,6 +2715,8 @@ mod tests {
             ask: Arc::new(|| {}),
             host_access: host_access_allowing(&[]),
             ask_host: Arc::new(|_| {}),
+            ask_exec: Arc::new(|_| {}),
+            exec_approvals: Arc::new(crate::agent::server::ExecApprovals::default()),
         });
         start(&plane, ctx, dir.path().join("agent.sock")).expect("the plane starts");
 
@@ -2803,6 +2818,11 @@ mod tests {
             "the write trims and lowercases, so the read has to agree"
         );
         assert_eq!(ExecConsent::parse(Some("denied")), ExecConsent::Denied);
+        assert_eq!(
+            ExecConsent::parse(Some("ask")),
+            ExecConsent::AskEveryCommand,
+            "the third answer is a permission too, one command at a time"
+        );
         for unknown in ["true", "yes", "on", "1", "allow", "deny", "unasked"] {
             assert_eq!(
                 ExecConsent::parse(Some(unknown)),
@@ -2810,6 +2830,7 @@ mod tests {
                 "{unknown} must never be read as permission"
             );
         }
+        assert_eq!(ExecConsent::from_u8(3), ExecConsent::AskEveryCommand);
         assert_eq!(ExecConsent::from_u8(9), ExecConsent::Unasked);
     }
 
@@ -3191,6 +3212,8 @@ mod tests {
             // has its own for the map.
             host_access: host_access_allowing(&["10.0.0.5"]),
             ask_host: Arc::new(|_| {}),
+            ask_exec: Arc::new(|_| {}),
+            exec_approvals: Arc::new(crate::agent::server::ExecApprovals::default()),
         });
 
         // Off. Nothing exists, and that is the default every install gets.
@@ -3331,6 +3354,8 @@ mod tests {
             ask: Arc::new(|| {}),
             host_access: host_access_allowing(&["10.0.0.5"]),
             ask_host: Arc::new(|_| {}),
+            ask_exec: Arc::new(|_| {}),
+            exec_approvals: Arc::new(crate::agent::server::ExecApprovals::default()),
         });
         let path = socket_path();
         start(&plane, ctx, path.clone()).expect("the plane starts at its published path");

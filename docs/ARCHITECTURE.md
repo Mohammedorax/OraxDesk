@@ -9,6 +9,141 @@ where the engineering detail lives.
 
 ---
 
+# The crates, and how they depend on each other
+
+The workspace is 27 crates plus the Tauri shell and the webview, and the
+layering is the design: one protocol-neutral contract at the bottom, protocol
+cores that know nothing about the app, transports underneath them, runtimes
+that join the cores to a live session, and a shell that is the only place
+allowed to know about all of it.
+
+## Rules the layout enforces
+
+* **No protocol core names Tauri, ever.** Cores outlive the frontend, and the
+  agent plane is written against the session registry so it stays reachable
+  from a headless binary.
+* **Pure wire and codec crates have no I/O and no session state.**
+  `rdp-pdu`, `rdp-codecs` and `rdp-auth` are functions over slices; two of them
+  carry fuzz targets (`crates/*/fuzz`) because they parse bytes from strangers.
+* **`unsafe` lives in four places and no more**: `boundary-platform`
+  (Win32/macOS capture and input), `vnc-input-capture`, `local-pipe`, and a
+  handful of lines in `vnc-files`/`dvv`. Everything else is
+  `#![forbid(unsafe_code)]`.
+* **Whole framebuffers never cross a channel as one value.** Decoded pixels
+  travel as dirty rects (`remote_core::RectPayload`), which is also why the
+  agent mirror can see exactly the same rectangles the renderer does.
+
+## The crates
+
+| Layer | Crate | Responsibility |
+| --- | --- | --- |
+| Contract | `remote-core` | The protocol-neutral session contract: `SessionEvent`/`ClientCommand`, `RectPayload`, `ConnectOptions`, credentials, the retry ladder (`reconnect`), `NamedKey`, and the classical Arabic X11 keysym table the VNC and RDP input paths share. Every protocol crate depends on it. |
+| Contract | `remote-pixel` | Pixel format conversion shared by every decoder: channel order, endianness, row padding — one implementation instead of one per protocol. |
+| Protocol | `vnc-core` | UI-agnostic RFB core: handshake 3.3–3.8, security (VNC auth, VeNCrypt, RA2, Apple DH), every common encoding, dirty-rect assembly, keysym input. |
+| Protocol | `rdp-core` | The RDP session: connection sequence (X.224, MCS, licensing, capability exchange), channel map, run loop, EGFX, input lowering, the fast-path encoder. |
+| Protocol | `rdp-pdu` | MS-RDPBCGR wire formats — parsing and serialising, no I/O and no session state. Fuzzed. |
+| Protocol | `rdp-codecs` | Bitmap decoders as pure functions over caller-owned slices. Fuzzed. |
+| Protocol | `rdp-auth` | CredSSP, SPNEGO and NTLMv2 as pure state machines. Fuzzed. |
+| Protocol | `ssh-core` | A remote shell that behaves: PTY and terminal state, a supervisor that reconnects, multiplexer attach (tmux/screen/zellij), tunnels, SFTP session. |
+| Protocol | `ssh-transport` | The SSH carrier: dial, host-key verification against pinned TOFU entries, agent authentication, keepalive, tunnelling. |
+| Transport | `vnc-transport` | Byte streams: TCP with a staggered dual-stack race (Happy Eyeballs), TLS for VeNCrypt/RA2, TLS pinning — and the SOCKS5 handshake the transport layer is gaining. |
+| Transport | `local-pipe` | The Windows named pipe and its Unix socket counterpart for the agent plane, created so only its creator can open it. |
+| Storage | `vnc-store` | SQLite: host profiles, groups, tags, history, settings, thumbnails. |
+| Discovery | `vnc-discovery` | mDNS/DNS-SD browsing, a polite active subnet scan with RFB banner fingerprinting, name resolution over mDNS/LLMNR/NetBIOS/MS-RPC, Wake on LAN. |
+| Files | `vnc-files` | File transfer over an SFTP sidecar, shared by the Files panel and the agent's `files.*` verbs. |
+| Input | `vnc-input-capture` | Native OS-level keyboard capture for shortcut pass-through (Tier 2). |
+| Cloud | `orax-registry` | Client for the device registry and signal-code API (the Cloudflare Worker + D1 in `cloudflare/`). |
+| Agent | `limb-core` | The contract a limb implements: intents an agent may issue, observations a limb emits, the capabilities that gate both, and the identity a limb keeps across a reconnect. |
+| Agent | `agent-lease` | Control arbitration: who is driving a limb right now, how the wheel moves, and what happens when somebody else wants it. |
+| Agent | `agent-perception` | What an agent may see: a server-side framebuffer mirror, damage tracking, and the crop/downscale/encode path that turns pixels into an observation. |
+| Agent | `agent-plane` | The runtime that joins those three to live sessions: limb registry, intent lowering onto `ClientCommand`, lease enforcement, observation path, counts. |
+| Agent | `dvv` | What an agent actually connects to: an MCP server over stdio and a CLI over the same `dvvp.v1` socket; shipped as the app's sidecar. |
+| Support | `boundary-session` | The OraxDesk Support app's session core: wire, session, DNS, tools, unattended mode. |
+| Support | `boundary-codes` | The signal-code pairs that pair two people (with the optional code-server feature). |
+| Support | `boundary-driver` | Drives an established support session: input, buttons, events. |
+| Support | `boundary-platform` | OS-level screen capture and input injection, plus system probes; the crate with the most `unsafe`. |
+| Support | `boundary-provision` | Autostart, network detection, the Cloudflare tunnel, process management. |
+| Support | `boundary-app` | The Support app binary that composes the five above. |
+| Shell | `src-tauri` | The Tauri shell: session commands, window rules, event emitters, the ACL manifest, and the agent socket's shell glue (consent gates included). |
+| Shell | `ui/` | The React + WebGL2 webview (not a crate; not published). |
+
+## Principal dependency edges
+
+```mermaid
+flowchart BT
+    contract["remote-core<br/>contract + retry ladder"]
+    pixel["remote-pixel"]
+    transport["vnc-transport<br/>TCP · TLS · pinned"]
+    pipe["local-pipe"]
+
+    vnc["vnc-core"]
+    rdp["rdp-core"]
+    ssh["ssh-core"]
+    pdu["rdp-pdu"]
+    codecs["rdp-codecs"]
+    auth["rdp-auth"]
+    sshT["ssh-transport"]
+    store["vnc-store"]
+    discovery["vnc-discovery"]
+    files["vnc-files"]
+    capture["vnc-input-capture"]
+
+    limb["limb-core"]
+    lease["agent-lease"]
+    perception["agent-perception"]
+    plane["agent-plane"]
+    dvv["dvv"]
+
+    vnc --> contract
+    vnc --> pixel
+    vnc --> transport
+    rdp --> contract
+    rdp --> pixel
+    rdp --> transport
+    rdp --> pdu
+    rdp --> codecs
+    rdp --> auth
+    ssh --> contract
+    ssh --> sshT
+    pdu --> contract
+    codecs --> pixel
+    auth --> pdu
+    sshT --> contract
+    store --> contract
+    discovery --> contract
+    files --> sshT
+    capture --> vnc
+
+    limb --> contract
+    limb --> lease
+    perception --> contract
+    perception --> pixel
+    perception --> limb
+    plane --> limb
+    plane --> lease
+    plane --> perception
+    dvv --> plane
+    dvv --> pipe
+
+    shell["src-tauri (Tauri shell)"]
+    vnc --> shell
+    rdp --> shell
+    ssh --> shell
+    store --> shell
+    discovery --> shell
+    files --> shell
+    capture --> shell
+    plane --> shell
+    pipe --> shell
+```
+
+`boundary-*` stands apart by design: it is the Support app family, composed by
+`boundary-app`, and it shares only `orax-registry` and `remote-core` with the
+main application. `rdp-core` reaches `vnc-transport` for TLS and nothing else,
+which is the one edge worth knowing about before moving TLS code.
+
+---
+
 # OraxDesk
 
 A fast, native VNC viewer for Windows, macOS, and Linux, built with Rust and

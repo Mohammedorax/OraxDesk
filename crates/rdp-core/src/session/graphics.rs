@@ -214,7 +214,7 @@ impl Graphics {
         };
         Ok(Some(DecodedRect {
             rect,
-            payload: RectPayload::Rgba(payload),
+            payload: RectPayload::Rgba(payload.into()),
         }))
     }
 

@@ -27,12 +27,9 @@ pub(crate) async fn decode<R: AsyncRead + Unpin>(
             format!("short inflate: got {} of {expected} bytes", data.len()),
         ));
     }
-    Ok(RectPayload::Rgba(convert_to_rgba_mapped(
-        &data[..expected],
-        pf,
-        rect.area(),
-        map,
-    )))
+    Ok(RectPayload::Rgba(
+        convert_to_rgba_mapped(&data[..expected], pf, rect.area(), map).into(),
+    ))
 }
 
 #[cfg(test)]

@@ -531,6 +531,7 @@ pub fn run() {
             commands::agent::agent_take_the_wheel,
             commands::agent::agent_host_access,
             commands::agent::agent_set_host_access,
+            commands::agent::answer_agent_exec_request,
             commands::agent::agent_register_with_claude,
             commands::agent::agent_setup_agents,
             // file transfer (SFTP sidecar)

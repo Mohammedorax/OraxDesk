@@ -68,7 +68,7 @@ pub(crate) async fn decode<R: AsyncRead + Unpin>(
             for px in out.as_chunks_mut::<4>().0.iter_mut() {
                 px.copy_from_slice(&colour);
             }
-            Ok(RectPayload::Rgba(out))
+            Ok(RectPayload::Rgba(out.into()))
         }
         // JPEG: compact length + JFIF stream, GPU-decoded in the webview.
         0x09 => {
@@ -179,7 +179,7 @@ async fn decode_basic<R: AsyncRead + Unpin>(
         _ => unreachable!(),
     };
 
-    Ok(RectPayload::Rgba(rgba))
+    Ok(RectPayload::Rgba(rgba.into()))
 }
 
 fn unpack_palette(

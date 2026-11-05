@@ -70,7 +70,7 @@ pub(crate) async fn decode<R: AsyncRead + Unpin>(
         }
     }
 
-    Ok(RectPayload::Rgba(out))
+    Ok(RectPayload::Rgba(out.into()))
 }
 
 #[cfg(test)]

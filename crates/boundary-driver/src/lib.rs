@@ -632,7 +632,7 @@ async fn drive(
                         emit(events, SessionEvent::DesktopResize { width: size.0, height: size.1 }).await?;
                     }
                     let rect = Rect { x: 0, y: 0, width: size.0, height: size.1 };
-                    emit(events, SessionEvent::FramebufferUpdate { rects: vec![DecodedRect { rect, payload: RectPayload::Rgba(frame.rgba.clone()) }], damage: rect }).await?;
+                    emit(events, SessionEvent::FramebufferUpdate { rects: vec![DecodedRect { rect, payload: RectPayload::Rgba(frame.rgba.clone().into()) }], damage: rect }).await?;
                 }
             },
             command = commands.recv() => match command {

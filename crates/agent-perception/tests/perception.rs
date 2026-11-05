@@ -21,7 +21,7 @@ use remote_core::geometry::Rect;
 fn rgba(x: u16, y: u16, w: u16, h: u16, colour: [u8; 4]) -> DecodedRect {
     DecodedRect {
         rect: Rect::new(x, y, w, h),
-        payload: RectPayload::Rgba(colour.repeat(w as usize * h as usize)),
+        payload: RectPayload::Rgba(colour.repeat(w as usize * h as usize).into()),
     }
 }
 
@@ -589,7 +589,7 @@ fn the_content_hint_is_absent_and_every_rgba_rect_is_unknown() {
     assert!(report.copy_rect.is_live());
 
     assert_eq!(
-        ContentHint::of(&RectPayload::Rgba(vec![0; 16])),
+        ContentHint::of(&RectPayload::Rgba(vec![0; 16].into())),
         ContentHint::Unknown
     );
 
@@ -630,7 +630,7 @@ fn desktop() -> Vec<u8> {
 fn whole_screen(frame: Vec<u8>) -> DecodedRect {
     DecodedRect {
         rect: Rect::new(0, 0, 1280, 720),
-        payload: RectPayload::Rgba(frame),
+        payload: RectPayload::Rgba(frame.into()),
     }
 }
 

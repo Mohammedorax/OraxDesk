@@ -43,7 +43,8 @@ use vnc_core::{
 
 fn payload_bytes(p: &RectPayload) -> usize {
     match p {
-        RectPayload::Rgba(v) | RectPayload::Jpeg(v) => v.len(),
+        RectPayload::Rgba(v) => v.len(),
+        RectPayload::Jpeg(v) => v.len(),
         RectPayload::H264 { data, .. } => data.len(),
         RectPayload::CopyRect { .. } => 0,
     }

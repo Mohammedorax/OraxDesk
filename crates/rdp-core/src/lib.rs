@@ -82,8 +82,6 @@
 //!   progressive rectangle is refused by name because `rdp-codecs` has no
 //!   progressive decoder in a default build.
 //! * Audio, display control and file clipboard transfer.
-//! * `remote_core::reconnect::supervise` and its `ConnectOnce` trait do not
-//!   exist, so a failed attempt reports and stops rather than retrying.
 //!
 //! ## Rules
 //!

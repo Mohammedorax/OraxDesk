@@ -35,6 +35,16 @@ const AGENT_OPEN_CLAIM_WINDOW: Duration = Duration::from_secs(5);
 /// nothing a status row says can open a dialog.
 pub const EXEC_CONSENT_EVENT: &str = "agent://exec-consent";
 
+/// App-wide event carrying one command waiting for a person's yes.
+///
+/// Only the per-command mode (`ExecConsent::AskEveryCommand`) fires it. The
+/// payload is the token the answer must echo back, plus the command, its
+/// working directory and the machine, so the dialog shows exactly what would
+/// run rather than a summary of it. A dedicated event like
+/// [`EXEC_CONSENT_EVENT`], because a status stream must never be able to open
+/// a dialog that approves a command.
+pub const EXEC_REQUEST_EVENT: &str = "agent://exec-request";
+
 /// App-wide event asking a person whether an agent may open one machine.
 ///
 /// A dedicated event, like [`EXEC_CONSENT_EVENT`], and carrying the machine
@@ -58,6 +68,8 @@ fn ctx_for(app: &AppHandle, state: &AppState) -> Arc<agent::server::Ctx> {
         ask: consent_asker(app),
         host_access: state.agent_host_access.clone(),
         ask_host: host_asker(app),
+        ask_exec: exec_asker(app),
+        exec_approvals: state.agent_exec_approvals.clone(),
     })
 }
 
@@ -90,6 +102,28 @@ fn host_asker(app: &AppHandle) -> Arc<dyn Fn(agent::server::HostAsk) + Send + Sy
         let _ = app.emit(
             HOST_CONSENT_EVENT,
             serde_json::json!({ "address": ask.address, "name": ask.name }),
+        );
+    })
+}
+
+/// How the socket puts one command in front of a person, for the per-command
+/// approval mode.
+///
+/// The payload is the request itself: token, command, working directory and
+/// the machine. The answer comes back through [`answer_agent_exec_request`],
+/// which settles the exact question the person was shown.
+fn exec_asker(app: &AppHandle) -> Arc<dyn Fn(agent::server::ExecAsk) + Send + Sync> {
+    let app = app.clone();
+    Arc::new(move |ask| {
+        let _ = app.emit(
+            EXEC_REQUEST_EVENT,
+            serde_json::json!({
+                "token": ask.token,
+                "command": ask.command,
+                "cwd": ask.cwd,
+                "sessionId": ask.session_id,
+                "address": ask.address,
+            }),
         );
     })
 }
@@ -527,6 +561,27 @@ pub async fn agent_set_host_access(
     *state.agent_host_access.lock() = next;
     tracing::info!(address = %address, verdict = verdict.as_str(), "machine access answered");
     Ok(())
+}
+
+/// Answer the one open command approval question for its token.
+///
+/// Only the per-command mode asks, and only for a request this shell is still
+/// holding: an unknown token is an error rather than a shrug, because a person
+/// who pressed allow on an expired dialog should be told it was too late
+/// instead of believing a command ran. The allow flag travels unchanged, and
+/// the socket reads it as the whole answer.
+#[tauri::command]
+pub fn answer_agent_exec_request(
+    state: State<'_, AppState>,
+    token: u64,
+    allow: bool,
+) -> Result<(), String> {
+    if state.agent_exec_approvals.answer(token, allow) {
+        tracing::info!(token, allow, "a person answered a per-command approval");
+        Ok(())
+    } else {
+        Err("this command approval is no longer open: it was already answered or nobody answered in time, and nothing ran".to_string())
+    }
 }
 
 /// Register the bundled `dvv` with Claude Code, for the person pressing the

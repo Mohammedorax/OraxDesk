@@ -1275,10 +1275,10 @@ async fn an_egfx_frame_is_decoded_and_emitted_at_its_mapped_origin() {
     };
     assert_eq!(pixels.len(), 2 * 4, "exactly this rectangle's pixels");
     assert_eq!(
-        pixels.as_slice(),
+        pixels.as_ref(),
         // The wire is B, G, R, X and the payload is R, G, B, A: red then
         // blue, opaque, because the surface is XRGB.
-        &[0xff, 0x00, 0x00, 0xff, 0x00, 0x00, 0xff, 0xff]
+        &[0xff, 0x00, 0x00, 0xff, 0x00, 0x00, 0xff, 0xff][..]
     );
 
     // The handshake that got us here, as the server saw it.
@@ -1351,6 +1351,39 @@ async fn a_malformed_egfx_message_after_decompression_is_reported_and_names_zgfx
 // ---------------------------------------------------------------------------
 // The clipboard (MS-RDPECLIP)
 // ---------------------------------------------------------------------------
+
+/// The whole point of the channel isolation: a clipboard PDU whose header
+/// declares more bytes than it carries must degrade that channel and nothing
+/// else. Before the isolation, one malformed message ended the session while
+/// the desktop behind it was still fine, for a paste that would never have
+/// worked anyway.
+#[tokio::test]
+async fn a_malformed_clipboard_pdu_isolates_its_channel_and_keeps_the_session() {
+    let (_, events, outcome) = run_session_steps(
+        channel_config(SessionBehaviour::ServeMalformedClipboard),
+        vec![Step::after(
+            is_framebuffer_update,
+            vec![ClientCommand::Disconnect],
+        )],
+    )
+    .await;
+
+    assert_eq!(
+        outcome.expect("the session survives a malformed clipboard pdu"),
+        RunOutcome::UserDisconnect
+    );
+    assert!(
+        events.iter().any(is_framebuffer_update),
+        "the graphics path is untouched by a clipboard fault: {events:?}"
+    );
+    assert!(
+        !events.iter().any(|e| matches!(
+            e,
+            SessionEvent::ClipboardText(_) | SessionEvent::ClipboardNotify { .. }
+        )),
+        "nothing came out of the lying header: {events:?}"
+    );
+}
 
 /// Both directions in one session: the server offers text, the client raises
 /// a notify and pulls the text, which reaches the shell with its line endings

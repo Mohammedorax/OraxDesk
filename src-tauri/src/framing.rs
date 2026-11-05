@@ -152,7 +152,7 @@ pub fn decode_jpeg_rects(rects: Vec<DecodedRect>) -> Vec<DecodedRect> {
                     {
                         DecodedRect {
                             rect: r.rect,
-                            payload: RectPayload::Rgba(rgba),
+                            payload: RectPayload::Rgba(rgba.into()),
                         }
                     }
                     Ok((w, h, _)) => {
@@ -353,7 +353,7 @@ mod tests {
     fn raw(x: u16, y: u16, w: u16, h: u16) -> DecodedRect {
         DecodedRect {
             rect: Rect::new(x, y, w, h),
-            payload: RectPayload::Rgba(vec![0u8; w as usize * h as usize * 4]),
+            payload: RectPayload::Rgba(vec![0u8; w as usize * h as usize * 4].into()),
         }
     }
 
@@ -408,7 +408,7 @@ mod tests {
         let rects = vec![
             DecodedRect {
                 rect: Rect::new(1, 2, 2, 1),
-                payload: RectPayload::Rgba(vec![0xAA; 8]),
+                payload: RectPayload::Rgba(vec![0xAA; 8].into()),
             },
             DecodedRect {
                 rect: Rect::new(10, 20, 30, 40),

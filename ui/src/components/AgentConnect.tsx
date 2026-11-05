@@ -57,6 +57,7 @@ import {
 } from "../lib/agentSetup";
 import {
   AGENT_EXEC_CONSENT_ALLOWED,
+  AGENT_EXEC_CONSENT_ASK,
   AGENT_EXEC_CONSENT_DENIED,
   AGENT_EXEC_CONSENT_KEY,
   AGENT_HOST_ACCESS_COMMAND,
@@ -523,7 +524,7 @@ function CommandConsent(): ReactNode {
     };
   }, []);
 
-  const decide = useCallback((next: "allowed" | "denied"): void => {
+  const decide = useCallback((next: "allowed" | "denied" | "ask"): void => {
     // Shown at once, because the write is what the person asked for and the
     // shell has no event to echo it back. The next `limb.exec` reads the cell.
     setConsent(next);
@@ -535,7 +536,9 @@ function CommandConsent(): ReactNode {
       ? t("agent.execConsentAllowed")
       : consent === "denied"
         ? t("agent.execConsentDenied")
-        : t("agent.execConsentUnasked");
+        : consent === "ask"
+          ? t("agent.execConsentAsk")
+          : t("agent.execConsentUnasked");
 
   return (
     <section className="rounded-lg border border-subtle p-4">
@@ -547,7 +550,7 @@ function CommandConsent(): ReactNode {
         <span
           className={classNames(
             "shrink-0 rounded-full px-2.5 py-0.5 text-2xs font-medium",
-            consent === "allowed"
+            consent === "allowed" || consent === "ask"
               ? "bg-success-subtle text-success"
               : consent === "denied"
                 ? "bg-warning-subtle text-warning"
@@ -568,6 +571,17 @@ function CommandConsent(): ReactNode {
           onClick={() => decide(AGENT_EXEC_CONSENT_ALLOWED)}
         >
           {t("agent.execAskAllow")}
+        </button>
+        <button
+          type="button"
+          disabled={consent === "ask"}
+          className={classNames(
+            "btn-secondary",
+            consent === "ask" && "cursor-default opacity-60",
+          )}
+          onClick={() => decide(AGENT_EXEC_CONSENT_ASK)}
+        >
+          {t("agent.execConsentAsk")}
         </button>
         <button
           type="button"

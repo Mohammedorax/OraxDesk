@@ -735,10 +735,16 @@ const ar = {
     "يعمل العرض والتحكم بدون هذه الموافقة. الأوامر وحدها تتوقف حتى تسمح، وتقدر تغيّر القرار في أي وقت.",
   "agent.execConsentAllowed": "مسموح",
   "agent.execConsentDenied": "ممنوع",
+  "agent.execConsentAsk": "اسأل عند كل أمر",
   "agent.execConsentUnasked": "لم يُسأل بعد",
   "agent.execAskTitle": "هل تسمح للوكيل بتشغيل الأوامر؟",
   "agent.execAskBody":
     "طلب وكيل تشغيل أمر على إحدى أجهزتك. الأمر يُنفَّذ على الجهاز البعيد بجلسة OraxDesk المفتوحة، لا على هذا الجهاز. العرض والتحكم يعملان بدون هذه الموافقة، وتقدر تغيّر القرار في أي وقت من لوحة الوكلاء.",
+  "agent.execCommandAskTitle": "هل تشغّل هذا الأمر؟",
+  "agent.execCommandAskBody":
+    "طلب الوكيل تشغيل الأمر التالي على جهازك البعيد. ما يبدأ شيء حتى تضغط السماح لهذا الطلب وحده، والأمر التالي سيُسأل عنه من جديد.",
+  "agent.execCommandAskWhere": "مجلد العمل",
+  "agent.execCommandAskTarget": "الجهاز",
   "agent.execAskAllow": "السماح بتشغيل الأوامر",
   "agent.execAskDeny": "ليس الآن",
   "agent.execAskDeniedNote":
@@ -2374,10 +2380,16 @@ const en: Record<keyof typeof ar, string> = {
     "Viewing and control work without this permission. Commands alone stop until you allow them, and you can change the decision at any time.",
   "agent.execConsentAllowed": "Allowed",
   "agent.execConsentDenied": "Denied",
+  "agent.execConsentAsk": "Ask every command",
   "agent.execConsentUnasked": "Not asked yet",
   "agent.execAskTitle": "Allow the agent to run commands?",
   "agent.execAskBody":
     "An agent asked to run a command on one of your machines. The command runs on the remote machine through your open OraxDesk session, not on this computer. Viewing and control work without this permission, and you can change the decision at any time from the AI Agents panel.",
+  "agent.execCommandAskTitle": "Run this command?",
+  "agent.execCommandAskBody":
+    "An agent asked to run the command below on your remote machine. Nothing starts until you allow this one request, and the next command will be asked about afresh.",
+  "agent.execCommandAskWhere": "Working directory",
+  "agent.execCommandAskTarget": "Machine",
   "agent.execAskAllow": "Allow command execution",
   "agent.execAskDeny": "Not now",
   "agent.execAskDeniedNote":

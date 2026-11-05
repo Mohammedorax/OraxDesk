@@ -72,7 +72,7 @@ async fn decode_tiles<R: AsyncRead + Unpin>(
         }
         ty += th;
     }
-    Ok(RectPayload::Rgba(out))
+    Ok(RectPayload::Rgba(out.into()))
 }
 
 /// Per-rect scratch buffers, grown once and then reused for every tile.
