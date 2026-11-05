@@ -46,7 +46,7 @@ allowed to know about all of it.
 | Protocol | `rdp-auth` | CredSSP, SPNEGO and NTLMv2 as pure state machines. Fuzzed. |
 | Protocol | `ssh-core` | A remote shell that behaves: PTY and terminal state, a supervisor that reconnects, multiplexer attach (tmux/screen/zellij), tunnels, SFTP session. |
 | Protocol | `ssh-transport` | The SSH carrier: dial, host-key verification against pinned TOFU entries, agent authentication, keepalive, tunnelling. |
-| Transport | `vnc-transport` | Byte streams: TCP with a staggered dual-stack race (Happy Eyeballs), TLS for VeNCrypt/RA2, TLS pinning — and the SOCKS5 handshake the transport layer is gaining. |
+| Transport | `vnc-transport` | Byte streams: TCP with a staggered dual-stack race (Happy Eyeballs), TLS for VeNCrypt/RA2, TLS pinning, and a SOCKS5 `CONNECT` client as a `StreamConnector` (the proxy resolves the name, never this machine). |
 | Transport | `local-pipe` | The Windows named pipe and its Unix socket counterpart for the agent plane, created so only its creator can open it. |
 | Storage | `vnc-store` | SQLite: host profiles, groups, tags, history, settings, thumbnails. |
 | Discovery | `vnc-discovery` | mDNS/DNS-SD browsing, a polite active subnet scan with RFB banner fingerprinting, name resolution over mDNS/LLMNR/NetBIOS/MS-RPC, Wake on LAN. |

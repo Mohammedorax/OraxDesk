@@ -19,6 +19,9 @@
 use std::pin::Pin;
 use tokio::io::{AsyncRead, AsyncWrite};
 
+pub mod socks5;
+#[cfg(test)]
+mod socks5_tests;
 pub mod tcp;
 pub mod tls;
 #[cfg(feature = "legacy-tls")]
