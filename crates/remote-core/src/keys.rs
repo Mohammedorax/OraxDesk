@@ -20,7 +20,7 @@
 /// Both, because `Press` is for physical chords: `sendKeyCombo` used to send
 /// keycode 0 for every key, so Ctrl+Alt+Del from the toolbar degraded to a
 /// keysym only KeyEvent and did nothing at all on a server that only
-/// understands scancodes (`ui/src/render/keysyms.ts:170`). A chord genuinely
+/// understands scancodes (`ui/src/render/keysyms.ts:246`). A chord genuinely
 /// is a set of key positions, so it carries positions.
 ///
 /// That is the whole difference between [`IntentKind::Press`] and
@@ -39,13 +39,13 @@ pub struct NamedKey {
     /// XT (PC set 1) scancode for the QEMU Extended Key Event. `0` when the
     /// tree has none, which makes the session fall back to the plain keysym
     /// only KeyEvent, exactly as `KeyIds` documents
-    /// (`ui/src/render/keysyms.ts:121`).
+    /// (`ui/src/render/keysyms.ts:123`).
     ///
     /// The extended (grey) keys carry the `0xE0` prefix as BIT 7 of the single
     /// byte rather than as a second byte, which is why ArrowRight is `0xcd`
     /// and not `0xe04d`. Sending two bytes in a one byte field made a server
     /// that masks it see `0x4d`, which is Numpad4. The tree records that bug
-    /// at `ui/src/render/keysyms.ts:99` and this table is copied from the
+    /// at `ui/src/render/keysyms.ts:101` and this table is copied from the
     /// fixed version.
     pub scancode: u32,
 }
@@ -663,3 +663,172 @@ pub static NAMED_KEYS: &[NamedKey] = &[
         scancode: 0x49,
     },
 ];
+
+/// The classical X11 Arabic keysyms, as `(codepoint, keysym)`.
+///
+/// X11R6.9 added a Unicode keysym form, `0x01000000 + codepoint`, and every
+/// current server understands it. The Arabic block below is older than that:
+/// it is the set from X11R4, and it is the ONLY Arabic a server that predates
+/// the Unicode form recognises. `x11vnc` without XKB, QEMU's built-in VNC,
+/// RealVNC 4.x and a TigerVNC with a plain X11 map all fall in that group, and
+/// they ignore a Unicode keysym silently: the keystroke arrives, is dropped,
+/// and nothing anywhere reports it.
+///
+/// So the wire vocabulary for an Arabic character is the classical keysym, and
+/// this table is the single copy of it. Two directions, because the same
+/// vocabulary comes back in: the webview sends `0x05d6` for `ض` (`ص` is
+/// `0x05d5`), and the RDP core, which carries the character in a Unicode
+/// Fast-Path event rather than a keysym, has to turn that back into the
+/// codepoint before it can type it.
+///
+/// The values are `keysymdef.h`'s (`XK_Arabic_*`), cross-checked against
+/// noVNC's generated `keysymdef.js`. Both columns ascend, which is what lets
+/// the two lookups below binary-search the same array; a test pins that rather
+/// than leaving it a comment.
+///
+/// Deliberately absent: the newer Hebrew-script additions at `0x05f3` and
+/// `0x05f4` (gershayim and geresh), so a range check on this block cannot
+/// claim them.
+pub const ARABIC_KEYSYMS: [(u32, u32); 48] = [
+    (0x060c, 0x05ac), // ARABIC COMMA                  XK_Arabic_comma
+    (0x061b, 0x05bb), // ARABIC SEMICOLON              XK_Arabic_semicolon
+    (0x061f, 0x05bf), // ARABIC QUESTION MARK          XK_Arabic_question_mark
+    (0x0621, 0x05c1), // ARABIC LETTER HAMZA           XK_Arabic_hamza
+    (0x0622, 0x05c2), // ALEF WITH MADDA ABOVE         XK_Arabic_maddaonalef
+    (0x0623, 0x05c3), // ALEF WITH HAMZA ABOVE         XK_Arabic_hamzaonalef
+    (0x0624, 0x05c4), // WAW WITH HAMZA ABOVE          XK_Arabic_hamzaonwaw
+    (0x0625, 0x05c5), // ALEF WITH HAMZA BELOW         XK_Arabic_hamzaunderalef
+    (0x0626, 0x05c6), // YEH WITH HAMZA ABOVE          XK_Arabic_hamzaonyeh
+    (0x0627, 0x05c7), // ALEF                          XK_Arabic_alef
+    (0x0628, 0x05c8), // BEH                           XK_Arabic_beh
+    (0x0629, 0x05c9), // TEH MARBUTA                   XK_Arabic_tehmarbuta
+    (0x062a, 0x05ca), // TEH                           XK_Arabic_teh
+    (0x062b, 0x05cb), // THEH                          XK_Arabic_theh
+    (0x062c, 0x05cc), // JEEM                          XK_Arabic_jeem
+    (0x062d, 0x05cd), // HAH                           XK_Arabic_hah
+    (0x062e, 0x05ce), // KHAH                          XK_Arabic_khah
+    (0x062f, 0x05cf), // DAL                           XK_Arabic_dal
+    (0x0630, 0x05d0), // THAL                          XK_Arabic_thal
+    (0x0631, 0x05d1), // RA                            XK_Arabic_ra
+    (0x0632, 0x05d2), // ZAIN                          XK_Arabic_zain
+    (0x0633, 0x05d3), // SEEN                          XK_Arabic_seen
+    (0x0634, 0x05d4), // SHEEN                         XK_Arabic_sheen
+    (0x0635, 0x05d5), // SAD                           XK_Arabic_sad
+    (0x0636, 0x05d6), // DAD                           XK_Arabic_dad
+    (0x0637, 0x05d7), // TAH                           XK_Arabic_tah
+    (0x0638, 0x05d8), // ZAH                           XK_Arabic_zah
+    (0x0639, 0x05d9), // AIN                           XK_Arabic_ain
+    (0x063a, 0x05da), // GHAIN                         XK_Arabic_ghain
+    (0x0640, 0x05e0), // TATWEEL                       XK_Arabic_tatweel
+    (0x0641, 0x05e1), // FEH                           XK_Arabic_feh
+    (0x0642, 0x05e2), // QAF                           XK_Arabic_qaf
+    (0x0643, 0x05e3), // KAF                           XK_Arabic_kaf
+    (0x0644, 0x05e4), // LAM                           XK_Arabic_lam
+    (0x0645, 0x05e5), // MEEM                          XK_Arabic_meem
+    (0x0646, 0x05e6), // NOON                          XK_Arabic_noon
+    (0x0647, 0x05e7), // HEH                           XK_Arabic_ha
+    (0x0648, 0x05e8), // WAW                           XK_Arabic_waw
+    (0x0649, 0x05e9), // ALEF MAKSURA                  XK_Arabic_alefmaksura
+    (0x064a, 0x05ea), // YEH                           XK_Arabic_yeh
+    (0x064b, 0x05eb), // FATHATAN                      XK_Arabic_fathatan
+    (0x064c, 0x05ec), // DAMMATAN                      XK_Arabic_dammatan
+    (0x064d, 0x05ed), // KASRATAN                      XK_Arabic_kasratan
+    (0x064e, 0x05ee), // FATHA                         XK_Arabic_fatha
+    (0x064f, 0x05ef), // DAMMA                         XK_Arabic_damma
+    (0x0650, 0x05f0), // KASRA                         XK_Arabic_kasra
+    (0x0651, 0x05f1), // SHADDA                        XK_Arabic_shadda
+    (0x0652, 0x05f2), // SUKUN                         XK_Arabic_sukun
+];
+
+/// The classical keysym one Arabic character types, or `None` for anything
+/// outside the table.
+///
+/// Only the characters X11R4 named are here. A codepoint in the Arabic block
+/// that has no classical keysym (the extended letters, the presentation
+/// forms, the Arabic-Indic digits) has to travel as the Unicode form, which is
+/// what a caller does with the `None`.
+#[must_use]
+pub fn arabic_keysym_for_char(c: char) -> Option<u32> {
+    let cp = c as u32;
+    ARABIC_KEYSYMS
+        .binary_search_by_key(&cp, |&(codepoint, _)| codepoint)
+        .ok()
+        .map(|at| ARABIC_KEYSYMS[at].1)
+}
+
+/// The character a classical Arabic keysym names, or `None` when the keysym is
+/// not one of them.
+///
+/// This is the direction the RDP core needs: its Unicode Fast-Path event takes
+/// a character, and an Arabic keystroke arrives as a keysym. It answers `None`
+/// rather than a replacement character for an unknown keysym, because typing
+/// `?` over somebody's text is worse than typing nothing.
+#[must_use]
+pub fn char_for_arabic_keysym(keysym: u32) -> Option<char> {
+    ARABIC_KEYSYMS
+        .binary_search_by_key(&keysym, |&(_, keysym)| keysym)
+        .ok()
+        .and_then(|at| char::from_u32(ARABIC_KEYSYMS[at].0))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Both lookups binary-search this array, and binary search on an
+    /// unsorted array is a wrong answer with no symptom. Ascending, strictly,
+    /// on both columns.
+    #[test]
+    fn the_arabic_table_ascends_on_both_columns() {
+        for pair in ARABIC_KEYSYMS.windows(2) {
+            assert!(
+                pair[0].0 < pair[1].0,
+                "codepoints must ascend: {:#06x} then {:#06x}",
+                pair[0].0,
+                pair[1].0
+            );
+            assert!(
+                pair[0].1 < pair[1].1,
+                "keysyms must ascend: {:#06x} then {:#06x}",
+                pair[0].1,
+                pair[1].1
+            );
+        }
+    }
+
+    /// Every row reads back as itself, which is the property the RDP core
+    /// depends on: it receives the keysym the webview minted and must recover
+    /// the exact character.
+    #[test]
+    fn every_arabic_keysym_round_trips() {
+        for &(cp, keysym) in &ARABIC_KEYSYMS {
+            let ch = char::from_u32(cp).expect("a table of valid codepoints");
+            assert_eq!(arabic_keysym_for_char(ch), Some(keysym), "U+{cp:04X}");
+            assert_eq!(char_for_arabic_keysym(keysym), Some(ch), "{keysym:#06x}");
+        }
+    }
+
+    /// The three the plan and the protocol notes name by hand, so a
+    /// transposition in the table cannot pass on round-tripping alone.
+    #[test]
+    fn the_named_arabic_characters_are_the_documented_keysyms() {
+        assert_eq!(arabic_keysym_for_char('،'), Some(0x05ac));
+        assert_eq!(arabic_keysym_for_char('؛'), Some(0x05bb));
+        assert_eq!(arabic_keysym_for_char('؟'), Some(0x05bf));
+        assert_eq!(arabic_keysym_for_char('ض'), Some(0x05d6));
+        assert_eq!(arabic_keysym_for_char('ا'), Some(0x05c7));
+        assert_eq!(arabic_keysym_for_char('ب'), Some(0x05c8));
+    }
+
+    /// A character with no classical keysym is `None`, not a neighbouring
+    /// entry: the caller's fallback is the Unicode form, and a wrong keysym
+    /// there would type a different letter.
+    #[test]
+    fn characters_outside_the_classical_block_are_none() {
+        assert_eq!(arabic_keysym_for_char('ک'), None); // U+06A9, extended
+        assert_eq!(arabic_keysym_for_char('١'), None); // U+0661, Arabic-Indic
+        assert_eq!(arabic_keysym_for_char('a'), None);
+        assert_eq!(char_for_arabic_keysym(0x05f3), None); // Hebrew geresh
+        assert_eq!(char_for_arabic_keysym(0x05ab), None);
+    }
+}

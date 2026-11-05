@@ -1,9 +1,11 @@
 /**
  * KeyboardEvent -> X11 keysym + X11 (evdev+8) keycode mapping.
  *
- * keysym: for printable characters we derive from `event.key` (Unicode rule:
- * codepoint < 0x100 maps directly; otherwise 0x01000000 + codepoint). Special
- * keys come from the table below, keyed by `event.key` or `event.code`.
+ * keysym: for printable characters we derive from `event.key` (X11 rule:
+ * codepoint < 0x100 maps directly; the Arabic characters X11R4 named use their
+ * classical keysym, because servers that predate the Unicode form only know
+ * that block; otherwise 0x01000000 + codepoint). Special keys come from the
+ * table below, keyed by `event.key` or `event.code`.
  */
 
 const KEY_TO_KEYSYM: Record<string, number> = {
@@ -128,14 +130,84 @@ export interface KeyIds {
 }
 
 /**
- * X11 keysyms equal the Unicode code point below 0x100 (Latin-1); above that
- * the "Unicode keysym" convention is 0x01000000 + the code point. Shared by
- * the plain single-character branch below and by SessionInput's composed-
- * character paths (AltGr/Option, dead-key composition), which need the exact
- * same fallback for characters that never come through as a KeyboardEvent.
+ * Classical X11 keysym table for Arabic characters (Unicode U+060C–U+0652).
+ *
+ * Older VNC servers — x11vnc without XKB, TigerVNC with a plain X11 XKB map,
+ * QEMU's built-in VNC, and RealVNC 4.x — do not implement the Unicode-keysym
+ * range (0x01000000 + codepoint) defined in X11R6.9. They only recognise the
+ * classical Arabic block (0x05A0–0x05FA) from the original X11R4 keysym set.
+ * Without this table those servers silently ignore every Arabic keystroke.
+ *
+ * Sources: X11/keysymdef.h (X.org), RFC keysym §3, TigerVNC source tree.
+ *
+ * Usage: `ARABIC_UNICODE_TO_KEYSYM[cp]` → classical keysym, or `undefined`
+ * if the codepoint maps to the Unicode form (0x01000000 + cp) instead.
+ */
+const ARABIC_UNICODE_TO_KEYSYM: Readonly<Record<number, number>> = {
+  0x060c: 0x05ac, // ARABIC COMMA
+  0x061b: 0x05bb, // ARABIC SEMICOLON
+  0x061f: 0x05bf, // ARABIC QUESTION MARK
+  0x0621: 0x05c1, // ARABIC LETTER HAMZA
+  0x0622: 0x05c2, // ARABIC LETTER ALEF WITH MADDA ABOVE
+  0x0623: 0x05c3, // ARABIC LETTER ALEF WITH HAMZA ABOVE
+  0x0624: 0x05c4, // ARABIC LETTER WAW WITH HAMZA ABOVE
+  0x0625: 0x05c5, // ARABIC LETTER ALEF WITH HAMZA BELOW
+  0x0626: 0x05c6, // ARABIC LETTER YEH WITH HAMZA ABOVE
+  0x0627: 0x05c7, // ARABIC LETTER ALEF
+  0x0628: 0x05c8, // ARABIC LETTER BA
+  0x0629: 0x05c9, // ARABIC LETTER TEH MARBUTA
+  0x062a: 0x05ca, // ARABIC LETTER TEH
+  0x062b: 0x05cb, // ARABIC LETTER THEH
+  0x062c: 0x05cc, // ARABIC LETTER JEEM
+  0x062d: 0x05cd, // ARABIC LETTER HAH
+  0x062e: 0x05ce, // ARABIC LETTER KHAH
+  0x062f: 0x05cf, // ARABIC LETTER DAL
+  0x0630: 0x05d0, // ARABIC LETTER THAL
+  0x0631: 0x05d1, // ARABIC LETTER RA
+  0x0632: 0x05d2, // ARABIC LETTER ZAIN
+  0x0633: 0x05d3, // ARABIC LETTER SEEN
+  0x0634: 0x05d4, // ARABIC LETTER SHEEN
+  0x0635: 0x05d5, // ARABIC LETTER SAD
+  0x0636: 0x05d6, // ARABIC LETTER DAD
+  0x0637: 0x05d7, // ARABIC LETTER TAH
+  0x0638: 0x05d8, // ARABIC LETTER ZAH
+  0x0639: 0x05d9, // ARABIC LETTER AIN
+  0x063a: 0x05da, // ARABIC LETTER GHAIN
+  0x0640: 0x05e0, // ARABIC TATWEEL
+  0x0641: 0x05e1, // ARABIC LETTER FA
+  0x0642: 0x05e2, // ARABIC LETTER QAF
+  0x0643: 0x05e3, // ARABIC LETTER KAF
+  0x0644: 0x05e4, // ARABIC LETTER LAM
+  0x0645: 0x05e5, // ARABIC LETTER MEEM
+  0x0646: 0x05e6, // ARABIC LETTER NOON
+  0x0647: 0x05e7, // ARABIC LETTER HEH
+  0x0648: 0x05e8, // ARABIC LETTER WAW
+  0x0649: 0x05e9, // ARABIC LETTER ALEF MAKSURA
+  0x064a: 0x05ea, // ARABIC LETTER YEH
+  0x064b: 0x05eb, // ARABIC FATHATAN
+  0x064c: 0x05ec, // ARABIC DAMMATAN
+  0x064d: 0x05ed, // ARABIC KASRATAN
+  0x064e: 0x05ee, // ARABIC FATHA
+  0x064f: 0x05ef, // ARABIC DAMMA
+  0x0650: 0x05f0, // ARABIC KASRA
+  0x0651: 0x05f1, // ARABIC SHADDA
+  0x0652: 0x05f2, // ARABIC SUKUN
+};
+
+/**
+ * Map a Unicode code point to its X11 keysym for VNC.
+ *
+ * Returns the classical Arabic keysym (0x05xx) when one exists, so that older
+ * VNC servers that pre-date the Unicode-keysym extension receive a keysym they
+ * recognise. Falls back to the Unicode form (0x01000000 + cp) for every other
+ * codepoint above Latin-1 (cp ≥ 0x100). Below 0x100 the codepoint IS the
+ * keysym (Latin-1 / RFB §6.4.1).
  */
 export function codePointToKeysym(cp: number): number {
-  return cp < 0x100 ? cp : 0x01000000 + cp;
+  if (cp < 0x100) return cp;
+  const classical = ARABIC_UNICODE_TO_KEYSYM[cp];
+  if (classical !== undefined) return classical;
+  return 0x01000000 + cp;
 }
 
 export function keyEventToIds(e: Pick<KeyboardEvent, "key" | "code">): KeyIds | null {

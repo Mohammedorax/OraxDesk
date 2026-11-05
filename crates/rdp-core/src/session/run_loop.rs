@@ -622,8 +622,22 @@ impl<R: AsyncRead + Unpin> RunLoop<R> {
                     if self.vc.handles(channel_id) {
                         let ctx = self.channel_ctx();
                         let mut out = Outbox::new();
-                        self.vc
-                            .deliver(channel_id, payload.as_slice(), ctx, &mut out)?;
+                        match self.vc.deliver(channel_id, payload.as_slice(), ctx, &mut out) {
+                            Ok(()) => {}
+                            Err(e) => {
+                                if !self.vc.disable_clipboard(channel_id) {
+                                    return Err(e);
+                                }
+                                tracing::warn!(
+                                    channel_id,
+                                    error = %e,
+                                    "clipboard channel failed and was disabled"
+                                );
+                                return Ok(SessionSignal::Ignored(
+                                    "malformed virtual channel PDU; channel isolated",
+                                ));
+                            }
+                        }
                         return Ok(SessionSignal::Channel {
                             events: out.events,
                             frames: out.frames,
@@ -1591,11 +1605,13 @@ mod tests {
     ///
     /// A channel id we never joined means the server is confused about the
     /// session and is not something to carry on through. A joined channel
-    /// with a handler reaches [`crate::channels`], which is what a virtual
-    /// channel PDU is now for. A joined channel with no handler, which is the
-    /// message channel and the user channel, is still ignored with a reason.
+    /// with a handler reaches [`crate::channels`]. A malformed clipboard PDU
+    /// disables the clipboard, while a dynamic-channel failure remains fatal.
+    /// A joined channel with no handler,
+    /// which is the message channel and the user channel, is ignored with a
+    /// reason.
     #[test]
-    fn an_unjoined_channel_ends_the_session_and_a_joined_one_reaches_its_handler() {
+    fn an_unjoined_channel_ends_the_session_and_a_malformed_one_only_isolates_its_channel() {
         use rdp_pdu::io::Encode as _;
         use rdp_pdu::vc::static_vc::{channel_flags, ChannelPduHeader};
 
@@ -1624,9 +1640,6 @@ mod tests {
             }
         }
 
-        // `drdynvc` and `cliprdr` now go to their handlers. A chunk with no
-        // `CHANNEL_FLAG_FIRST` is refused by the reassembler, which proves
-        // the PDU reached the channel layer rather than the bin.
         let mut orphan = Vec::new();
         ChannelPduHeader {
             length: 16,
@@ -1635,17 +1648,49 @@ mod tests {
         .encode(&mut Writer::new(&mut orphan))
         .expect("encodes");
         orphan.extend_from_slice(&[0u8; 16]);
-        for id in [1004u16, 1006] {
-            let known = framed(&DomainMcsPdu::SendDataIndication {
-                initiator: 1002,
-                channel_id: id,
-                payload: Payload::new(&orphan),
-            });
-            let err = rl.dispatch(&known).expect_err("no preceding first chunk");
-            assert!(
-                err.to_string().contains("CHANNEL_FLAG_FIRST"),
-                "{id}: {err}"
-            );
+        let mut malformed_clipboard = Vec::new();
+        ChannelPduHeader {
+            length: 10,
+            flags: channel_flags::FIRST | channel_flags::LAST,
+        }
+        .encode(&mut Writer::new(&mut malformed_clipboard))
+        .expect("encodes");
+        malformed_clipboard.extend_from_slice(&[5, 0, 1, 0, 4, 0, 0, 0, 1, 2]);
+        let clipboard = framed(&DomainMcsPdu::SendDataIndication {
+            initiator: 1002,
+            channel_id: 1006,
+            payload: Payload::new(&malformed_clipboard),
+        });
+        match rl.dispatch(&clipboard).expect("clipboard failure is isolated") {
+            SessionSignal::Ignored(why) => assert!(why.contains("channel isolated")),
+            other => panic!("expected an isolation, got {other:?}"),
+        }
+
+        assert!(!rl.vc.handles(1006));
+        let graphics_channel = framed(&DomainMcsPdu::SendDataIndication {
+            initiator: 1002,
+            channel_id: 1004,
+            payload: Payload::new(&orphan),
+        });
+        assert!(rl.dispatch(&graphics_channel).is_err());
+
+        // The proof isolation is not a euphemism for a dead session: the
+        // graphics path still draws the frame that arrives afterwards.
+        let mut body = Vec::new();
+        rdp_pdu::update::slowpath::GraphicsUpdate::Bitmap(bitmap_update())
+            .encode(&mut Writer::new(&mut body))
+            .expect("encodes");
+        let share = SharePdu::data(
+            0x03ea,
+            0x0010_3ea9,
+            ShareDataPdu::Other {
+                pdu_type2: rdp_pdu::rdp::share::pdu_type2::UPDATE,
+                body: Payload::new(&body),
+            },
+        );
+        match rl.dispatch(&from_server(&share)).expect("the session is still alive") {
+            SessionSignal::Output { events, .. } => assert_eq!(events.len(), 1),
+            other => panic!("expected the frame to be decoded, got {other:?}"),
         }
     }
 

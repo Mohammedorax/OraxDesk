@@ -49,12 +49,14 @@ pub use remote_core::keys::{NamedKey, NAMED_KEYS};
 
 /// The keysym one character types.
 ///
-/// `codePointToKeysym` (`ui/src/render/keysyms.ts:137`) is the rule for
-/// everything printable: a code point below `0x100` is its own keysym, and
-/// above that the Unicode keysym convention is `0x01000000 + codepoint`. This
-/// mirrors it exactly rather than approximating it, because a second, slightly
-/// different rule for the same characters would show up as an emoji that types
-/// on one path and not the other.
+/// `codePointToKeysym` (`ui/src/render/keysyms.ts:206`) is the rule for
+/// everything printable: a code point below `0x100` is its own keysym, Arabic
+/// uses its classical X11 keysym, and everything else follows the Unicode
+/// keysym convention `0x01000000 + codepoint`. This mirrors it exactly rather
+/// than approximating it, because a second, slightly different rule for the
+/// same characters would show up as an emoji that types on one path and not
+/// the other, or an Arabic letter that types into a VNC pane and not an RDP
+/// one.
 ///
 /// Four control characters are handled first, and that is the ONE place this
 /// differs from the webview's function. The webview never reaches
@@ -77,7 +79,10 @@ pub fn keysym_for_char(c: char) -> u32 {
             if cp < 0x100 {
                 cp
             } else {
-                0x0100_0000 + cp
+                // Classical Arabic first: the RDP core turns it back into the
+                // character, and a VNC server that predates the Unicode form
+                // only knows this block.
+                remote_core::arabic_keysym_for_char(c).unwrap_or(0x0100_0000 + cp)
             }
         }
     }
@@ -92,7 +97,7 @@ pub fn keysym_for_char(c: char) -> u32 {
 /// sequence was consumed one code point at a time. `.chars()` is code points
 /// and not UTF-16 units, so an astral character is one iteration rather than a
 /// surrogate pair, which is the bug `keyEventToIds` had to fix on the webview
-/// side (`ui/src/render/keysyms.ts:147`).
+/// side (`ui/src/render/keysyms.ts:219`).
 pub fn type_keysyms(text: &str) -> impl Iterator<Item = (char, u32)> + '_ {
     text.chars().map(|c| (c, keysym_for_char(c)))
 }

@@ -4,6 +4,8 @@
 //! `TCP_NODELAY` is always set: a 40 ms Nagle delay on a mouse-move packet is
 //! immediately visible to the user.
 
+use std::collections::VecDeque;
+use std::future::Future;
 use std::net::SocketAddr;
 use std::time::Duration;
 
@@ -61,7 +63,7 @@ fn apply_keepalive(stream: &TcpStream) {
     }
 }
 
-/// Resolve `host` and connect, trying every returned address in order.
+/// Resolve `host` and race connection attempts across address families.
 ///
 /// `timeout` bounds resolution *and* each individual connect attempt.
 /// Errors distinguish refusal (server not listening, usually permanent until
@@ -72,21 +74,79 @@ pub async fn connect(host: &str, port: u16, timeout: Duration) -> Result<TcpStre
         return Err(TransportError::Resolve(host.to_string()));
     }
 
-    let mut last_err: Option<TransportError> = None;
-    for addr in addrs {
-        match connect_addr(addr, timeout).await {
-            Ok(stream) => {
-                configure(&stream);
-                tracing::debug!(%addr, "tcp connected");
-                return Ok(stream);
+    let stream = race_addresses(addrs, move |addr| connect_addr(addr, timeout)).await?;
+    configure(&stream);
+    Ok(stream)
+}
+
+const CONNECTION_ATTEMPT_DELAY: Duration = Duration::from_millis(250);
+
+fn interleave_addresses(addresses: Vec<SocketAddr>) -> VecDeque<SocketAddr> {
+    let prefer_v4 = addresses.first().is_none_or(SocketAddr::is_ipv4);
+    let (v4, v6): (Vec<_>, Vec<_>) = addresses.into_iter().partition(SocketAddr::is_ipv4);
+    let (mut first, mut second) = if prefer_v4 {
+        (VecDeque::from(v4), VecDeque::from(v6))
+    } else {
+        (VecDeque::from(v6), VecDeque::from(v4))
+    };
+    let mut ordered = VecDeque::new();
+    while !first.is_empty() || !second.is_empty() {
+        if let Some(addr) = first.pop_front() {
+            ordered.push_back(addr);
+        }
+        if let Some(addr) = second.pop_front() {
+            ordered.push_back(addr);
+        }
+    }
+    ordered
+}
+
+async fn race_addresses<T, F, Fut>(addresses: Vec<SocketAddr>, connector: F) -> Result<T>
+where
+    T: Send + 'static,
+    F: Fn(SocketAddr) -> Fut,
+    Fut: Future<Output = Result<T>> + Send + 'static,
+{
+    let mut addresses = interleave_addresses(addresses);
+    let mut attempts = tokio::task::JoinSet::new();
+    let mut last_error = None;
+    let mut saw_timeout = false;
+    let mut next_attempt = tokio::time::Instant::now();
+
+    loop {
+        if attempts.is_empty() && addresses.is_empty() {
+            return Err(if saw_timeout {
+                TransportError::Timeout
+            } else {
+                last_error.unwrap_or_else(|| TransportError::Resolve(String::new()))
+            });
+        }
+        tokio::select! {
+            _ = tokio::time::sleep_until(next_attempt), if !addresses.is_empty() => {
+                let addr = addresses.pop_front().expect("nonempty address queue");
+                let future = connector(addr);
+                attempts.spawn(async move { (addr, future.await) });
+                next_attempt = tokio::time::Instant::now() + CONNECTION_ATTEMPT_DELAY;
             }
-            Err(e) => {
-                tracing::debug!(%addr, error = %e, "tcp connect attempt failed");
-                last_err = Some(e);
+            result = attempts.join_next(), if !attempts.is_empty() => {
+                match result.expect("nonempty attempt set") {
+                    Ok((addr, Ok(stream))) => {
+                        tracing::debug!(%addr, "tcp connected");
+                        return Ok(stream);
+                    }
+                    Ok((addr, Err(error))) => {
+                        tracing::debug!(%addr, %error, "tcp connect attempt failed");
+                        saw_timeout |= matches!(error, TransportError::Timeout);
+                        last_error = Some(error);
+                    }
+                    Err(error) => {
+                        last_error = Some(TransportError::Io(std::io::Error::other(error)));
+                    }
+                }
+                next_attempt = tokio::time::Instant::now();
             }
         }
     }
-    Err(last_err.unwrap_or_else(|| TransportError::Resolve(host.to_string())))
 }
 
 /// Join a host and port into the string `lookup_host` expects.
@@ -172,6 +232,68 @@ fn configure(stream: &TcpStream) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn stalled_first_address_does_not_block_the_other_family() {
+        let addresses = vec![
+            "192.0.2.1:5900".parse().unwrap(),
+            "192.0.2.2:5900".parse().unwrap(),
+            "[::1]:5900".parse().unwrap(),
+        ];
+        let result = tokio::time::timeout(
+            Duration::from_millis(800),
+            race_addresses(addresses, |addr| async move {
+                if addr.is_ipv4() {
+                    std::future::pending::<Result<SocketAddr>>().await
+                } else {
+                    Ok(addr)
+                }
+            }),
+        )
+        .await
+        .expect("fallback must not wait for the first address")
+        .unwrap();
+        assert!(result.is_ipv6());
+    }
+
+    #[tokio::test]
+    async fn immediate_failure_starts_the_next_address_without_delay() {
+        let addresses = vec![
+            "192.0.2.1:5900".parse().unwrap(),
+            "[::1]:5900".parse().unwrap(),
+        ];
+        let result = tokio::time::timeout(
+            Duration::from_millis(200),
+            race_addresses(addresses, |addr| async move {
+                if addr.is_ipv4() {
+                    Err(TransportError::Refused(addr.to_string()))
+                } else {
+                    Ok(addr)
+                }
+            }),
+        )
+        .await
+        .expect("failure should advance immediately")
+        .unwrap();
+        assert!(result.is_ipv6());
+    }
+
+    #[tokio::test]
+    async fn a_timeout_remains_retryable_when_another_address_refuses() {
+        let addresses = vec![
+            "192.0.2.1:5900".parse().unwrap(),
+            "[::1]:5900".parse().unwrap(),
+        ];
+        let result: Result<()> = race_addresses(addresses, |addr| async move {
+            if addr.is_ipv4() {
+                Err(TransportError::Timeout)
+            } else {
+                Err(TransportError::Refused(addr.to_string()))
+            }
+        })
+        .await;
+        assert!(matches!(result, Err(TransportError::Timeout)));
+    }
 
     #[test]
     fn a_bare_ipv6_literal_is_bracketed_before_the_port_is_appended() {

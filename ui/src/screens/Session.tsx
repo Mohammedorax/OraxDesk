@@ -19,6 +19,7 @@ import {
   type SessionParams,
 } from "../hooks/useSession";
 import { useLivePreview } from "../hooks/useLivePreview";
+import { useAgentActivity } from "../state/AgentActivityContext";
 import { useT } from "../lib/i18n";
 import { SessionStatusDetails, SessionToolbar } from "../components/SessionToolbar";
 import { CertPrompt } from "../components/CertPrompt";
@@ -473,6 +474,22 @@ function SessionView({
   viewOnlyRef.current = viewOnly;
   const sessionRef = useRef(session);
   sessionRef.current = session;
+
+  // A person clicking or typing in a standalone session window (embedded=false)
+  // must immediately revoke any agent that has the lease, with no grace window.
+  // SplitView already handles the split-pane case on its onPointerDownCapture;
+  // the standalone window was missing it entirely (audit finding P0 section 3).
+  // takeWheel is a no-op when no agent holds the lease, so calling it on
+  // every pointer-down costs nothing on a human-driven session.
+  const { takeWheel } = useAgentActivity();
+  const takeWheelRef = useRef(takeWheel);
+  takeWheelRef.current = takeWheel;
+  const sessionIdForWheel = useRef(params.sessionId);
+  sessionIdForWheel.current = params.sessionId;
+  const handleContainerPointerDown = useCallback((): void => {
+    const sid = sessionIdForWheel.current;
+    if (sid) takeWheelRef.current(sid);
+  }, []);
 
   // ------------------------------------------------- renderer + input setup
 
@@ -2020,7 +2037,7 @@ function SessionView({
     st.state === "authenticating" || st.state === "negotiating" || st.state === "idle";
 
   return (
-    <div ref={containerRef} className="relative h-full w-full overflow-hidden bg-canvas">
+    <div ref={containerRef} className="relative h-full w-full overflow-hidden bg-canvas" onPointerDownCapture={handleContainerPointerDown}>
       <canvas
         ref={canvasRef}
         className={classNames(

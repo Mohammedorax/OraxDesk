@@ -195,6 +195,18 @@ impl StaticChannels {
         self.entries.iter().find(|e| e.id == id).map(|e| e.name)
     }
 
+    /// Disable the clipboard handler after a channel failure.
+    pub(crate) fn disable_clipboard(&mut self, id: u16) -> bool {
+        if let Some(index) = self.entries.iter().position(|entry| {
+            entry.id == id && matches!(entry.handler, Handler::Cliprdr(_))
+        }) {
+            self.entries.remove(index);
+            true
+        } else {
+            false
+        }
+    }
+
     /// Drop every partial reassembly on every channel.
     ///
     /// Called when the share is deactivated. A fragment that belongs to the

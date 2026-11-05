@@ -178,6 +178,29 @@ impl Input {
         if self.view_only {
             return Vec::new();
         }
+        // A keysym can name a character in three ways the physical scancode
+        // cannot describe: the Unicode form (0x01000000 + codepoint), and the
+        // classical Arabic block, which is what the webview sends so that a
+        // VNC server without the Unicode form still understands it. Both go
+        // through the Unicode Fast Path when not used as Ctrl shortcuts:
+        // sending the scancode would type the Latin key the browser
+        // happened to map (e.g. 'q' for Arabic 'ض', since 'ض' sits on KeyQ).
+        // (PRDRDP/05 §2.6; X11 keysymdef.h)
+        let is_character_keysym = keysym >= 0x0100_0000 || (0x05ac..=0x05f2).contains(&keysym);
+        let physical_key = keycode
+            .filter(|kc| *kc != 0)
+            .and_then(split_scancode)
+            .map(|(extended, code)| key_id(extended, code));
+        let physical_shortcut = physical_key.is_some_and(|id| {
+            self.keys_down.contains(&id)
+                || (down
+                    && (self.keys_down.contains(&key_id(false, 0x1d))
+                        || self.keys_down.contains(&key_id(true, 0x1d))))
+        });
+        if is_character_keysym && !physical_shortcut {
+            return self.unicode(keysym, down);
+        }
+
         let Some(kc) = keycode.filter(|kc| *kc != 0) else {
             // No XT mapping: a composed character, a dead key result, an IME
             // commit or dictation. The unicode event carries what the user
@@ -460,14 +483,21 @@ fn button_event(button: ButtonKind, down: bool, x: u16, y: u16) -> FastPathInput
 /// The character an X11 keysym stands for, or `None` for a named key that has
 /// none.
 ///
-/// Two forms reach us: a keysym below `0x100` is the Latin-1 code point
-/// itself, and `0x01000000 + cp` is the Unicode form the webview builds for
-/// anything above it (`ui/src/render/keysyms.ts:132`). Everything in the
-/// `0xff00` block is a named key and has a scancode instead.
+/// Three forms reach us. A keysym below `0x100` is the Latin-1 code point
+/// itself. `0x01000000 + cp` is the Unicode form the webview builds for
+/// anything above it (`ui/src/render/keysyms.ts:206`). The classical Arabic
+/// block (`0x05ac..=0x05f2`) is what the webview sends for an Arabic character
+/// instead, because a VNC server that predates the Unicode form only knows
+/// that block; here it is decoded back, so one keysym vocabulary serves both
+/// protocols. Everything in the `0xff00` block is a named key and has a
+/// scancode instead.
 #[must_use]
 pub fn keysym_char(keysym: u32) -> Option<char> {
     /// The offset the RFB and X11 convention adds to a Unicode code point.
     const UNICODE_OFFSET: u32 = 0x0100_0000;
+    if let Some(ch) = remote_core::char_for_arabic_keysym(keysym) {
+        return Some(ch);
+    }
     let cp = if keysym >= UNICODE_OFFSET {
         keysym - UNICODE_OFFSET
     } else if (0x20..0x100).contains(&keysym) {
@@ -813,6 +843,113 @@ mod tests {
         // A named key with no scancode and no character produces nothing
         // rather than a wrong keystroke.
         assert!(i.key(0xff08, None, true).is_empty(), "XK_BackSpace");
+    }
+
+    /// The Arabic case the physical-scancode path gets wrong. `ض` sits on
+    /// `KeyQ`, so a server with an English layout types `q` if the scancode is
+    /// what travels. The character, not the key position, is what the person
+    /// pressed, so it must leave as a Unicode Fast-Path event even though a
+    /// perfectly good scancode came with it.
+    #[test]
+    fn an_arabic_character_generates_a_unicode_fastpath_event() {
+        use rdp_pdu::input::fastpath::keyboard_flags as k;
+        let mut i = input();
+
+        // The classical keysym the webview sends, with KeyQ's XT scancode.
+        let events = i.key(0x05d6, Some(0x10), true);
+        assert_eq!(
+            events,
+            vec![
+                FastPathInputEvent::Unicode {
+                    flags: 0,
+                    code: 0x0636
+                },
+                FastPathInputEvent::Unicode {
+                    flags: k::RELEASE,
+                    code: 0x0636
+                },
+            ],
+            "ض is U+0636, not the Latin key at scancode 0x10"
+        );
+        assert!(
+            events
+                .iter()
+                .all(|e| !matches!(e, FastPathInputEvent::Scancode { .. })),
+            "no scancode event may accompany the character"
+        );
+        // The press carried its own release, so the key-up adds nothing.
+        assert!(i.key(0x05d6, Some(0x10), false).is_empty());
+
+        // A keysym inside the classical Arabic block that names no character
+        // types nothing: sending its scancode would type whatever Latin key
+        // shares it.
+        assert!(
+            i.key(0x05ad, Some(0x10), true).is_empty(),
+            "a hole in the Arabic block is not a character this path can type"
+        );
+
+        // And a named key still travels as a scancode, which is what keeps
+        // Backspace, arrows and modifiers working.
+        let events = i.key(0xff08, Some(0x0e), true);
+        assert_eq!(events.len(), 1);
+        assert!(matches!(events[0], FastPathInputEvent::Scancode { .. }));
+    }
+
+    #[test]
+    fn arabic_control_shortcut_uses_scancode_and_releases_after_control() {
+        use rdp_pdu::input::fastpath::keyboard_flags as k;
+        for control in [0x1d, 0x9d] {
+            let mut input = input();
+            let _ = input.key(0xffe3, Some(control), true);
+            assert_eq!(
+                input.key(0x05d6, Some(0x10), true),
+                vec![FastPathInputEvent::Scancode {
+                    flags: 0,
+                    code: 0x10
+                }]
+            );
+            assert_eq!(
+                input.key(0x05d6, Some(0x10), true),
+                vec![FastPathInputEvent::Scancode {
+                    flags: 0,
+                    code: 0x10
+                }]
+            );
+            let _ = input.key(0xffe3, Some(control), false);
+            assert_eq!(
+                input.key(0x05d6, Some(0x10), false),
+                vec![FastPathInputEvent::Scancode {
+                    flags: k::RELEASE,
+                    code: 0x10
+                }]
+            );
+            assert!(input.held_keys().is_empty());
+        }
+    }
+
+    #[test]
+    fn unicode_keyup_after_control_is_pressed_does_not_send_scancode() {
+        let mut input = input();
+        assert_eq!(input.key(0x05d6, Some(0x10), true).len(), 2);
+        let _ = input.key(0xffe3, Some(0x1d), true);
+        assert!(input.key(0x05d6, Some(0x10), false).is_empty());
+        assert_eq!(input.key(0x0100_0636, None, true).len(), 2);
+    }
+
+    #[test]
+    fn legacy_cyrillic_keysym_uses_physical_key_not_arabic_unicode() {
+        let mut i = input();
+        let press = i.key(0x06c1, Some(0x1e), true);
+        assert!(matches!(
+            press.as_slice(),
+            [FastPathInputEvent::Scancode { .. }]
+        ));
+        let release = i.key(0x06c1, Some(0x1e), false);
+        assert!(matches!(
+            release.as_slice(),
+            [FastPathInputEvent::Scancode { .. }]
+        ));
+        assert_eq!(keysym_char(0x06c1), None);
     }
 
     /// View only suppresses every input PDU, which is the whole of the

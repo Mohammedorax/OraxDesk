@@ -2010,11 +2010,17 @@ impl Drop for InputOrderDone<'_> {
 /// mask (pure motion) are shed with `try_send` when the queue is full; that
 /// is genuine stale-motion, safe to drop.
 ///
+/// This is also where human sovereignty is enforced for the seconds a stalled
+/// webview can lose: a keystroke or a pressed button revokes any agent attached
+/// to the session in the same call, before the input is queued. See the
+/// comment on `human_took_over` below.
+///
 /// The one deliberate exception is input older than an admitted release-all
 /// (see [`InputOrder`]): it is dropped because the release has already let go
 /// of every key it could describe.
 #[tauri::command]
 pub async fn send_input(
+    app: AppHandle,
     state: State<'_, AppState>,
     request: tauri::ipc::Request<'_>,
 ) -> Result<(), String> {
@@ -2047,6 +2053,24 @@ pub async fn send_input(
     let carries_release_all = commands
         .iter()
         .any(|command| matches!(command, ClientCommand::ReleaseAllKeys));
+    // A person's own hand on the machine outranks an agent, at the moment of
+    // the gesture and without asking either of them (`00 R11`). The webview
+    // takes the wheel on pointer-down (`SplitView.tsx:422`, `Session.tsx:489`),
+    // but that is one JavaScript callback that a stalled renderer can miss, and
+    // a keystroke arriving before it must not land beside a robot's. So the
+    // same rule is enforced here, on the only path a person's input has.
+    //
+    // A press is the signal, not a position: pointer motion repeats constantly
+    // while a person merely moves the mouse past a pane, and revoking on that
+    // would hand the machine back for a hover. `button_mask != 0` is a click
+    // or a wheel notch, and every key event is a keystroke. `ReleaseAllKeys` is
+    // deliberately not in this set: the webview sends it on blur and on
+    // sequence gaps, which say nothing about who is driving.
+    let human_took_over = commands.iter().any(|command| match command {
+        ClientCommand::Key { .. } => true,
+        ClientCommand::Pointer { button_mask, .. } => *button_mask != 0,
+        _ => false,
+    });
 
     let order = seq.map(|_| {
         input_orders()
@@ -2118,6 +2142,18 @@ pub async fn send_input(
             return Err(error);
         }
     };
+    if human_took_over {
+        // `revoke` answers `None` when nothing is attached to this session, so
+        // the ordinary human-driven session pays one map lookup per batch and
+        // nothing else.
+        if let Some(event) = state.agent.revoke(&session_id) {
+            let _ = app.emit(crate::agent::AGENT_EVENT, event);
+            tracing::info!(
+                session = %session_id,
+                "a person used the machine, so its agent was revoked in the same frame"
+            );
+        }
+    }
     for command in commands {
         let motion_only = if let ClientCommand::Pointer { button_mask, .. } = &command {
             let mask = *button_mask as i32;

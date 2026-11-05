@@ -69,7 +69,7 @@ fn an_uppercase_letter_is_its_own_keysym_and_not_shift_plus_a_lowercase_one() {
 
 #[test]
 fn the_keysym_rule_matches_the_one_the_webview_already_ships() {
-    // `codePointToKeysym` (ui/src/render/keysyms.ts:137): below 0x100 a code
+    // `codePointToKeysym` (ui/src/render/keysyms.ts:206): below 0x100 a code
     // point is its own keysym, above it the Unicode keysym convention is
     // 0x01000000 + the code point. A second, slightly different rule for the
     // same characters shows up as an emoji that types on one path and not the
@@ -131,7 +131,7 @@ fn a_named_key_press_carries_both_identifiers_and_releases_the_chord_backwards()
 #[test]
 fn a_key_with_no_scancode_goes_out_keysym_only_rather_than_with_a_zero() {
     // Zero is the table's "we do not know", and sending it as a keycode would
-    // put a real XT scancode of 0 on the wire (`ui/src/render/keysyms.ts:121`).
+    // put a real XT scancode of 0 on the wire (`ui/src/render/keysyms.ts:123`).
     let f13 = NamedKey::lookup("F13").unwrap();
     assert_eq!(f13.scancode, 0);
     for (_, keycode, _) in keys(&lower_press(&[f13])) {

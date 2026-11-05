@@ -74,8 +74,11 @@ pub fn encode_qemu_key_event(keysym: u32, keycode: u32, down: bool) -> [u8; 12] 
 /// Unicode codepoint -> keysym.
 ///
 /// ASCII printable and Latin-1 high range map directly (keysym == codepoint);
-/// a handful of control characters map to their TTY keysyms; everything else
-/// uses the `0x01000000 + codepoint` rule (PRD/06 §2.1).
+/// a handful of control characters map to their TTY keysyms; the Arabic
+/// characters X11R4 named use their classical keysym from
+/// [`remote_core::ARABIC_KEYSYMS`], because a server without the Unicode form
+/// ignores `0x01000000 + cp` silently; everything else uses the
+/// `0x01000000 + codepoint` rule (PRD/06 §2.1).
 pub fn char_to_keysym(c: char) -> u32 {
     let cp = c as u32;
     match cp {
@@ -85,7 +88,7 @@ pub fn char_to_keysym(c: char) -> u32 {
         0x0a | 0x0d => XK_RETURN,
         0x1b => XK_ESCAPE,
         0x7f => XK_DELETE,
-        _ => UNICODE_KEYSYM_OFFSET + cp,
+        _ => remote_core::arabic_keysym_for_char(c).unwrap_or(UNICODE_KEYSYM_OFFSET + cp),
     }
 }
 
@@ -194,6 +197,12 @@ mod tests {
         assert_eq!(char_to_keysym('😀'), 0x0101_f600);
         assert_eq!(char_to_keysym('\n'), 0xff0d);
         assert_eq!(char_to_keysym('\t'), 0xff09);
+        // Arabic uses the classical X11 block, because x11vnc and QEMU's VNC
+        // ignore the Unicode form for Arabic; an extended letter with no
+        // classical keysym still falls back to it.
+        assert_eq!(char_to_keysym('،'), 0x05ac);
+        assert_eq!(char_to_keysym('ض'), 0x05d6);
+        assert_eq!(char_to_keysym('ک'), 0x0100_06a9);
     }
 
     #[test]

@@ -109,7 +109,7 @@ async fn a_multi_byte_character_is_one_code_point_and_not_a_surrogate_pair() {
 
     // An astral character is one iteration rather than a surrogate pair, which
     // is the bug `keyEventToIds` had to fix on the webview side
-    // (`ui/src/render/keysyms.ts:147`).
+    // (`ui/src/render/keysyms.ts:219`).
     let settlement = limb
         .dispatch(
             &grant,

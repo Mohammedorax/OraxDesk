@@ -148,7 +148,9 @@ export default function App(): ReactNode {
     <SettingsProvider>
       <ToastProvider>
         {isSession ? (
-          <SessionWindow />
+          <AgentActivityProvider>
+            <SessionWindow />
+          </AgentActivityProvider>
         ) : (
           <HostsProvider>
             <DiscoveryProvider>
