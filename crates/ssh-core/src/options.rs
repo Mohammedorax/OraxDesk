@@ -183,6 +183,11 @@ impl SshTermOptions {
         let mut cfg = SshConfig::new(options.host.clone(), username);
         cfg.port = options.port;
         cfg.auth = auth;
+        // An injected carrier (the SOCKS5 proxy set in Preferences, or an SSH
+        // tunnel) rides the shell's `ConnectOptions`. Adapting it here means
+        // the proxy is dialled again on every reconnect attempt, because the
+        // reconnect loop clones this config rather than re-reading settings.
+        cfg.dialer = options.connector.as_ref().map(connector_dialer);
 
         let mut out = Self::new(cfg);
         out.auth_methods = auth_methods;
@@ -213,6 +218,52 @@ impl SshTermOptions {
             auth_methods: Vec::new(),
         }
     }
+}
+
+/// Adapt a [`remote_core::Connector`] (the shell's injected transport) into
+/// the SSH carrier's dialer.
+///
+/// Both traits describe the same operation — "open a byte stream to this
+/// endpoint within this budget" — so the adapter only has to re-box the
+/// stream and re-label the error. Making the SSH carrier depend on
+/// `vnc-transport` instead would drag the VNC plumbing into a crate whose
+/// whole point is that it is protocol-neutral.
+fn connector_dialer(connector: &remote_core::Connector) -> ssh_transport::DialerHandle {
+    struct Adapter(remote_core::Connector);
+
+    impl ssh_transport::Dialer for Adapter {
+        fn dial(
+            &self,
+            host: &str,
+            port: u16,
+            timeout: std::time::Duration,
+        ) -> ssh_transport::DialFuture<'_> {
+            let connector = self.0.clone();
+            let host = host.to_string();
+            Box::pin(async move {
+                let stream = connector
+                    .0
+                    .connect(&host, port, timeout)
+                    .await
+                    .map_err(|error| ssh_transport::Error::Connect {
+                        host: host.clone(),
+                        port,
+                        reason: error.to_string(),
+                    })?;
+                // `vnc_transport::BoxedStream` is already a boxed
+                // `Send + Unpin` async stream; one more box turns it into the
+                // dialer's concrete type without copying any bytes.
+                let stream: ssh_transport::DialedStream = Box::pin(stream);
+                Ok(stream)
+            })
+        }
+
+        fn describe(&self) -> String {
+            self.0 .0.describe()
+        }
+    }
+
+    ssh_transport::DialerHandle(std::sync::Arc::new(Adapter(connector.clone())))
 }
 
 /// The account this machine is logged in as, for an SSH profile that did not
@@ -415,5 +466,47 @@ mod tests {
         assert_eq!(o.multiplexer.kind, MultiplexerKind::Psmux);
         assert_eq!(o.multiplexer.session_name, "work");
         assert_eq!(o.terminal.clamped(), (120, 40));
+    }
+
+    /// The shell sets `ConnectOptions::connector` for the SOCKS5 proxy. That
+    /// must reach the carrier, and the reconnect loop clones this config, so
+    /// every attempt goes through the proxy rather than only the first.
+    #[test]
+    fn an_injected_connector_becomes_the_carrier_dialer() {
+        use remote_core::options::ConnectOptions;
+
+        struct Label;
+
+        impl remote_core::StreamConnector for Label {
+            fn connect(
+                &self,
+                _host: &str,
+                _port: u16,
+                _timeout: std::time::Duration,
+            ) -> remote_core::transport::ConnectFuture<'_> {
+                Box::pin(async { Err(remote_core::transport::TransportError::Timeout) })
+            }
+
+            fn describe(&self) -> String {
+                "socks5 proxy at proxy.local:1080".to_string()
+            }
+        }
+
+        let mut o = ConnectOptions::ssh("box.local", 22);
+        assert!(
+            SshTermOptions::from_connect_options(&o)
+                .ssh
+                .dialer
+                .is_none(),
+            "nothing is injected unless the shell injects it"
+        );
+
+        o.connector = Some(remote_core::Connector(std::sync::Arc::new(Label)));
+        let built = SshTermOptions::from_connect_options(&o);
+        let dialer = built
+            .ssh
+            .dialer
+            .expect("the connector must reach the carrier");
+        assert_eq!(dialer.describe(), "socks5 proxy at proxy.local:1080");
     }
 }

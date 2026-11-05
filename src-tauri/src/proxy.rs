@@ -7,9 +7,11 @@
 //! of the network a person is on, and they should not have to re-enter it for
 //! every machine in the library.
 //!
-//! It applies to **VNC** sessions. RDP and SSH dial through their own cores,
-//! which take no injected connector today; an SSH tunnel is per host and, when
-//! one is configured, the tunnel is the carrier and the proxy is not used.
+//! It applies to **VNC, RDP and SSH** sessions. VNC and RDP honour an injected
+//! connector directly; SSH adapts the same connector into the carrier's
+//! dialer, so its reconnect supervisor dials through the proxy on every
+//! attempt too. An SSH tunnel is per host and, when one is configured, the
+//! tunnel is the carrier and the proxy is not used.
 //!
 //! A switched-on proxy with a missing or unreadable address is an ERROR, not a
 //! quiet fallback to a direct connection: someone who turned the proxy on did

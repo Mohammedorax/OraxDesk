@@ -1418,7 +1418,7 @@ const ar = {
   "prefs.socks5":
     "الاتصال عبر بروكسي SOCKS5",
   "prefs.socks5Hint":
-    "يمرّر جلسات VNC عبر بروكسي SOCKS5 تختاره أنت. غير مفعّل افتراضيًا.",
+    "يمرّر جلسات VNC وRDP وSSH عبر بروكسي SOCKS5 تختاره أنت. غير مفعّل افتراضيًا.",
   "prefs.socks5Host":
     "عنوان البروكسي",
   "prefs.socks5Port":
@@ -1426,7 +1426,7 @@ const ar = {
   "prefs.socks5PortHint":
     "من 1 إلى 65535. الشائع 1080.",
   "prefs.socks5Scope":
-    "يطبَّق على جلسات VNC فقط، ولا يُستخدم إذا كان للمضيف نفق SSH مضبوط.",
+    "يطبَّق على جلسات VNC وRDP وSSH، ولا يُستخدم إذا كان للمضيف نفق SSH مضبوط.",
   "prefs.deepNames": "ابحث عن الأسماء في خدمات أخرى",
   "prefs.deepNamesHint":
     "بعض أجهزة ويندوز تحجب كل خدمات الأسماء. وقراءة الاسم الذي ينشره الجهاز على RDP أو RPC تسمّيه على أي حال، لكنها تعني اتصالًا قصيرًا بمنافذ لا تمرّ عبرها، وقد ينبّه إليه مراقبة الشبكة الصارمة. أطفئها لتستخدم خدمات الأسماء وحدها.",
@@ -3083,7 +3083,7 @@ const en: Record<keyof typeof ar, string> = {
   "prefs.socks5":
     "Connect through a SOCKS5 proxy",
   "prefs.socks5Hint":
-    "Routes VNC sessions through a SOCKS5 proxy you choose. Off by default.",
+    "Routes VNC, RDP and SSH sessions through a SOCKS5 proxy you choose. Off by default.",
   "prefs.socks5Host":
     "Proxy address",
   "prefs.socks5Port":
@@ -3091,7 +3091,7 @@ const en: Record<keyof typeof ar, string> = {
   "prefs.socks5PortHint":
     "1 to 65535; 1080 is the usual default.",
   "prefs.socks5Scope":
-    "Applies to VNC sessions only, and is not used for a host that has an SSH tunnel configured.",
+    "Applies to VNC, RDP and SSH sessions, and is not used for a host that has an SSH tunnel configured.",
   "prefs.deepNames": "Look up names from other services",
   "prefs.deepNamesHint":
     "Some Windows machines block every name service. Reading the name they publish on RDP or RPC names them anyway, but it means connecting briefly to ports you are not connecting through, which strict network monitoring may flag. Turn off to use name services only.",

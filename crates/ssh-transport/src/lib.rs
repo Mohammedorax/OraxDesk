@@ -50,6 +50,7 @@
 //! | [`config`] | where to dial and who to be; secrets deserialize in, never out |
 //! | [`hostkey`] | SSH host-key TOFU, same shape as the TLS pinning in `vnc-transport` |
 //! | [`connect`] | the dial/verify/authenticate sequence and the liveness profile |
+//! | [`dial`] | an injected dialer, so the carrier can ride a proxy |
 //! | [`tunnel`] | `direct-tcpip` channels, for carrying another protocol |
 //! | [`probe`] | "is SSH reachable?", for enabling a feature in the UI |
 //! | [`error`] | carrier failures, classified for the reconnect supervisor |
@@ -58,6 +59,7 @@
 
 pub mod config;
 pub mod connect;
+pub mod dial;
 pub mod error;
 pub mod hostkey;
 pub mod ppk;
@@ -70,6 +72,7 @@ pub use connect::{
     check_host_key, connect_and_authenticate, connect_and_authenticate_with, BoxFuture,
     ClientHandler, Keepalive, SshHandle,
 };
+pub use dial::{DialFuture, DialedStream, Dialer, DialerHandle};
 pub use error::{Error, Result};
 pub use hostkey::{HostKeyDecision, HostKeyPin, HostKeyStore, HostKeyVerifier};
 pub use ppk::{is_ppk, PpkError};

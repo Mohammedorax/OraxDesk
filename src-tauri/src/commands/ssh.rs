@@ -223,6 +223,7 @@ pub async fn ssh_list_wsl_distros(
         username,
         auth,
         connect_timeout_ms: 15_000,
+        dialer: None,
     };
 
     let handle = match ssh_transport::connect_and_authenticate_with(
@@ -290,6 +291,7 @@ pub async fn ssh_connect(
         username,
         auth,
         connect_timeout_ms: 15_000,
+        dialer: None,
     });
     options.terminal = TerminalOptions {
         cols: config.cols.unwrap_or(80),

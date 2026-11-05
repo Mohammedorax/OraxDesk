@@ -1551,14 +1551,19 @@ pub async fn connect_session(
         }
     }
 
-    // SOCKS5 proxy (the plan's networking debt): a global preference rather
-    // than a per-host field, because a proxy belongs to the network a person
-    // is on. The SSH tunnel above is per host and explicit, so it wins when
-    // both are set; this is the network default, and it is read here on every
-    // connect so a change in Preferences reaches the next session without a
-    // restart. VNC only: RDP and SSH dial through cores that take no injected
-    // connector (see `crate::proxy`'s module comment).
-    if options.connector.is_none() && kind == ProtocolKind::Vnc {
+    // SOCKS5 proxy: a global preference rather than a per-host field, because
+    // a proxy belongs to the network a person is on. The SSH tunnel above is
+    // per host and explicit, so it wins when both are set; this is the network
+    // default, read here on every connect so a change in Preferences reaches
+    // the next session without a restart. VNC and RDP honour an injected
+    // connector; SSH rides it as the carrier's dialer (`ssh-core` adapts the
+    // same connector), and boundary has its own network path.
+    if options.connector.is_none()
+        && matches!(
+            kind,
+            ProtocolKind::Vnc | ProtocolKind::Rdp | ProtocolKind::Ssh
+        )
+    {
         let store = state.store.clone();
         let stored = super::blocking(move || {
             Ok::<_, String>((

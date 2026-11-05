@@ -252,12 +252,41 @@ async fn connect_only(
         ..Default::default()
     });
 
-    let connecting =
-        russh::client::connect(ssh_config, (resolver_host(&cfg.host), cfg.port), handler);
+    // Two dials, one handshake. An injected dialer (the SOCKS5 proxy) returns
+    // a stream already connected to the machine and russh finishes the
+    // protocol over it; without one, russh resolves and dials `host:port`
+    // itself. The direct case gets `resolver_host` (IPv6 bracketing), the
+    // dialer gets the bare configured host on purpose: a proxy resolves the
+    // name at its end, which is the point of using one.
+    let connecting = async {
+        match &cfg.dialer {
+            Some(dialer) => {
+                tracing::debug!(
+                    host = %cfg.host,
+                    port = cfg.port,
+                    dialer = %dialer.describe(),
+                    "dialling the ssh carrier through the injected dialer"
+                );
+                let stream = dialer
+                    .0
+                    .dial(&cfg.host, cfg.port, cfg.connect_timeout())
+                    .await
+                    .map_err(|e| e.to_string())?;
+                russh::client::connect_stream(ssh_config, stream, handler)
+                    .await
+                    .map_err(|e| e.to_string())
+            }
+            None => {
+                russh::client::connect(ssh_config, (resolver_host(&cfg.host), cfg.port), handler)
+                    .await
+                    .map_err(|e| e.to_string())
+            }
+        }
+    };
     let ssh = match tokio::time::timeout(cfg.connect_timeout(), connecting).await {
         Err(_) => return Err(Error::Timeout),
         Ok(Ok(handle)) => handle,
-        Ok(Err(e)) => {
+        Ok(Err(reason)) => {
             // A failed connect is usually a network problem, but if the
             // handler rejected the key we have a much better answer.
             return Err(match decision.lock().take() {
@@ -281,7 +310,7 @@ async fn connect_only(
                 _ => Error::Connect {
                     host: cfg.host.clone(),
                     port: cfg.port,
-                    reason: e.to_string(),
+                    reason,
                 },
             });
         }
@@ -559,6 +588,51 @@ mod tests {
     fn other_paths_are_left_alone() {
         for path in ["/etc/keys/id_rsa", "keys/id_rsa", "~someone/.ssh/id_rsa"] {
             assert_eq!(expand_home(Path::new(path)), PathBuf::from(path));
+        }
+    }
+
+    /// The proxy path: with a dialer on the config, the handshake runs over
+    /// the stream that dialer returns instead of a direct TCP connect. A
+    /// dialer that refuses must fail the connect with its own reason — a
+    /// direct dial to a dead name would produce a different one — which is
+    /// how this proves the carrier really went through it.
+    #[tokio::test]
+    async fn an_injected_dialer_is_what_the_handshake_runs_over() {
+        use crate::dial::{DialFuture, Dialer, DialerHandle};
+        use crate::hostkey::HostKeyStore;
+
+        struct RefusingDialer;
+
+        impl Dialer for RefusingDialer {
+            fn dial(&self, host: &str, port: u16, _timeout: Duration) -> DialFuture<'_> {
+                let host = host.to_string();
+                Box::pin(async move {
+                    Err(Error::Connect {
+                        reason: format!("proxy refused {host}:{port}"),
+                        host,
+                        port,
+                    })
+                })
+            }
+
+            fn describe(&self) -> String {
+                "refusing test dialer".to_string()
+            }
+        }
+
+        let mut cfg = SshConfig::new("box.invalid", "user");
+        cfg.connect_timeout_ms = 5_000;
+        cfg.dialer = Some(DialerHandle(Arc::new(RefusingDialer)));
+
+        let pins = Arc::new(Mutex::new(HostKeyStore::new()));
+        let verifier: Arc<dyn HostKeyVerifier + Send + Sync + 'static> = Arc::new(pins);
+
+        match connect_only(&cfg, verifier, Keepalive::sidecar()).await {
+            Err(Error::Connect { reason, .. }) => {
+                assert!(reason.contains("proxy refused box.invalid:22"), "{reason}");
+            }
+            Err(other) => panic!("expected the dialer's refusal, got {other:?}"),
+            Ok(_) => panic!("expected the dialer's refusal, got a connection"),
         }
     }
 }

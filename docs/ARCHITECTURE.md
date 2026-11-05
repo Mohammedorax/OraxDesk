@@ -45,7 +45,7 @@ allowed to know about all of it.
 | Protocol | `rdp-codecs` | Bitmap decoders as pure functions over caller-owned slices. Fuzzed. |
 | Protocol | `rdp-auth` | CredSSP, SPNEGO and NTLMv2 as pure state machines. Fuzzed. |
 | Protocol | `ssh-core` | A remote shell that behaves: PTY and terminal state, a supervisor that reconnects, multiplexer attach (tmux/screen/zellij), tunnels, SFTP session. |
-| Protocol | `ssh-transport` | The SSH carrier: dial, host-key verification against pinned TOFU entries, agent authentication, keepalive, tunnelling. |
+| Protocol | `ssh-transport` | The SSH carrier: dial, host-key verification against pinned TOFU entries, agent authentication, keepalive, tunnelling, and an injectable dialer so a session can ride the proxy stream that VNC and RDP already use. |
 | Transport | `vnc-transport` | Byte streams: TCP with a staggered dual-stack race (Happy Eyeballs), TLS for VeNCrypt/RA2, TLS pinning, and a SOCKS5 `CONNECT` client as a `StreamConnector` (the proxy resolves the name, never this machine). |
 | Transport | `local-pipe` | The Windows named pipe and its Unix socket counterpart for the agent plane, created so only its creator can open it. |
 | Storage | `vnc-store` | SQLite: host profiles, groups, tags, history, settings, thumbnails. |

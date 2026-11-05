@@ -139,6 +139,13 @@ pub struct SshConfig {
     /// Connect + authenticate deadline, milliseconds.
     #[serde(default = "default_connect_timeout_ms")]
     pub connect_timeout_ms: u64,
+
+    /// An injected dialer, when this session must reach the machine through a
+    /// proxy. `skip` because it is a runtime object and never arrives over
+    /// IPC: the shell attaches it after reading the preference, and every
+    /// other caller leaves it `None` for the ordinary direct TCP dial.
+    #[serde(skip)]
+    pub dialer: Option<crate::dial::DialerHandle>,
 }
 
 fn default_ssh_port() -> u16 {
@@ -158,6 +165,7 @@ impl SshConfig {
             username: username.into(),
             auth: SshAuth::Agent,
             connect_timeout_ms: default_connect_timeout_ms(),
+            dialer: None,
         }
     }
 
