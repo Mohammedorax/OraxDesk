@@ -214,9 +214,9 @@ library.
 The VNC core speaks RFB 3.3 through 3.8 with every common encoding, VeNCrypt,
 RA2 and Apple authentication, and continuous updates. Its rough edges have been
 filed off against real servers: x11vnc, TigerVNC, QEMU, RealVNC and macOS Screen
-Sharing. The RDP core covers Windows desktops with NLA, RemoteApp, resolution
-control and the usual codecs. The SSH core gives you a terminal that survives a
-drop, SFTP transfers, tunnels, and PuTTY key files.
+Sharing. The RDP core covers Windows desktops with NLA, resolution control and
+the usual codecs; RemoteApp is not currently supported. The SSH core gives you
+a terminal that survives a drop, SFTP transfers, tunnels, and PuTTY key files.
 
 Around them: mDNS browsing, polite subnet scanning with banner fingerprinting,
 name resolution over mDNS, LLMNR, NetBIOS and MS-RPC, and Wake on LAN. Secrets
