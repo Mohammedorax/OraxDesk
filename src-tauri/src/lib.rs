@@ -7,7 +7,7 @@
 
 mod agent;
 mod commands;
-mod framing;
+pub mod framing;
 mod logging;
 mod menu;
 mod state;

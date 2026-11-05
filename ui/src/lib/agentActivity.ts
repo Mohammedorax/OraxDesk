@@ -768,9 +768,11 @@ export const AGENT_PLANE_OFF = "false";
  * The store key that records whether a person allowed agents to run commands.
  *
  * `crate::agent::EXEC_CONSENT_KEY`, written with `set_app_setting` exactly like
- * the plane's switch. Only `allowed` and `denied` are answers; a missing value
- * is `unasked`, which is not permission. The shell reads the same cell at the
- * moment of use, so an answer here reaches connections that are already open.
+ * the plane's switch. `allowed`, `denied` and `ask` are the three answers; a
+ * missing value is `unasked`, which is not permission. `ask` grants one
+ * command at a time through the per-command dialog, never a standing yes. The
+ * shell reads the same cell at the moment of use, so an answer here reaches
+ * connections that are already open.
  */
 export const AGENT_EXEC_CONSENT_KEY = "agent_exec_consent";
 export const AGENT_EXEC_CONSENT_ALLOWED = "allowed";

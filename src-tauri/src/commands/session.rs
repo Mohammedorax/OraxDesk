@@ -2018,6 +2018,79 @@ impl Drop for InputOrderDone<'_> {
 /// The one deliberate exception is input older than an admitted release-all
 /// (see [`InputOrder`]): it is dropped because the release has already let go
 /// of every key it could describe.
+/// Whether one input batch carries a gesture a person made.
+///
+/// This is the rule the sovereignty gate applies, split out so it has a test
+/// that does not need a running application: a keystroke is always a person,
+/// pointer motion is not, a pressed button or wheel notch is, and
+/// `ReleaseAllKeys` is not — the webview sends it on blur and on sequence
+/// gaps, which say nothing about who is driving.
+fn human_took_over(commands: &[ClientCommand]) -> bool {
+    commands.iter().any(|command| match command {
+        ClientCommand::Key { .. } => true,
+        ClientCommand::Pointer { button_mask, .. } => *button_mask != 0,
+        _ => false,
+    })
+}
+
+#[cfg(test)]
+mod takeover_tests {
+    use super::human_took_over;
+    use vnc_core::ClientCommand;
+
+    /// The four answers the gate is built on, in one place: what a person's
+    /// own hand looks like on the wire, and what merely passing the mouse
+    /// over a pane looks like.
+    #[test]
+    fn a_keystroke_or_a_press_is_a_person_and_a_hover_is_not() {
+        let key = ClientCommand::Key {
+            keysym: 0x61,
+            keycode: None,
+            down: true,
+        };
+        assert!(human_took_over(&[key]), "every key event is a person");
+
+        let click = ClientCommand::Pointer {
+            x: 10,
+            y: 20,
+            button_mask: 1,
+        };
+        assert!(human_took_over(&[click]), "a pressed button is a person");
+
+        let wheel = ClientCommand::Pointer {
+            x: 10,
+            y: 20,
+            button_mask: 8,
+        };
+        assert!(human_took_over(&[wheel]), "a wheel notch is a press");
+
+        let hover = ClientCommand::Pointer {
+            x: 10,
+            y: 20,
+            button_mask: 0,
+        };
+        assert!(
+            !human_took_over(&[hover]),
+            "moving the mouse past a pane is not a takeover"
+        );
+    }
+
+    /// Release-all and housekeeping commands say nothing about who is driving,
+    /// and a batch that carries only them must not steal the machine back.
+    #[test]
+    fn release_all_and_housekeeping_are_not_takeovers() {
+        for commands in [
+            vec![ClientCommand::ReleaseAllKeys],
+            vec![ClientCommand::Refresh],
+            vec![ClientCommand::ClipboardRequest { formats: 1 }],
+            vec![ClientCommand::Disconnect],
+            Vec::new(),
+        ] {
+            assert!(!human_took_over(&commands), "{commands:?}");
+        }
+    }
+}
+
 #[tauri::command]
 pub async fn send_input(
     app: AppHandle,
@@ -2066,11 +2139,7 @@ pub async fn send_input(
     // or a wheel notch, and every key event is a keystroke. `ReleaseAllKeys` is
     // deliberately not in this set: the webview sends it on blur and on
     // sequence gaps, which say nothing about who is driving.
-    let human_took_over = commands.iter().any(|command| match command {
-        ClientCommand::Key { .. } => true,
-        ClientCommand::Pointer { button_mask, .. } => *button_mask != 0,
-        _ => false,
-    });
+    let human_took_over = human_took_over(&commands);
 
     let order = seq.map(|_| {
         input_orders()

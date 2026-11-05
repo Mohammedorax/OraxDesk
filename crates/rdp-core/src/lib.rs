@@ -77,10 +77,13 @@
 //!   back to Bitmap Updates rather than drawing into a surface we cannot
 //!   decode. EGFX is a different negotiation and having it does not change
 //!   this ([`connection::activate::client_capabilities`]).
-//! * H.264 and RemoteFX Progressive. The graphics channel advertises
-//!   capability set versions 8 and 8.1, which have no H.264 in them, and a
-//!   progressive rectangle is refused by name because `rdp-codecs` has no
-//!   progressive decoder in a default build.
+//! * H.264 (AVC420 and AVC444). The graphics channel advertises capability
+//!   sets 8 and 8.1 and stops there, because from version 10 the server may
+//!   use H.264 and `rdp_codecs::avc420` is a metablock parser with no decoder
+//!   behind it (the reasoning lives on `channels::egfx::ADVERTISED`). RemoteFX
+//!   Progressive is a different matter and IS decoded: version 8 brings it in
+//!   and no capability bit declines it, so a progressive rectangle is served
+//!   rather than refused.
 //! * Audio, display control and file clipboard transfer.
 //!
 //! ## Rules
