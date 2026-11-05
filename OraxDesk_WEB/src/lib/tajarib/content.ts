@@ -244,7 +244,7 @@ const ar: Dict = {
     cards: [
       {
         title: "أنوية بروتوكول أصيلة",
-        copy: "VNC ‏(RFB 3.3–3.8 مع كل الترميزات الشائعة وVeNCrypt وRA2)، وRDP بنظام NLA وRemoteApp، وSSH بمحطة تنجو من الانقطاع وSFTP — مقابل خوادم حقيقية: x11vnc وTigerVNC وQEMU وRealVNC ومشاركة شاشة macOS.",
+        copy: "VNC ‏(RFB 3.3–3.8 مع كل الترميزات الشائعة وVeNCrypt وRA2)، وRDP بنظام NLA، وSSH بمحطة تنجو من الانقطاع وSFTP — مقابل خوادم حقيقية: x11vnc وTigerVNC وQEMU وRealVNC ومشاركة شاشة macOS.",
       },
       {
         title: "كلمات السر في خزنة نظامك",
@@ -423,7 +423,7 @@ const en: Dict = {
     cards: [
       {
         title: "First-party protocol cores",
-        copy: "VNC (RFB 3.3–3.8 with every common encoding, VeNCrypt, RA2), RDP with NLA and RemoteApp, and SSH with a terminal that survives a drop and SFTP — filed against real servers: x11vnc, TigerVNC, QEMU, RealVNC and macOS Screen Sharing.",
+        copy: "VNC (RFB 3.3–3.8 with every common encoding, VeNCrypt, RA2), RDP with NLA, and SSH with a terminal that survives a drop and SFTP — filed against real servers: x11vnc, TigerVNC, QEMU, RealVNC and macOS Screen Sharing.",
       },
       {
         title: "Secrets in your OS keychain",
