@@ -85,7 +85,7 @@
 //!   Progressive is a different matter and IS decoded: version 8 brings it in
 //!   and no capability bit declines it, so a progressive rectangle is served
 //!   rather than refused.
-//! * Audio playback in the default build and file clipboard transfer.
+//! * File clipboard transfer.
 //!
 //! ## Rules
 //!

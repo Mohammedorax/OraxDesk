@@ -475,7 +475,10 @@ pub enum AudioMode {
     PlayLocally,
     /// Leave the sound on the server: do not open rdpsnd.
     LeaveAtServer,
-    /// Mute: do not open rdpsnd and ask the server not to play either.
+    /// Mute. MS-RDPEA carries no separate mute request over the dynamic
+    /// transport, so on the wire this answers the server's audio channel
+    /// exactly as [`Self::LeaveAtServer`] does; the difference is the intent
+    /// the interface records, not a protocol message.
     Off,
 }
 

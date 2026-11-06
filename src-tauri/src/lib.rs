@@ -6,6 +6,7 @@
 //! tray, and the capability-scoped IPC surface.
 
 mod agent;
+mod audio;
 mod commands;
 pub mod framing;
 mod logging;

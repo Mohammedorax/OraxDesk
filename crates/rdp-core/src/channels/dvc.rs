@@ -233,6 +233,16 @@ pub struct DvcMux {
     /// the user is dragging, which will ask again, and wrong for the size a
     /// session was configured with, which is asked for exactly once.
     deferred_resize: Option<(u32, u32, u32)>,
+    /// Whether this session redirects audio to this machine.
+    ///
+    /// The server opens `AUDIO_PLAYBACK_DVC` on its own; accepting the
+    /// channel is the whole of what pulls the sound over here. A profile that
+    /// leaves sound at the server therefore answers `NOT_FOUND`, and Windows
+    /// keeps playing through its own output. MS-RDPEA has no separate mute
+    /// for the dynamic transport, so "leave at server" and "off" are the same
+    /// answer on the wire.
+    #[cfg_attr(not(feature = "audio"), allow(dead_code))]
+    audio_enabled: bool,
 }
 
 impl DvcMux {
@@ -240,6 +250,15 @@ impl DvcMux {
     #[must_use]
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Whether this session redirects audio to this machine.
+    ///
+    /// Set once per attempt from the resolved options. The multiplexer starts
+    /// with audio off, which is the safe direction: a caller that forgets
+    /// gets no sound rather than sound the user asked to leave at the server.
+    pub fn set_audio_enabled(&mut self, enabled: bool) {
+        self.audio_enabled = enabled;
     }
 
     /// Forget every open channel and every partial message.
@@ -467,6 +486,21 @@ impl DvcMux {
 
         #[cfg(feature = "audio")]
         if name == AUDIO_CHANNEL_NAME {
+            if !self.audio_enabled {
+                tracing::info!(
+                    channel_id,
+                    "refusing the audio playback channel: this profile leaves sound at the server"
+                );
+                return self.write_dvc(
+                    &DvcPdu::CreateResponse {
+                        channel_id,
+                        creation_status: creation_status::NOT_FOUND,
+                    },
+                    static_id,
+                    ctx,
+                    out,
+                );
+            }
             tracing::info!(channel_id, "opening the audio playback channel");
             self.write_dvc(
                 &DvcPdu::CreateResponse {
@@ -1001,6 +1035,53 @@ mod tests {
         // status was going to be (MS-RDPEGFX 3.3.5.1).
         assert_eq!(out.frames.len(), 2, "the status, then the advertisement");
         assert_eq!(egfx_payloads(&out).len(), 1);
+    }
+
+    /// A profile that leaves sound at the server must not pull it over here.
+    ///
+    /// The server opens `AUDIO_PLAYBACK_DVC` on its own; the client's answer
+    /// is the whole decision. Refusing it by name is what keeps the audio on
+    /// the remote machine, and accepting it is what redirects it. This is the
+    /// test that would have caught `AudioMode` being stored and never read.
+    #[cfg(feature = "audio")]
+    #[test]
+    fn audio_is_accepted_only_when_this_profile_redirects_it() {
+        for (enabled, expected) in [
+            (false, creation_status::NOT_FOUND),
+            (true, creation_status::SUCCESS),
+        ] {
+            let mut mux = DvcMux::new();
+            mux.set_audio_enabled(enabled);
+            let mut out = Outbox::new();
+            mux.message(
+                &from_server(&DvcPdu::Capabilities {
+                    version: dvc_version::V3,
+                    priority_charges: None,
+                }),
+                STATIC_ID,
+                ctx(),
+                &mut out,
+            )
+            .expect("capabilities");
+            out.frames.clear();
+
+            mux.message(
+                &from_server(&DvcPdu::CreateRequest {
+                    channel_id: 7,
+                    channel_name: AUDIO_CHANNEL_NAME.to_owned(),
+                }),
+                STATIC_ID,
+                ctx(),
+                &mut out,
+            )
+            .expect("answered, either way");
+
+            assert_eq!(
+                creation_statuses(&out),
+                vec![(7, expected)],
+                "audio_enabled = {enabled}"
+            );
+        }
     }
 
     /// A size asked for before the display control channel exists is held,

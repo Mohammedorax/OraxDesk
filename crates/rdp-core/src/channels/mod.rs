@@ -183,6 +183,20 @@ impl StaticChannels {
         Self { entries }
     }
 
+    /// Tell the dynamic-channel multiplexer whether audio redirection is on.
+    ///
+    /// Called once per attempt from the resolved options. Kept off the
+    /// constructor so the tests that build a channel map by hand do not each
+    /// have to answer a question about audio; the multiplexer's default is
+    /// "refuse", which is the direction that costs nobody a surprise.
+    pub fn set_audio_enabled(&mut self, enabled: bool) {
+        for entry in &mut self.entries {
+            if let Handler::Dvc(dvc) = &mut entry.handler {
+                dvc.set_audio_enabled(enabled);
+            }
+        }
+    }
+
     /// True when `id` is a static virtual channel with a handler.
     #[must_use]
     pub fn handles(&self, id: u16) -> bool {

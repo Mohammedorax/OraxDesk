@@ -1,6 +1,9 @@
 //! Audio output (MS-RDPEA, PRDRDP/05 §5.6, PRDRDP/12 §3.10).
 //!
-//! Behind the `audio` cargo feature, which is off by default.
+//! Behind the `audio` cargo feature, which is on by default. It can be
+//! switched off for a build that has no sound card to speak of; the driver
+//! then refuses the server's audio channel exactly as a profile that leaves
+//! sound at the server does.
 //!
 //! # Where this runs, and where playback does not
 //!
@@ -12,11 +15,12 @@
 //! own reassembler.
 //!
 //! **Nothing here plays anything.** Decoded PCM leaves as
-//! `remote_core::SessionEvent::Audio`, and where it is played is the shell's
-//! decision, which PRDRDP/00 R24 records as the owner's to take: `cpal` in
-//! `src-tauri` or WebAudio in the webview. Either answer is a shell change
-//! and not a protocol change, which is the whole reason this module ends at
-//! an event.
+//! `remote_core::SessionEvent::Audio`, and the shell plays it: `src-tauri`'s
+//! `audio` module owns the output device (cpal), converts to the device's
+//! rate and channel count, and buffers a few hundred milliseconds in front of
+//! it. That split is the reason this module ends at an event: a sound card is
+//! a platform concern, and the protocol crate stays testable against a byte
+//! slice with no device and no runtime.
 //!
 //! # PCM only, deliberately
 //!
@@ -251,9 +255,20 @@ impl Rdpsnd {
     ) -> Result<()> {
         // The body of a block announced by a WaveInfo has no header of its
         // own, so it is recognised by state and not by looking
-        // (MS-RDPEA 2.2.3.4).
+        // (MS-RDPEA 2.2.3.4). A control PDU may still arrive between the
+        // WaveInfo and its body - a Close while a block is half assembled is
+        // exactly what happens on a logoff - and a Wave body's four bytes of
+        // padding cannot be mistaken for one, because zero is not a message
+        // type. The announced block is dropped in that case, the same as if
+        // the stream had ended before it finished.
         if let Some(pending) = self.expecting.take() {
-            return self.wave_body(pending, message, events, replies);
+            if !is_control_prolog(message) {
+                return self.wave_body(pending, message, events, replies);
+            }
+            self.wave.clear();
+            tracing::debug!(
+                "a control pdu interrupted a half assembled audio block; the block was dropped"
+            );
         }
 
         const NAME: &str = "SNDPROLOG";
@@ -263,7 +278,19 @@ impl Rdpsnd {
         r.skip(1, NAME)?;
         let body_size = r.u16(NAME)? as usize;
         let body = r.rest();
-        if body.len() < body_size {
+        // A WaveInfo is the one message whose declared BodySize is larger
+        // than the message itself: it announces the whole block but carries
+        // only the eight byte header and the first four bytes of audio
+        // (MS-RDPEA 2.2.3.3), and the rest arrives in the Wave PDU that
+        // follows. Requiring BodySize bytes here rejected every legal
+        // WaveInfo, which is two of the tests below.
+        const WAVE_INFO_LEN: usize = 12;
+        let required = if msg_type == msg::WAVE {
+            body_size.min(WAVE_INFO_LEN)
+        } else {
+            body_size
+        };
+        if body.len() < required {
             return Err(RdpError::Pdu {
                 structure: NAME,
                 message: format!(
@@ -272,7 +299,7 @@ impl Rdpsnd {
                 ),
             });
         }
-        let body = &body[..body_size];
+        let body = &body[..body.len().min(body_size)];
 
         match msg_type {
             msg::FORMATS => self.formats(body, replies),
@@ -575,11 +602,8 @@ impl Rdpsnd {
         // this is a copy rather than a reinterpretation. An odd trailing byte
         // is dropped: it is half a sample and there is nothing to pair it
         // with.
-        pcm.extend(
-            self.wave
-                .chunks_exact(2)
-                .map(|pair| i16::from_le_bytes([pair[0], pair[1]])),
-        );
+        let (pairs, _half_sample) = self.wave.as_chunks::<2>();
+        pcm.extend(pairs.iter().map(|pair| i16::from_le_bytes(*pair)));
         tracing::trace!(
             block = pending.block_no,
             samples = pcm.len(),
@@ -614,6 +638,22 @@ impl Rdpsnd {
             Ok(())
         })
     }
+}
+
+/// Whether `message` starts with a control PDU's `SNDPROLOG` rather than the
+/// padding in front of a Wave body.
+///
+/// Only consulted while a block is in flight. A Wave PDU carries no prolog of
+/// its own, and its first four bytes are padding, which the protocol defines
+/// as zero; zero is not a message type. A real prolog therefore always wins
+/// over an audio body, without guessing at the block's remaining length.
+fn is_control_prolog(message: &[u8]) -> bool {
+    message.len() >= PROLOG_LEN
+        && message.get(1) == Some(&0)
+        && matches!(
+            message.first(),
+            Some(&(msg::FORMATS | msg::TRAINING | msg::WAVE | msg::WAVE2 | msg::CLOSE))
+        )
 }
 
 #[cfg(test)]

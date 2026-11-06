@@ -26,8 +26,6 @@ pub struct RdpSessionSettings {
     /// The last size the user asked for, re-applied through MS-RDPEDISP once
     /// the display control channel is up.
     pub requested_size: Option<(u16, u16)>,
-    /// Whether audio redirection is on for this session.
-    pub audio_enabled: bool,
 }
 
 impl RdpSessionSettings {
@@ -39,20 +37,6 @@ impl RdpSessionSettings {
             view_only: options.view_only,
             prefer_scancodes: true,
             requested_size: None,
-            audio_enabled: options
-                .rdp_options()
-                .is_some_and(|r| matches!(r.audio, remote_core::AudioMode::PlayLocally)),
-        }
-    }
-
-    /// Re-apply the profile's values that a reconnect should not reset.
-    ///
-    /// Called at the start of every attempt. Only the fields the user cannot
-    /// change at runtime are taken from the options; everything else is
-    /// whatever the running session last set.
-    pub fn apply(&mut self, options: &ConnectOptions) {
-        if let Some(rdp) = options.rdp_options() {
-            self.audio_enabled = matches!(rdp.audio, remote_core::AudioMode::PlayLocally);
         }
     }
 
@@ -95,10 +79,9 @@ mod tests {
         });
         settings.absorb(&ClientCommand::SetPreferScancodes(false));
 
-        settings.apply(&options);
         assert!(
             settings.view_only,
-            "re-applying the profile must not reset it"
+            "a command that arrived while disconnected must be kept"
         );
         assert_eq!(settings.quality, QualityPreset::Low);
         assert_eq!(settings.requested_size, Some((1920, 1080)));

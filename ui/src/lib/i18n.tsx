@@ -1175,7 +1175,6 @@ const ar = {
   "host.bits16": "16 بت",
   "host.bits15": "15 بت",
   "host.sound": "الصوت",
-  "host.soundUnavailable": "إعدادات صوت RDP غير متاحة حاليًا؛ الخيار المحفوظ لا يغيّر تشغيل الصوت.",
   "host.soundHere": "تشغيل هنا",
   "host.soundThere": "تشغيل هناك",
   "host.soundOff": "بدون تشغيل",
@@ -1355,7 +1354,8 @@ const ar = {
   "prefs.resolutionForNewHint":
     "مطابقة النافذة عند الاتصال هو ما يفعله برنامج ويندوز نفسه. أما الاستمرار في المطابقة فيغيّر حجم سطح المكتب البعيد كلما غيّرت حجم هذه النافذة، وما يعيد ترتيب أيقونات ذلك الجهاز.",
   "prefs.playRemoteSound": "شغّل صوت الجهاز البعيد على هذا الجهاز",
-  "prefs.playRemoteSoundHint": "إعدادات صوت RDP غير متاحة حاليًا؛ الخيار المحفوظ لا يغيّر تشغيل الصوت.",
+  "prefs.playRemoteSoundHint":
+    "يُحوَّل صوت الجهاز البعيد إلى هنا بدل تشغيله هناك، ويسير مع الصورة على الاتصال نفسه: ستيريو بتردد 48 كيلوهرتز يستهلك نحو 1.5 ميغابت/ث. على رابط بطيء، اختر «تشغيل هناك» أو «بدون تشغيل».",
   "prefs.shareClipboardRdp": "شارك حافظتي مع اتصالات سطح المكتب البعيد",
   "prefs.shareClipboardRdpHint": "انسخ النص والصقه في الاتجاهين.",
 
@@ -2846,7 +2846,6 @@ const en: Record<keyof typeof ar, string> = {
   "host.bits16": "16-bit",
   "host.bits15": "15-bit",
   "host.sound": "Sound",
-  "host.soundUnavailable": "RDP sound settings are currently unavailable; the saved choice does not change audio playback.",
   "host.soundHere": "Play here",
   "host.soundThere": "Play there",
   "host.soundOff": "Do not play",
@@ -3027,7 +3026,7 @@ const en: Record<keyof typeof ar, string> = {
     "Matching the window when connecting is what Windows' own client does. Making it keep matching resizes the remote desktop every time you resize this one, which rearranges that machine's icons each time.",
   "prefs.playRemoteSound": "Play remote sound on this computer",
   "prefs.playRemoteSoundHint":
-    "RDP sound settings are currently unavailable; the saved choice does not change audio playback.",
+    "Sound from the remote computer is redirected here rather than left playing there, and travels with the picture over the same connection: stereo at 48 kHz is about 1.5 Mbit/s, so on a slow link choose Play there or Do not play.",
   "prefs.shareClipboardRdp": "Share my clipboard with Remote Desktop connections",
   "prefs.shareClipboardRdpHint": "Copy and paste text in both directions.",
 

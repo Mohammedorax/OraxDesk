@@ -98,6 +98,8 @@ Things that matter once you actually use it all day:
 * Keyboard layouts, dead keys and CJK input methods reach the remote intact,
   and system shortcuts can be passed through when you want them to.
 * Files move both ways over SFTP, and the clipboard follows you.
+* Remote Desktop sound plays through your own output device, and each host can
+  be set to leave it at the server instead.
 * A session that drops comes back on its own and tells you what happened.
 
 ## Several machines at once

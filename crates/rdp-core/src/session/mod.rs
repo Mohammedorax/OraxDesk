@@ -183,7 +183,6 @@ impl ConnectOnce for RdpConnect {
         connected_at: &'a mut Option<std::time::Instant>,
     ) -> Pin<Box<dyn Future<Output = Result<RunOutcome, RdpError>> + Send + 'a>> {
         Box::pin(async move {
-            self.settings.apply(&self.options);
             let outcome = connect::run_once(
                 &self.options,
                 &mut self.settings,

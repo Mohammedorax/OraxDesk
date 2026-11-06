@@ -230,7 +230,12 @@ impl<R: AsyncRead + Unpin> RunLoop<R> {
         sent: Arc<AtomicU64>,
     ) -> Self {
         Self {
-            vc: StaticChannels::new(&channels),
+            vc: {
+                let mut channels = StaticChannels::new(&channels);
+                channels
+                    .set_audio_enabled(matches!(opts.audio, remote_core::AudioMode::PlayLocally));
+                channels
+            },
             event_backlog: 0,
             framer,
             outbound,

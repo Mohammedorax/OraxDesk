@@ -215,6 +215,19 @@ H.264 framing and decoder-context bookkeeping live in Rust; the video decode
 itself runs in the webview through WebCodecs, which gets hardware acceleration
 via VideoToolbox, D3D11, or VAAPI.
 
+### Remote Desktop
+
+- **MS-RDPBCGR** with NLA (CredSSP and NTLMv2), TLS or standard RDP security,
+  and the auto-reconnect cookie.
+- **Graphics**: EGFX with RemoteFX Progressive and ZGFX, plus bitmap updates
+  and the fast-path codec. H.264 is parsed but not decoded, so the capability
+  sets stop at 8 and 8.1.
+- **Channels**: graphics, display control (live resize), text clipboard, and
+  audio playback. Audio is 16-bit PCM at 44.1 or 48 kHz, decoded by the
+  protocol core and played through this machine's output device; a device at a
+  different rate is resampled, and a profile can leave sound at the server
+  instead.
+
 ### Authentication and transport
 
 - **None**, **VncAuth**, **VeNCrypt** (including the X509 subtypes),

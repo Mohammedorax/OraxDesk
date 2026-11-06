@@ -61,9 +61,11 @@ jobs:
           # pipewire-sys generates its bindings at build time. Without these the
           # AppImage build fails at `libspa-sys` with "libpipewire-0.3 was not
           # found in the pkg-config search path".
+          # cpal (RDP audio playback) needs the ALSA development headers.
           sudo apt-get install -y \
             libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf \
             libssl-dev libdbus-1-dev pkg-config xvfb sqlite3 libfuse2 \
+            libasound2-dev \
             libxcb1-dev libxcb-randr0-dev libxkbcommon-dev libxkbcommon-x11-dev \
             libwayland-dev libpipewire-0.3-dev libegl1-mesa-dev libgbm-dev \
             clang libclang-dev

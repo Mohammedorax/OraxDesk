@@ -687,6 +687,10 @@ fn forward_events(
         // rather than once per 20 ms packet).
         let mut auth_method: Option<String> = None;
         let mut audio_format: Option<(u32, u8)> = None;
+        // The sound card, created on the first block a server sends. A
+        // session that never sends audio never opens a device, which matters
+        // on a machine with none.
+        let mut audio: Option<crate::audio::AudioPlayer> = None;
         // Whether the terminal state already took this id out of the
         // registry, so the drain-time path below does not repeat the
         // farewell — or worse, take out a REPLACEMENT that registered the
@@ -954,6 +958,17 @@ fn forward_events(
                     if let Err(e) = channel.send(InvokeResponseBody::Raw(bytes)) {
                         tracing::warn!(session = %session_id, "pty reset send failed: {e}");
                     }
+                }
+                // Decoded PCM goes to the sound card, not across IPC. The
+                // format event above already told the UI what is playing, and
+                // a JSON array of samples would be the audio equivalent of
+                // shipping a whole framebuffer per block. `crate::audio` owns
+                // the device on its own thread; this arm only hands it a
+                // packet, which never blocks the session.
+                SessionEvent::Audio(packet) => {
+                    audio
+                        .get_or_insert_with(crate::audio::AudioPlayer::start)
+                        .play(packet);
                 }
                 other => {
                     if let Some(payload) = event_json(&session_id, &other) {

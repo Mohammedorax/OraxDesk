@@ -70,6 +70,8 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 uuid = { workspace = true }
 parking_lot = { workspace = true }
+# RDP audio playback: the shell owns the output device (see `src/audio.rs`).
+cpal = { workspace = true }
 crossbeam-channel = "0.5"
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]

@@ -120,9 +120,10 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
+          # `libasound2-dev`: cpal builds its ALSA backend for RDP audio.
           sudo apt-get install -y \
             libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf \
-            libssl-dev libdbus-1-dev pkg-config
+            libssl-dev libdbus-1-dev pkg-config libasound2-dev
 
       - uses: dtolnay/rust-toolchain@stable
         with:

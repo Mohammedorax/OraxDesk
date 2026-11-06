@@ -137,6 +137,13 @@ pub struct ResolvedOptions {
     /// [`ResolvedOptions::performance_flags`] answers from and because
     /// `RdpColorDepth::Auto` was already resolved against it above.
     pub quality: QualityPreset,
+    /// Audio output redirection (MS-RDPEA) for this session.
+    ///
+    /// Kept on the resolved options so the dynamic-channel multiplexer can
+    /// refuse the audio channel when the profile says to leave sound at the
+    /// server. The server opens that channel on its own; accepting it is what
+    /// pulls the sound over here.
+    pub audio: remote_core::AudioMode,
     /// The routing token to put in the X.224 Connection Request's `Cookie`
     /// field, which is the `LoadBalanceInfo` a Server Redirection handed us
     /// (MS-RDPBCGR 2.2.13.1, 3.2.5.3.1).
@@ -306,6 +313,7 @@ impl ResolvedOptions {
             send_mstshash_cookie: rdp.send_mstshash_cookie,
             channels,
             quality: options.quality,
+            audio: rdp.audio,
             // A redirection is the only thing that puts a token here, and it
             // does it after this function has run.
             routing_token: None,

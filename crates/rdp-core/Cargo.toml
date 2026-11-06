@@ -42,7 +42,7 @@ hmac = { workspace = true }
 md-5 = { workspace = true }
 
 [features]
-default = []
+default = ["audio"]
 # Kerberos, forwarded to rdp-auth. Off in phase 1 and 2: NTLMv2 covers local
 # and domain accounts on every Windows host that will do NLA at all (D6).
 kerberos = ["rdp-auth/kerberos"]
@@ -52,7 +52,9 @@ kerberos = ["rdp-auth/kerberos"]
 # decoder ends on a frame a server was entitled to send
 # (docs/RDP_SPEC_NOTES.md §1.6). The dependency above asks for it outright.
 progressive = ["rdp-codecs/progressive"]
-# MS-RDPEA audio playback. Phase 2 (D10).
+# MS-RDPEA audio playback. On by default: the driver opens the server's
+# audio channel and the shell plays what arrives. Turning it off refuses that
+# channel, which is what a profile that leaves sound at the server does.
 audio = []
 
 [dev-dependencies]

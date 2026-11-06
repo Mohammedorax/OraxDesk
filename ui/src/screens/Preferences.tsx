@@ -502,7 +502,6 @@ export function Preferences({
                   label={t("prefs.playRemoteSound")}
                   description={t("prefs.playRemoteSoundHint")}
                   value={rdpAudio}
-                  disabled
                   onChange={(on) => {
                     setRdpDefault("audio", on ? "play-locally" : "leave-at-server");
                     setRdpAudio(on);

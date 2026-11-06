@@ -75,6 +75,11 @@ anyhow = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
+# audio output for RDP redirection. cpal is the cross-platform device layer
+# (`wasapi`, `coreaudio`, `alsa`); the shell owns the device, the protocol
+# crate only produces PCM (`remote_core::AudioPacket`).
+cpal = "0.15"
+
 # serialization
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
